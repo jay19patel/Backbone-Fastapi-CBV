@@ -8,9 +8,9 @@ import math
 from .permissions import IsOwner, BasePermission, PermissionDependency
 from .schemas import UserOut, PaginatedResponse
 
-class GenericList:
+class BaseGenericView:
     """
-    Base class for listing functionality with filtering, ordering, and owner isolation.
+    Base class for all Generic components. Handles initialization and shared logic.
     """
     def __init__(
         self, 
@@ -38,8 +38,7 @@ class GenericList:
         meta = getattr(schema, "Meta", None)
         self.collection_name = getattr(meta, "collection_name", prefix.strip("/"))
         self.collection = self.db[self.collection_name]
-        
-        self._register_list_route()
+        self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
 
     def _get_projection(self):
         if self.list_fields:
@@ -48,27 +47,46 @@ class GenericList:
             return projection
         return None
 
-    def _register_list_route(self):
-        perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
+    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut]) -> dict:
+        """
+        Internal helper for fetching object and checking permissions.
+        """
+        try:
+            obj_id = ObjectId(pk)
+        except:
+            raise HTTPException(status_code=400, detail="Invalid ID format")
+            
+        item = await self.collection.find_one({"_id": obj_id, "is_deleted": False})
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        
+        for permission_class in self.permission_classes:
+            perm = permission_class(request, user)
+            if not await perm.has_object_permission(item):
+                raise HTTPException(status_code=403, detail="Object-level access denied")
+        return item
 
+class GenericList(BaseGenericView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._register_list_route()
+
+    def _register_list_route(self):
         @self.router.get("/", response_model=PaginatedResponse[Dict[str, Any]])
         async def list(
             request: Request,
-            user: Optional[UserOut] = Depends(perm_dep),
+            user: Optional[UserOut] = Depends(self.perm_dep),
             page: int = Query(1, ge=1),
             page_size: int = Query(10, ge=1, le=100),
             search: Optional[str] = None,
             sort: Optional[str] = None,
         ):
             query = {"is_deleted": False}
-
-            # Owner Isolation
             if any(issubclass(p, IsOwner) for p in self.permission_classes):
                 if not user:
                     raise HTTPException(status_code=401, detail="Authentication required")
                 query["created_by"] = str(user.id)
 
-            # Dynamic Filtering
             query_params = request.query_params
             for field in self.filter_fields:
                 if field in query_params:
@@ -89,50 +107,19 @@ class GenericList:
             total = await self.collection.count_documents(query)
             items = await cursor.to_list(length=page_size)
             for item in items: item["id"] = str(item["_id"])
-
             return {
                 "total": total, "page": page, "page_size": page_size,
                 "total_pages": math.ceil(total / page_size), "results": items
             }
 
-class GenericCrud(GenericList):
-    """
-    Consolidated View for Full CRUD logic.
-    Inherits listing functionality from GenericList.
-    """
+class GenericCreate(BaseGenericView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._register_crud_routes()
+        self._register_create_route()
 
-    def _register_crud_routes(self):
-        perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
-
-        async def get_object(
-            pk: str, 
-            request: Request, 
-            user: Optional[UserOut] = Depends(perm_dep)
-        ) -> dict:
-            try:
-                obj_id = ObjectId(pk)
-            except:
-                raise HTTPException(status_code=400, detail="Invalid ID format")
-                
-            item = await self.collection.find_one({"_id": obj_id, "is_deleted": False})
-            if not item:
-                raise HTTPException(status_code=404, detail="Item not found")
-            
-            for permission_class in self.permission_classes:
-                perm = permission_class(request, user)
-                if not await perm.has_object_permission(item):
-                    raise HTTPException(status_code=403, detail="Object-level access denied")
-            return item
-
+    def _register_create_route(self):
         @self.router.post("/", response_model=self.schema, status_code=201)
-        async def create(
-            request: Request, 
-            data: dict, 
-            user: UserOut = Depends(perm_dep)
-        ):
+        async def create(request: Request, data: dict, user: UserOut = Depends(self.perm_dep)):
             validated_data = self.schema(**data).model_dump(by_alias=True, exclude={"id"})
             validated_data.update({
                 "created_at": datetime.utcnow(),
@@ -142,16 +129,26 @@ class GenericCrud(GenericList):
             result = await self.collection.insert_one(validated_data)
             return await self.collection.find_one({"_id": result.inserted_id})
 
+class GenericRetrieve(BaseGenericView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._register_retrieve_route()
+
+    def _register_retrieve_route(self):
         @self.router.get("/{pk}/", response_model=self.schema)
-        async def get(item: dict = Depends(get_object)):
+        async def get(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
+            item = await self._get_object_internal(pk, request, user)
             return item
 
+class GenericUpdate(BaseGenericView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._register_update_route()
+
+    def _register_update_route(self):
         @self.router.patch("/{pk}/", response_model=self.schema)
-        async def update(
-            data: dict, 
-            user: UserOut = Depends(perm_dep),
-            item: dict = Depends(get_object)
-        ):
+        async def update(request: Request, pk: str, data: dict, user: UserOut = Depends(self.perm_dep)):
+            item = await self._get_object_internal(pk, request, user)
             update_data = data.copy()
             update_data.update({
                 "updated_at": datetime.utcnow(),
@@ -160,11 +157,15 @@ class GenericCrud(GenericList):
             await self.collection.update_one({"_id": item["_id"]}, {"$set": update_data})
             return await self.collection.find_one({"_id": item["_id"]})
 
+class GenericDelete(BaseGenericView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._register_delete_route()
+
+    def _register_delete_route(self):
         @self.router.delete("/{pk}/")
-        async def delete(
-            user: UserOut = Depends(perm_dep),
-            item: dict = Depends(get_object)
-        ):
+        async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
+            item = await self._get_object_internal(pk, request, user)
             await self.collection.update_one(
                 {"_id": item["_id"]},
                 {"$set": {
@@ -174,6 +175,18 @@ class GenericCrud(GenericList):
                 }}
             )
             return {"detail": "Deleted"}
+
+class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete):
+    """
+    Consolidated View for Full CRUD logic.
+    Inherits all routes from granular Generic components.
+    """
+    def __init__(self, *args, **kwargs):
+        # We need to call constructors for all mixins if they register routes
+        # But wait, BaseGenericView already sets up everything.
+        # Calling super().__init__ will trigger BaseGenericView's init.
+        # The mixins register their routes in their own __init__.
+        super().__init__(*args, **kwargs)
 
     async def sync_indexes(self):
         meta = getattr(self.schema, "Meta", None)
