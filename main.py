@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from motor.motor_asyncio import AsyncIOMotorClient
 from backbone import (
-    AuthRouter, IsOwner, GenericCrud, MongoRepository, REGISTERED_COMPONENTS
+    AuthRouter, IsOwner,AllowAny, GenericCrud, MongoRepository, REGISTERED_COMPONENTS, BackboneConfig,
+    GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
 from pydantic_settings import BaseSettings
@@ -18,84 +19,101 @@ config = AppConfig()
 client = AsyncIOMotorClient(config.MONGODB_URL)
 database = client[config.DATABASE_NAME]
 
-# Initialize Resources
-# Views automatically register themselves to REGISTERED_COMPONENTS
+# App Definition
+app = FastAPI(title="Modular Backbone Framework")
 
-# 1. Auth
-auth = AuthRouter(db_instance=database)
-
-# 2. Blog
-blog = GenericCrud(
-    database=database, # Simplified: Pass database directly
-    schema=BlogSchema,
-    prefix="/blogs",
-    tags=["Blogs"],
-    list_fields=["title", "author_id"],
-    filter_fields=["tags"],
-    permission_classes=[IsOwner]
+# --------------------------------------------------------------------------
+# Backbone Global Configuration
+# Sets the default Database and Repository Class for all GenericCrud views.
+# Also manages the Application Lifespan (Startup/Shutdown).
+# --------------------------------------------------------------------------
+BackboneConfig(
+    app=app, 
+    config=config, 
+    database=database,
+    mongo_client=client, 
+    repository_class=MongoRepository
 )
 
-# 3. Notes
-note = GenericCrud(
-    database=database,
+# Initialize Resources
+# Views explicitly use the configured Defaults from BackboneConfig
+
+# 1. Auth (AuthRouter should ideally use context too, but we pass db for now or update it)
+# Let's pass db explicitly to Auth as it might be special, or update Auth to use context.
+# Keeping explicit injection for Auth is fine, but views below use Context.
+auth = AuthRouter(db_instance=database)
+
+# # 2. Blog
+# blog = GenericCrud(
+#     schema=BlogSchema,
+#     prefix="/blogs",
+#     tags=["Blogs"],
+#     list_fields=["title", "author_id"],
+#     filter_fields=["tags"],
+#     permission_classes=[IsOwner]
+# )
+
+# 3. Notes (Demonstrating Granular Control as requested)
+# List & Create
+note_list = GenericList(
+    schema=NoteSchema,
+    prefix="/notes",
+    tags=["Notes List"],
+    list_fields=["title", "is_pinned"],
+    search_fields=["title", "body"],
+    permission_classes=[AllowAny]
+)
+
+note_create = GenericCreate(
     schema=NoteSchema,
     prefix="/notes",
     tags=["Notes"],
-    list_fields=["title", "is_pinned"],
-    search_fields=["title", "body"],
     permission_classes=[IsOwner]
 )
 
-# 4. Playlists
-playlist = GenericCrud(
-    database=database,
-    schema=PlaylistSchema,
-    prefix="/playlists",
-    tags=["Playlists"],
-    list_fields=["name", "is_public"],
+# Detail Operations (Retrieve, Update, Delete)
+note_retrieve = GenericRetrieve(
+    schema=NoteSchema,
+    prefix="/notes",
+    tags=["Notes"],
     permission_classes=[IsOwner]
 )
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    print("System: Connecting to Database...")
-    
-    # Automated Index Syncing
-    print(f"System: Syncing indexes for {len(REGISTERED_COMPONENTS)} components...")
-    for component in REGISTERED_COMPONENTS:
-        if hasattr(component, "sync_indexes"):
-            await component.sync_indexes()
-    
-    print("System: Online and Ready.")
-    
-    yield
-    
-    # Shutdown
-    print("System: Shutting down...")
-    client.close()
-
-# App Definition
-app = FastAPI(
-    title="Modular Backbone Framework",
-    lifespan=lifespan
+note_update = GenericUpdate(
+    schema=NoteSchema,
+    prefix="/notes",
+    tags=["Notes"],
+    permission_classes=[IsOwner]
 )
+
+note_delete = GenericDelete(
+    schema=NoteSchema,
+    prefix="/notes",
+    tags=["Notes"],
+    permission_classes=[IsOwner]
+)
+
+# # 4. Playlists
+# playlist = GenericCrud(
+#     schema=PlaylistSchema,
+#     prefix="/playlists",
+#     tags=["Playlists"],
+#     list_fields=["name", "is_public"],
+#     permission_classes=[IsOwner]
+# )
 
 # Register Routers
 # We can also automate this if we wanted, but explicit is better for control
 app.include_router(auth.router)
-app.include_router(blog.router)
-app.include_router(note.router)
-app.include_router(playlist.router)
-
-@app.get("/")
-def home():
-    return {
-        "status": "online", 
-        "version": "v11 (Automated & Simplified)",
-        "docs": "/docs"
-    }
+# app.include_router(blog.router)
+# Notes (Granular)
+app.include_router(note_list.router)
+app.include_router(note_create.router)
+app.include_router(note_retrieve.router)
+app.include_router(note_update.router)
+app.include_router(note_delete.router)
+# app.include_router(playlist.router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8006, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8012, reload=True)

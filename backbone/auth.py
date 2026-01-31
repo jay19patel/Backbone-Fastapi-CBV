@@ -2,12 +2,12 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from .repositories import MongoRepository
 from .db import db
 from .utils import PasswordManager, TokenManager
-from .schemas import UserSchema, UserOut, TokenResponse, SessionSchema
+from .schemas import UserSchema, UserOut, TokenResponse, SessionSchema, LoginSchema
 from .dependencies import get_current_user, oauth2_scheme
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
-from .generic import REGISTERED_COMPONENTS
+import backbone.context as context
 
 class AuthRouter:
     def __init__(self, db_instance: Any = None, prefix: str = "/auth", tags: list = ["Auth"]):
@@ -17,29 +17,22 @@ class AuthRouter:
         self.user_repository = MongoRepository(database, "users")
         self.session_repository = MongoRepository(database, "sessions")
         # Auto-register
-        REGISTERED_COMPONENTS.append(self)
-        # No automated registration here intentionally; Main registers it.
+        context.REGISTERED_COMPONENTS.append(self)
+        
+        # Register Routes associated with this router
+        self._register_routes()
 
     async def sync_indexes(self):
         """
         Create indexes for User and Session collections.
         """
         # User Indexes (Email unique)
-        # If UserSchema defines Meta.indexes, we could do:
-        # self.user_repository.initialize(UserSchema) ... but let's be explicit if needed or rely on schema.
-        # Check UserSchema for indexes:
-        # Assuming UserSchema has Meta/indexes, let's just initialize it to trigger any internal logic if we added it to MongoRepository.
-        # But MongoRepository.initialize just sets collection name.
-        # We need to manually create indexes or use a helper.
-        # For now, explicit creation as requested by user to be "perfect"
-        
-        # Users
         await self.user_repository.collection.create_index([("email", 1)], unique=True)
         
         # Sessions
         await self.session_repository.collection.create_index([("user_id", 1)])
         await self.session_repository.collection.create_index([("refresh_token", 1)], unique=True)
-
+    
     def _register_routes(self):
 
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -55,9 +48,9 @@ class AuthRouter:
             return created_user
 
         @self.router.post("/login")
-        async def login(credentials: Dict[str, str], request: Request, response: Response):
-            email = credentials.get("email")
-            password = credentials.get("password")
+        async def login(credentials: LoginSchema, request: Request, response: Response):
+            email = credentials.email
+            password = credentials.password
             
             user_data = await self.user_repository.get_one({"email": email})
             if not user_data or not PasswordManager.verify_password(password, user_data["hashed_password"]):

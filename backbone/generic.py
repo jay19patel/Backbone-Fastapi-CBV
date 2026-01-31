@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional, Any, Type, Dict, Union
 from pydantic import BaseModel
 import math
-from .permissions import IsOwner, BasePermission, PermissionDependency
+from .permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
 from .schemas import UserOut, PaginatedResponse
 from .interface import IDatabaseRepository
 
@@ -12,9 +12,7 @@ class BaseGenericView:
     Base class for all Generic components. Handles initialization and shared logic.
     """
 from .repositories import MongoRepository
-
-# Global Registry for components that need startup actions (like indexing)
-REGISTERED_COMPONENTS: List[Any] = []
+import backbone.context as context
 
 class BaseGenericView:
     """
@@ -25,25 +23,34 @@ class BaseGenericView:
         schema: Type[BaseModel],
         prefix: str,
         repository: Optional[IDatabaseRepository] = None,
-        database: Any = None, # Accept database instance directly
+        database: Any = None, 
+        repository_class: Optional[Type[IDatabaseRepository]] = None,
         tags: Optional[List[str]] = None,
         search_fields: Optional[List[str]] = None,
         filter_fields: Optional[List[str]] = None,
         ordering_fields: Optional[List[str]] = None,
         permission_classes: Optional[List[Type[BasePermission]]] = None,
         list_fields: Optional[List[str]] = None,
-        use_auth: bool = True
+        use_auth: bool = False
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
         
+        # Resolve Repository and Database from arguments or Global Context
+        active_db = database if database is not None else context.DATABASE
+        active_repo_class = repository_class if repository_class is not None else context.REPOSITORY_CLASS
+
         # Automatic Repository Wiring
         if repository:
             self.repository = repository
-        elif database is not None:
-             # Default to MongoRepository if database is provided
-            self.repository = MongoRepository(database)
+        elif active_db is not None:
+             # Default to MongoRepository if not set globally or locally
+            repo_cls = active_repo_class or MongoRepository
+            self.repository = repo_cls(active_db)
         else:
-            raise ValueError("Either 'repository' or 'database' must be provided.")
+            raise ValueError(
+                "Database configuration missing. "
+                "Provide 'database' argument or configure BackboneConfig(database=...)."
+            )
 
         self.schema = schema
         
@@ -54,13 +61,21 @@ class BaseGenericView:
         self.search_fields = search_fields or []
         self.filter_fields = filter_fields or []
         self.ordering_fields = ordering_fields or []
-        self.permission_classes = permission_classes or []
+        # Ensure permission_classes is a list. User might pass a single class by mistake or we default to empty.
+        if permission_classes is None:
+            self.permission_classes = []
+        elif not isinstance(permission_classes, list):
+             # Fallback if a single class is passed (e.g. permission_classes=AllowAny)
+            self.permission_classes = [permission_classes]
+        else:
+            self.permission_classes = permission_classes
+
         self.list_fields = list_fields
         
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
         
         # Auto-register for lifecycle events
-        REGISTERED_COMPONENTS.append(self)
+        context.REGISTERED_COMPONENTS.append(self)
 
     def _get_projection(self):
         if self.list_fields:
@@ -99,7 +114,27 @@ class GenericList(BaseGenericView):
             sort: Optional[str] = None,
         ):
             query = {"is_deleted": False}
-            if any(issubclass(p, IsOwner) for p in self.permission_classes):
+            # Smart Permission Logic
+            # 1. Default (No permissions) -> Public Access (See all)
+            # 2. IsOwner present -> Filter by owner (unless Admin override)
+            # 3. IsAuthenticated present -> See all (Authenticated)
+            
+            is_owner_restricted = any(issubclass(p, IsOwner) for p in self.permission_classes)
+            
+            # Check for Admin override if IsAdminUser is also in permissions
+            has_admin_perm = any(issubclass(p, IsAdminUser) for p in self.permission_classes)
+            user_is_admin = user.is_staff if user else False
+            
+            should_filter_by_owner = False
+            
+            if is_owner_restricted:
+                # If Admin permission is allowed AND user is admin, they bypass owner filter
+                if has_admin_perm and user_is_admin:
+                    should_filter_by_owner = False
+                else:
+                    should_filter_by_owner = True
+            
+            if should_filter_by_owner:
                 if not user:
                     raise HTTPException(status_code=401, detail="Authentication required")
                 query["created_by"] = str(user.id)

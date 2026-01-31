@@ -6,7 +6,7 @@ from .schemas import UserOut
 from bson import ObjectId
 from typing import Optional
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 from .repositories import MongoRepository
 from .db import db

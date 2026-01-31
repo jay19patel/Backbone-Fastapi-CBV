@@ -6,8 +6,8 @@ from .generic import (
     GenericUpdate,
     GenericDelete,
     GenericCrud,
-    REGISTERED_COMPONENTS
 )
+from .context import REGISTERED_COMPONENTS
 from .schemas import AuditSchema, UserSchema, UserOut, PaginatedResponse, PyObjectId, SessionSchema, TokenResponse
 from .db import db, get_db
 from .permissions import BasePermission, AllowAny, IsAuthenticated, IsAdminUser, IsOwner, PermissionDependency
@@ -16,6 +16,7 @@ from .interface import IDatabaseRepository
 from .auth import AuthRouter
 from .utils import PasswordManager, TokenManager
 from .dependencies import get_current_user, get_optional_user
+from .config import BackboneConfig
 
 __all__ = [
     "BaseGenericView",

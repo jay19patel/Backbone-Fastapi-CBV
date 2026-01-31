@@ -98,6 +98,10 @@ class SessionSchema(AuditSchema):
             {"fields": ["refresh_token"], "unique": True}
         ]
 
+class LoginSchema(BaseModel):
+    email: EmailStr
+    password: str
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
