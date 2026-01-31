@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from motor.motor_asyncio import AsyncIOMotorClient
 from backbone import (
-    AuthRouter, IsOwner, GenericCrud, MongoRepository
+    AuthRouter, IsOwner, GenericCrud, MongoRepository, REGISTERED_COMPONENTS
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
 from pydantic_settings import BaseSettings
@@ -18,13 +18,15 @@ config = AppConfig()
 client = AsyncIOMotorClient(config.MONGODB_URL)
 database = client[config.DATABASE_NAME]
 
-# Initialize Resources (Views)
+# Initialize Resources
+# Views automatically register themselves to REGISTERED_COMPONENTS
+
 # 1. Auth
 auth = AuthRouter(db_instance=database)
 
 # 2. Blog
 blog = GenericCrud(
-    repository=MongoRepository(database),
+    database=database, # Simplified: Pass database directly
     schema=BlogSchema,
     prefix="/blogs",
     tags=["Blogs"],
@@ -35,7 +37,7 @@ blog = GenericCrud(
 
 # 3. Notes
 note = GenericCrud(
-    repository=MongoRepository(database),
+    database=database,
     schema=NoteSchema,
     prefix="/notes",
     tags=["Notes"],
@@ -46,7 +48,7 @@ note = GenericCrud(
 
 # 4. Playlists
 playlist = GenericCrud(
-    repository=MongoRepository(database),
+    database=database,
     schema=PlaylistSchema,
     prefix="/playlists",
     tags=["Playlists"],
@@ -59,11 +61,11 @@ async def lifespan(app: FastAPI):
     # Startup
     print("System: Connecting to Database...")
     
-    # Sync Indexes
-    await auth.sync_indexes()
-    await blog.sync_indexes()
-    await note.sync_indexes()
-    await playlist.sync_indexes()
+    # Automated Index Syncing
+    print(f"System: Syncing indexes for {len(REGISTERED_COMPONENTS)} components...")
+    for component in REGISTERED_COMPONENTS:
+        if hasattr(component, "sync_indexes"):
+            await component.sync_indexes()
     
     print("System: Online and Ready.")
     
@@ -80,6 +82,7 @@ app = FastAPI(
 )
 
 # Register Routers
+# We can also automate this if we wanted, but explicit is better for control
 app.include_router(auth.router)
 app.include_router(blog.router)
 app.include_router(note.router)
@@ -89,10 +92,10 @@ app.include_router(playlist.router)
 def home():
     return {
         "status": "online", 
-        "version": "v10 (Explicit Main)",
+        "version": "v11 (Automated & Simplified)",
         "docs": "/docs"
     }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8006, reload=True)

@@ -7,6 +7,8 @@ from .dependencies import get_current_user, oauth2_scheme
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
+from .generic import REGISTERED_COMPONENTS
+
 class AuthRouter:
     def __init__(self, db_instance: Any = None, prefix: str = "/auth", tags: list = ["Auth"]):
         self.router = APIRouter(prefix=prefix, tags=tags)
@@ -14,6 +16,8 @@ class AuthRouter:
         database = db_instance if db_instance is not None else db
         self.user_repository = MongoRepository(database, "users")
         self.session_repository = MongoRepository(database, "sessions")
+        # Auto-register
+        REGISTERED_COMPONENTS.append(self)
         # No automated registration here intentionally; Main registers it.
 
     async def sync_indexes(self):

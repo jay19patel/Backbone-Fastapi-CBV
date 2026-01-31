@@ -5,7 +5,8 @@ from .generic import (
     GenericRetrieve,
     GenericUpdate,
     GenericDelete,
-    GenericCrud
+    GenericCrud,
+    REGISTERED_COMPONENTS
 )
 from .schemas import AuditSchema, UserSchema, UserOut, PaginatedResponse, PyObjectId, SessionSchema, TokenResponse
 from .db import db, get_db

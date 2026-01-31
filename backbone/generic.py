@@ -11,11 +11,21 @@ class BaseGenericView:
     """
     Base class for all Generic components. Handles initialization and shared logic.
     """
+from .repositories import MongoRepository
+
+# Global Registry for components that need startup actions (like indexing)
+REGISTERED_COMPONENTS: List[Any] = []
+
+class BaseGenericView:
+    """
+    Base class for all Generic components. Handles initialization and shared logic.
+    """
     def __init__(
         self, 
-        repository: IDatabaseRepository,
         schema: Type[BaseModel],
         prefix: str,
+        repository: Optional[IDatabaseRepository] = None,
+        database: Any = None, # Accept database instance directly
         tags: Optional[List[str]] = None,
         search_fields: Optional[List[str]] = None,
         filter_fields: Optional[List[str]] = None,
@@ -25,7 +35,16 @@ class BaseGenericView:
         use_auth: bool = True
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
-        self.repository = repository
+        
+        # Automatic Repository Wiring
+        if repository:
+            self.repository = repository
+        elif database is not None:
+             # Default to MongoRepository if database is provided
+            self.repository = MongoRepository(database)
+        else:
+            raise ValueError("Either 'repository' or 'database' must be provided.")
+
         self.schema = schema
         
         # Initialize repository with schema metadata
@@ -39,6 +58,9 @@ class BaseGenericView:
         self.list_fields = list_fields
         
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
+        
+        # Auto-register for lifecycle events
+        REGISTERED_COMPONENTS.append(self)
 
     def _get_projection(self):
         if self.list_fields:
