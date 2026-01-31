@@ -71,3 +71,23 @@ class PaginatedResponse(BaseModel, Generic[T]):
     page_size: int
     total_pages: int
     results: List[T]
+
+class SessionSchema(AuditSchema):
+    user_id: str
+    refresh_token: str
+    is_active: bool = True
+    expires_at: datetime
+    user_agent: Optional[str] = None
+    ip_address: Optional[str] = None
+
+    class Meta:
+        collection_name = "sessions"
+        indexes = [
+            {"fields": ["user_id"], "unique": False},
+            {"fields": ["refresh_token"], "unique": True}
+        ]
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"

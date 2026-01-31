@@ -11,6 +11,29 @@ class BlogSchema(AuditSchema):
     class Meta:
         collection_name = "blogs"
         indexes = [
-            {"fields": ["title"], "unique": False},
             {"fields": ["author_id"], "unique": False}
+        ]
+
+class NoteSchema(AuditSchema):
+    title: str
+    body: str
+    is_pinned: bool = False
+    
+    class Meta:
+        collection_name = "notes"
+        indexes = [
+            {"fields": ["title"], "unique": False},
+            {"fields": ["created_by"], "unique": False} 
+        ]
+
+class PlaylistSchema(AuditSchema):
+    name: str
+    videos: List[str] = []
+    is_public: bool = True
+    
+    class Meta:
+        collection_name = "playlists"
+        indexes = [
+            {"fields": ["name"], "unique": False},
+            {"fields": ["created_by"], "unique": False}
         ]

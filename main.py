@@ -1,15 +1,30 @@
 from fastapi import FastAPI
-from backbone import GenericCrud, GenericList, GenericRetrieve, AuthRouter, IsOwner, db
-from schema import BlogSchema
+from contextlib import asynccontextmanager
+from motor.motor_asyncio import AsyncIOMotorClient
+from backbone import (
+    AuthRouter, IsOwner, GenericCrud, MongoRepository
+)
+from schema import BlogSchema, NoteSchema, PlaylistSchema
+from pydantic_settings import BaseSettings
 
-app = FastAPI(title="Modular backbone Framework")
+# Configuration
+class AppConfig(BaseSettings):
+    MONGODB_URL: str = "mongodb+srv://justj:admin@cluster0.fsgzjrl.mongodb.net"
+    DATABASE_NAME: str = "backbone_app"
 
-# 1. Register Auth (JWT + Argon2)
-app.include_router(AuthRouter().router)
+config = AppConfig()
 
-# 2. Register Blog View using GenericCrud (Everything in one)
-blog_view = GenericCrud(
-    db=db,
+# Database Connection
+client = AsyncIOMotorClient(config.MONGODB_URL)
+database = client[config.DATABASE_NAME]
+
+# Initialize Resources (Views)
+# 1. Auth
+auth = AuthRouter(db_instance=database)
+
+# 2. Blog
+blog = GenericCrud(
+    repository=MongoRepository(database),
     schema=BlogSchema,
     prefix="/blogs",
     tags=["Blogs"],
@@ -17,33 +32,67 @@ blog_view = GenericCrud(
     filter_fields=["tags"],
     permission_classes=[IsOwner]
 )
-app.include_router(blog_view.router)
 
-# 3. Example of a Read-Only endpoint (Modular Usage)
-# Only List and Retrieve are available for this prefix.
-readonly_blogs = GenericList(
-    db=db,
-    schema=BlogSchema,
-    prefix="/public-blogs",
-    tags=["Public"],
-    list_fields=["title", "created_at"],
-    use_auth=False # Allow access without token
+# 3. Notes
+note = GenericCrud(
+    repository=MongoRepository(database),
+    schema=NoteSchema,
+    prefix="/notes",
+    tags=["Notes"],
+    list_fields=["title", "is_pinned"],
+    search_fields=["title", "body"],
+    permission_classes=[IsOwner]
 )
-# We can also add specifically Retrieve to make it List/Detail only.
-# readonly_detail = GenericRetrieve(db=db, schema=BlogSchema, prefix="/public-blogs", use_auth=False)
-# app.include_router(readonly_detail.router) # Registers /{pk}/
 
-app.include_router(readonly_blogs.router)
+# 4. Playlists
+playlist = GenericCrud(
+    repository=MongoRepository(database),
+    schema=PlaylistSchema,
+    prefix="/playlists",
+    tags=["Playlists"],
+    list_fields=["name", "is_public"],
+    permission_classes=[IsOwner]
+)
 
-@app.on_event("startup")
-async def startup():
-    await blog_view.sync_indexes()
-    print("Backbone system v6 (Modular Mixins) online.")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("System: Connecting to Database...")
+    
+    # Sync Indexes
+    await auth.sync_indexes()
+    await blog.sync_indexes()
+    await note.sync_indexes()
+    await playlist.sync_indexes()
+    
+    print("System: Online and Ready.")
+    
+    yield
+    
+    # Shutdown
+    print("System: Shutting down...")
+    client.close()
+
+# App Definition
+app = FastAPI(
+    title="Modular Backbone Framework",
+    lifespan=lifespan
+)
+
+# Register Routers
+app.include_router(auth.router)
+app.include_router(blog.router)
+app.include_router(note.router)
+app.include_router(playlist.router)
 
 @app.get("/")
 def home():
     return {
         "status": "online", 
-        "version": "v6 (Modular Mixins)",
+        "version": "v10 (Explicit Main)",
         "docs": "/docs"
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)

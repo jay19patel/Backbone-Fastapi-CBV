@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Request, Query, HTTPException, status, Depends
-from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
-from bson import ObjectId
 from datetime import datetime
 from typing import List, Optional, Any, Type, Dict, Union
 from pydantic import BaseModel
 import math
 from .permissions import IsOwner, BasePermission, PermissionDependency
 from .schemas import UserOut, PaginatedResponse
+from .interface import IDatabaseRepository
 
 class BaseGenericView:
     """
@@ -14,7 +13,7 @@ class BaseGenericView:
     """
     def __init__(
         self, 
-        db: AsyncIOMotorDatabase,
+        repository: IDatabaseRepository,
         schema: Type[BaseModel],
         prefix: str,
         tags: Optional[List[str]] = None,
@@ -26,8 +25,12 @@ class BaseGenericView:
         use_auth: bool = True
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
-        self.db = db
+        self.repository = repository
         self.schema = schema
+        
+        # Initialize repository with schema metadata
+        self.repository.initialize(self.schema)
+        
         self.use_auth = use_auth
         self.search_fields = search_fields or []
         self.filter_fields = filter_fields or []
@@ -35,15 +38,12 @@ class BaseGenericView:
         self.permission_classes = permission_classes or []
         self.list_fields = list_fields
         
-        meta = getattr(schema, "Meta", None)
-        self.collection_name = getattr(meta, "collection_name", prefix.strip("/"))
-        self.collection = self.db[self.collection_name]
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
 
     def _get_projection(self):
         if self.list_fields:
             projection = {field: 1 for field in self.list_fields}
-            projection["_id"] = 1
+            projection["_id"] = 1 # repository handles mapping to "id"
             return projection
         return None
 
@@ -51,12 +51,7 @@ class BaseGenericView:
         """
         Internal helper for fetching object and checking permissions.
         """
-        try:
-            obj_id = ObjectId(pk)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid ID format")
-            
-        item = await self.collection.find_one({"_id": obj_id, "is_deleted": False})
+        item = await self.repository.get_one({"id": pk, "is_deleted": False})
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         
@@ -93,20 +88,31 @@ class GenericList(BaseGenericView):
                     query[field] = query_params[field]
 
             if search and self.search_fields:
+                # MongoDB specific $or can be handled by repository if needed, 
+                # but for simplicity we keep it here as a Dict that MongoRepository understands.
+                # A more advanced SQL repo would translate this.
                 query["$or"] = [{f: {"$regex": search, "$options": "i"}} for f in self.search_fields]
 
             projection = self._get_projection()
-            cursor = self.collection.find(query, projection).skip((page-1)*page_size).limit(page_size)
             
+            # Prepare sort
+            sort_val = None
             if sort and (sort.strip("-") in self.ordering_fields):
                 direction = -1 if sort.startswith("-") else 1
-                cursor = cursor.sort(sort.strip("-"), direction)
+                sort_val = [(sort.strip("-"), direction)]
             else:
-                cursor = cursor.sort("created_at", -1)
+                sort_val = [("created_at", -1)]
 
-            total = await self.collection.count_documents(query)
-            items = await cursor.to_list(length=page_size)
-            for item in items: item["id"] = str(item["_id"])
+            skip = (page - 1) * page_size
+            items = await self.repository.get_all(
+                query=query, 
+                skip=skip, 
+                limit=page_size, 
+                sort=sort_val, 
+                projection=projection
+            )
+            total = await self.repository.count(query)
+
             return {
                 "total": total, "page": page, "page_size": page_size,
                 "total_pages": math.ceil(total / page_size), "results": items
@@ -126,8 +132,7 @@ class GenericCreate(BaseGenericView):
                 "created_by": str(user.id),
                 "is_deleted": False
             })
-            result = await self.collection.insert_one(validated_data)
-            return await self.collection.find_one({"_id": result.inserted_id})
+            return await self.repository.create(validated_data)
 
 class GenericRetrieve(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -154,8 +159,7 @@ class GenericUpdate(BaseGenericView):
                 "updated_at": datetime.utcnow(),
                 "updated_by": str(user.id)
             })
-            await self.collection.update_one({"_id": item["_id"]}, {"$set": update_data})
-            return await self.collection.find_one({"_id": item["_id"]})
+            return await self.repository.update({"id": item["id"]}, update_data)
 
 class GenericDelete(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -166,14 +170,17 @@ class GenericDelete(BaseGenericView):
         @self.router.delete("/{pk}/")
         async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
             item = await self._get_object_internal(pk, request, user)
-            await self.collection.update_one(
-                {"_id": item["_id"]},
-                {"$set": {
-                    "is_deleted": True, 
-                    "deleted_at": datetime.utcnow(), 
-                    "deleted_by": str(user.id)
-                }}
+            await self.repository.delete(
+                {"id": item["id"]},
+                soft=True
             )
+            # Add metadata for soft delete if needed, but repository.delete(soft=True) should handle it.
+            # However, BaseGenericView expects to manage created_at/by etc.
+            # Let's update the item to record WHO deleted it if it's a soft delete.
+            await self.repository.update({"id": item["id"]}, {
+                "deleted_at": datetime.utcnow(), 
+                "deleted_by": str(user.id)
+            })
             return {"detail": "Deleted"}
 
 class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete):
@@ -182,15 +189,14 @@ class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, Ge
     Inherits all routes from granular Generic components.
     """
     def __init__(self, *args, **kwargs):
-        # We need to call constructors for all mixins if they register routes
-        # But wait, BaseGenericView already sets up everything.
-        # Calling super().__init__ will trigger BaseGenericView's init.
-        # The mixins register their routes in their own __init__.
         super().__init__(*args, **kwargs)
 
     async def sync_indexes(self):
-        meta = getattr(self.schema, "Meta", None)
-        if meta and hasattr(meta, "indexes"):
-            for index in meta.indexes:
-                fields = [(field, 1) for field in index["fields"]]
-                await self.collection.create_index(fields, unique=index.get("unique", False))
+        # Index creation is DB specific. 
+        # For MongoDB, we can keep it here if the repository is specifically MongoRepository
+        if hasattr(self.repository, "collection"):
+            meta = getattr(self.schema, "Meta", None)
+            if meta and hasattr(meta, "indexes"):
+                for index in meta.indexes:
+                    fields = [(field, 1) for field in index["fields"]]
+                    await self.repository.collection.create_index(fields, unique=index.get("unique", False))
