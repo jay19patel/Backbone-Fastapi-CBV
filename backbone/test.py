@@ -33,13 +33,18 @@ async def db_client():
 
 @pytest_asyncio.fixture(scope="function")
 async def client(db_client):
+    from contextlib import asynccontextmanager
+    
+    # Override lifespan to prevent main.py from re-initializing Beanie with Prod DB
+    # The db_client fixture already initializes Beanie with Test DB.
+    @asynccontextmanager
+    async def mock_lifespan(app):
+        yield
+
+    app.router.lifespan_context = mock_lifespan
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         app.dependency_overrides = {} # Clear any overrides
-        # We need to ensure the app uses the test DB. 
-        # Since main.py initializes usually on startup, 
-        # we might need to manually trigger init with test DB or mock it.
-        # But we called init_database above with test DB name. 
-        # Beanie is global, so checking if it works.
         yield ac
 
 @pytest.mark.asyncio
@@ -56,11 +61,12 @@ async def test_auth_flow(client):
 
     # 2. Login
     login_data = {
-        "email": "test@example.com",
+        "username": "test@example.com", # OAuth2 uses username field
         "password": "password123"
     }
-    response = await client.post("/auth/login", json=login_data)
-    assert response.status_code == 200
+    # OAuth2PasswordRequestForm expects form data, not JSON
+    response = await client.post("/auth/login", data=login_data)
+    assert response.status_code == 200, f"Login failed: {response.text}"
     tokens = response.json()
     assert "access_token" in tokens
     

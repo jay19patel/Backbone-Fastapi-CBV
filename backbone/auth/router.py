@@ -37,10 +37,13 @@ class AuthRouter:
             new_user = await self.user_repository.create(user_dict)
             return UserOut(**new_user.model_dump(by_alias=True))
 
+        from fastapi.security import OAuth2PasswordRequestForm
+
         @self.router.post("/login")
-        async def login(credentials: LoginSchema, request: Request, response: Response):
-            email = credentials.email
-            password = credentials.password
+        async def login(form_data: OAuth2PasswordRequestForm = Depends(), request: Request = None, response: Response = None):
+            # OAuth2PasswordRequestForm has username and password
+            email = form_data.username
+            password = form_data.password
             
             user = await self.user_repository.get_by_email(email)
             if not user or not PasswordManager.verify_password(password, user.hashed_password):
