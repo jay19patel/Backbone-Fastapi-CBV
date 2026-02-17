@@ -3,13 +3,16 @@ from ..utils import PasswordManager, TokenManager
 from ..schemas import UserOut, TokenResponse, LoginSchema, RegisterSchema
 from ..core.models import User, Session
 from ..core.dependencies import get_current_user, oauth2_scheme
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from beanie import PydanticObjectId
+from ..core.repository import UserRepository
 
 class AuthRouter:
     def __init__(self, db_instance: Any = None, prefix: str = "/auth", tags: list = ["Auth"]):
         self.router = APIRouter(prefix=prefix, tags=tags)
+        self.user_repository = UserRepository(db_instance)
+        self.user_repository.initialize(User)
         
         # Register Routes associated with this router
         self._register_routes()
@@ -18,20 +21,20 @@ class AuthRouter:
 
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
         async def register(user_data: RegisterSchema):
-            existing_user = await User.find_one({"email": user_data.email})
+            existing_user = await self.user_repository.get_by_email(user_data.email)
             if existing_user:
                 raise HTTPException(status_code=400, detail="Email already registered")
             
             hashed_pw = PasswordManager.hash_password(user_data.password)
             
-            new_user = User(
-                email=user_data.email,
-                hashed_password=hashed_pw,
-                full_name=user_data.full_name,
-                is_active=True,
-                is_staff=False
-            )
-            await new_user.insert()
+            # Helper to create dict for creation
+            user_dict = user_data.model_dump()
+            user_dict["hashed_password"] = hashed_pw
+            del user_dict["password"]
+            user_dict["is_active"] = True
+            user_dict["is_staff"] = False
+            
+            new_user = await self.user_repository.create(user_dict)
             return UserOut(**new_user.model_dump(by_alias=True))
 
         @self.router.post("/login")
@@ -39,7 +42,7 @@ class AuthRouter:
             email = credentials.email
             password = credentials.password
             
-            user = await User.find_one({"email": email})
+            user = await self.user_repository.get_by_email(email)
             if not user or not PasswordManager.verify_password(password, user.hashed_password):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             

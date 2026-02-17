@@ -41,9 +41,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
         )
 
     # Fetch User
+    from ..core.repository import UserRepository
+    user_repo = UserRepository()
+    user_repo.initialize(User)
+    
     try:
-        user = await User.get(PydanticObjectId(user_id))
-    except:
+        # Repository get_one expects a filter. Beanie uses _id for primary key.
+        user = await user_repo.get_one({"_id": PydanticObjectId(user_id)})
+    except Exception:
         user = None
 
     if not user or not user.is_active:

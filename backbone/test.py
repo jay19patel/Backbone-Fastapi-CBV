@@ -1,3 +1,6 @@
+import os
+os.environ["DATABASE_NAME"] = "test_backbone_app"
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -10,15 +13,22 @@ from schema import NoteSchema
 
 # Override Config for Testing
 TEST_DATABASE_NAME = "test_backbone_app"
+config.DATABASE_NAME = TEST_DATABASE_NAME
 
 @pytest_asyncio.fixture(scope="function")
 async def db_client():
     # Setup
     client = AsyncIOMotorClient(config.MONGODB_URL)
     await init_database(client, TEST_DATABASE_NAME, [User, Session, NoteSchema])
+    db = client[TEST_DATABASE_NAME]
+    await db["users"].delete_many({})
+    await db["sessions"].delete_many({})
+    await db["notes"].delete_many({})
     yield client
     # Teardown
-    await client.drop_database(TEST_DATABASE_NAME)
+    await db["users"].delete_many({})
+    await db["sessions"].delete_many({})
+    await db["notes"].delete_many({})
     client.close()
 
 @pytest_asyncio.fixture(scope="function")
@@ -41,7 +51,7 @@ async def test_auth_flow(client):
         "full_name": "Test User"
     }
     response = await client.post("/auth/register", json=reg_data)
-    assert response.status_code == 201
+    assert response.status_code == 201, f"Registration failed: {response.text}"
     assert response.json()["email"] == reg_data["email"]
 
     # 2. Login

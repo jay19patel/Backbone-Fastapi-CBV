@@ -72,7 +72,7 @@ class BaseGenericView:
             return projection
         return None
 
-    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut]) -> dict:
+    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut]) -> Any:
         """
         Internal helper for fetching object and checking permissions.
         """
@@ -92,7 +92,7 @@ class GenericList(BaseGenericView):
         self._register_list_route()
 
     def _register_list_route(self):
-        @self.router.get("/", response_model=PaginatedResponse[Dict[str, Any]])
+        @self.router.get("/", response_model=PaginatedResponse[Any])
         async def list(
             request: Request,
             user: Optional[UserOut] = Depends(self.perm_dep),
@@ -204,7 +204,7 @@ class GenericUpdate(BaseGenericView):
                 "updated_at": datetime.utcnow(),
                 "updated_by": str(user.id)
             })
-            return await self.repository.update({"id": item["id"]}, update_data)
+            return await self.repository.update({"id": item.id}, update_data)
 
 class GenericDelete(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -216,13 +216,13 @@ class GenericDelete(BaseGenericView):
         async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
             item = await self._get_object_internal(pk, request, user)
             await self.repository.delete(
-                {"id": item["id"]},
+                {"id": item.id},
                 soft=True
             )
             # Add metadata for soft delete if needed, but repository.delete(soft=True) should handle it.
             # However, BaseGenericView expects to manage created_at/by etc.
             # Let's update the item to record WHO deleted it if it's a soft delete.
-            await self.repository.update({"id": item["id"]}, {
+            await self.repository.update({"id": item.id}, {
                 "deleted_at": datetime.utcnow(), 
                 "deleted_by": str(user.id)
             })

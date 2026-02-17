@@ -31,7 +31,7 @@ class BeanieRepository(IDatabaseRepository[T]):
         limit: int = 10, 
         sort: Optional[Any] = None, 
         projection: Optional[Dict[str, int]] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[T]:
         if not self.document_class:
             return []
         
@@ -44,34 +44,28 @@ class BeanieRepository(IDatabaseRepository[T]):
         find_query = find_query.skip(skip).limit(limit)
         
         if projection:
-            find_query = find_query.project(projection_model=None) # Beanie projection is tricky with dicts
-            # For now, let's just fetch full docs and dump them, or use Pydantic projection if passed
-            # A simple approach for this 'dict' return interface:
-            docs = await find_query.to_list()
-            return [doc.model_dump(by_alias=True) for doc in docs]
-        
-        docs = await find_query.to_list()
-        return [doc.model_dump(by_alias=True) for doc in docs]
+            find_query = find_query.project(projection_model=None) 
 
-    async def get_one(self, filter_query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> Optional[Dict[str, Any]]:
+        docs = await find_query.to_list()
+        return docs
+
+    async def get_one(self, filter_query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> Optional[T]:
         if not self.document_class:
             return None
             
         doc = await self.document_class.find_one(filter_query)
-        if doc:
-            return doc.model_dump(by_alias=True)
-        return None
+        return doc
 
-    async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create(self, data: Dict[str, Any]) -> T:
         if not self.document_class:
             raise ValueError("Document class not initialized")
         
         # Validate and create
         doc = self.document_class(**data)
         await doc.insert()
-        return doc.model_dump(by_alias=True)
+        return doc
 
-    async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
         if not self.document_class:
             return None
             
@@ -80,8 +74,9 @@ class BeanieRepository(IDatabaseRepository[T]):
             return None
             
         # Update fields
-        await doc.set(data)
-        return doc.model_dump(by_alias=True)
+        req = {k: v for k, v in data.items()}
+        await doc.set(req)
+        return doc
 
     async def delete(self, filter_query: Dict[str, Any], soft: bool = True) -> bool:
         if not self.document_class:
@@ -93,8 +88,6 @@ class BeanieRepository(IDatabaseRepository[T]):
             
         if soft:
             doc.is_deleted = True
-            # We can also set deleted_at here if we want, but usually passed in 'data' of update? 
-            # The interface says 'delete', so we handle it here.
             from datetime import datetime
             doc.deleted_at = datetime.utcnow()
             await doc.save()
@@ -107,3 +100,9 @@ class BeanieRepository(IDatabaseRepository[T]):
         if not self.document_class:
             return 0
         return await self.document_class.find(query).count()
+
+class UserRepository(BeanieRepository[T]):
+    async def get_by_email(self, email: str) -> Optional[T]:
+        if not self.document_class:
+            return None
+        return await self.document_class.find_one({"email": email})

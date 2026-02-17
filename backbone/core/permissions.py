@@ -46,9 +46,10 @@ class IsOwner(BasePermission):
             )
         return True
 
-    async def has_object_permission(self, obj: dict) -> bool:
-        # Note: obj is still a dict from MongoDB, we check against user.id
-        return self.user and str(obj.get("created_by")) == str(self.user.id)
+    async def has_object_permission(self, obj: Any) -> bool:
+        # obj is a Beanie Document
+        creator_id = getattr(obj, "created_by", None)
+        return self.user and str(creator_id) == str(self.user.id)
 
 def PermissionDependency(permission_classes: List[Type[BasePermission]], use_auth: bool = True):
     """
