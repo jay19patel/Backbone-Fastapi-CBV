@@ -1,7 +1,8 @@
 from fastapi import Request, HTTPException, status, Depends
 from typing import List, Optional, Type, Callable, Any
-from .dependencies import get_current_user, get_optional_user
-from .schemas import UserOut
+from ..schemas import UserOut
+from .dependencies import get_optional_user, get_current_user
+from .models import AuditDocument
 
 class BasePermission:
     def __init__(self, request: Request, user: Optional[UserOut] = None):

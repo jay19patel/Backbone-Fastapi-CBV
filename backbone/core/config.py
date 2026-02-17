@@ -1,8 +1,9 @@
-from typing import Any, Type
+from typing import Any, Type, List
 from fastapi import FastAPI
 from .interface import IDatabaseRepository
-from .repositories import MongoRepository
-import backbone.context as context
+from .repository import BeanieRepository
+from .models import User, Session
+from .database import init_database
 from pydantic_settings import BaseSettings
 from contextlib import asynccontextmanager
 
@@ -25,15 +26,13 @@ class BackboneConfig:
         config: Any, 
         database: Any,
         mongo_client: Any, 
-        repository_class: Type[IDatabaseRepository] = MongoRepository
+        repository_class: Type[IDatabaseRepository] = BeanieRepository,
+        document_models: List[Any] = None
     ):
         self.app = app
         self.config = config
         self.mongo_client = mongo_client
-        
-        # Set Global Context
-        context.DATABASE = database
-        context.REPOSITORY_CLASS = repository_class
+        self.document_models = document_models or [User, Session]
         
         # Attach Lifespan
         self.app.router.lifespan_context = self.lifespan
@@ -43,16 +42,20 @@ class BackboneConfig:
         # Startup
         print("System: Connecting to Database...")
         
-        # Automated Index Syncing
-        print(f"System: Syncing indexes for {len(context.REGISTERED_COMPONENTS)} components...")
-        for component in context.REGISTERED_COMPONENTS:
-            if hasattr(component, "sync_indexes"):
-                await component.sync_indexes()
-        
+        # Initialize Beanie
+        await init_database(
+            client=self.mongo_client,
+            database_name=self.config.DATABASE_NAME,
+            document_models=self.document_models
+        )
+        print("System: Beanie Initialized.")
         print("System: Online and Ready.")
         
         yield
         
         # Shutdown
         print("System: Shutting down...")
-        self.mongo_client.close()
+        self.config = None 
+        # motor client doesn't explicitly need close on exit usually (handled by loop), 
+        # but good practice if wrapper provided.
+        # self.mongo_client.close()

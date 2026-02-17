@@ -1,4 +1,4 @@
-from .generic import (
+from .generic.views import (
     BaseGenericView,
     GenericList,
     GenericCreate,
@@ -7,16 +7,14 @@ from .generic import (
     GenericDelete,
     GenericCrud,
 )
-from .context import REGISTERED_COMPONENTS
-from .schemas import AuditSchema, UserSchema, UserOut, PaginatedResponse, PyObjectId, SessionSchema, TokenResponse
-from .db import db, get_db
-from .permissions import BasePermission, AllowAny, IsAuthenticated, IsAdminUser, IsOwner, PermissionDependency
-from .repositories import MongoRepository
-from .interface import IDatabaseRepository
-from .auth import AuthRouter
+from .schemas import UserOut, PaginatedResponse, TokenResponse
+from .core.permissions import BasePermission, AllowAny, IsAuthenticated, IsAdminUser, IsOwner, PermissionDependency
+from .core.repository import BeanieRepository
+from .core.interface import IDatabaseRepository
+from .auth.router import AuthRouter
 from .utils import PasswordManager, TokenManager
-from .dependencies import get_current_user, get_optional_user
-from .config import BackboneConfig
+from .core.dependencies import get_current_user, get_optional_user
+from .core.config import BackboneConfig
 
 __all__ = [
     "BaseGenericView",
@@ -26,15 +24,9 @@ __all__ = [
     "GenericUpdate",
     "GenericDelete",
     "GenericCrud",
-    "AuditSchema",
-    "UserSchema",
     "UserOut",
     "PaginatedResponse",
-    "PyObjectId",
-    "SessionSchema",
     "TokenResponse",
-    "db",
-    "get_db",
     "BasePermission",
     "AllowAny",
     "IsAuthenticated",
@@ -47,5 +39,5 @@ __all__ = [
     "get_current_user",
     "get_optional_user",
     "IDatabaseRepository",
-    "MongoRepository"
+    "BeanieRepository"
 ]

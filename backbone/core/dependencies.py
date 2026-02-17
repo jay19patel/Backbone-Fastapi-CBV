@@ -1,15 +1,12 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from .utils import TokenManager
-from .db import db
-from .schemas import UserOut
-from bson import ObjectId
+from ..utils import TokenManager
+from ..schemas import UserOut
+from .models import User, Session
 from typing import Optional
+from beanie import PydanticObjectId
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
-
-from .repositories import MongoRepository
-from .db import db
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
     """
@@ -27,26 +24,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
     sid = payload.get("sid")
     
     # Audit & Revoke: Validate session is still active
-    session_repo = MongoRepository(db, "sessions")
-    session = await session_repo.get_one({"id": sid, "is_active": True})
-    if not session:
+    try:
+        session = await Session.find_one({"_id": PydanticObjectId(sid), "is_active": True})
+        if not session:
+             raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session revoked or expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except Exception:
+        # If ID is invalid or other error
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session revoked or expired",
+            detail="Session invalid",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Fetch User
-    user_repo = MongoRepository(db, "users")
-    user_data = await user_repo.get_one({"id": user_id, "is_active": True})
-    
-    if user_data is None:
+    try:
+        user = await User.get(PydanticObjectId(user_id))
+    except:
+        user = None
+
+    if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail="User not found or inactive"
         )
     
-    return UserOut(**user_data)
+    return UserOut(**user.model_dump(by_alias=True))
 
 async def get_optional_user(token: str = Depends(oauth2_scheme)) -> Optional[UserOut]:
     """

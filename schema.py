@@ -1,39 +1,39 @@
 from typing import List
-from backbone.schemas import AuditSchema
+from backbone.core.models import AuditDocument
+from pymongo import IndexModel, ASCENDING
 
-class BlogSchema(AuditSchema):
+class BlogSchema(AuditDocument):
     title: str
     content: str
     author_id: str
     tags: List[str] = []
     
-    # Metadata for MongoDB collection management
-    class Meta:
-        collection_name = "blogs"
+    class Settings:
+        name = "blogs"
         indexes = [
-            {"fields": ["author_id"], "unique": False}
+            IndexModel([("author_id", ASCENDING)], unique=False)
         ]
 
-class NoteSchema(AuditSchema):
+class NoteSchema(AuditDocument):
     title: str
     body: str
     is_pinned: bool = False
     
-    class Meta:
-        collection_name = "notes"
+    class Settings:
+        name = "notes"
         indexes = [
-            {"fields": ["title"], "unique": False},
-            {"fields": ["created_by"], "unique": False} 
+            IndexModel([("title", ASCENDING)], unique=False),
+            IndexModel([("created_by", ASCENDING)], unique=False)
         ]
 
-class PlaylistSchema(AuditSchema):
+class PlaylistSchema(AuditDocument):
     name: str
     videos: List[str] = []
     is_public: bool = True
     
-    class Meta:
-        collection_name = "playlists"
+    class Settings:
+        name = "playlists"
         indexes = [
-            {"fields": ["name"], "unique": False},
-            {"fields": ["created_by"], "unique": False}
+            IndexModel([("name", ASCENDING)], unique=False),
+            IndexModel([("created_by", ASCENDING)], unique=False)
         ]

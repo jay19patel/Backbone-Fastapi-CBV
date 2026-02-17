@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from motor.motor_asyncio import AsyncIOMotorClient
 from backbone import (
-    AuthRouter, IsOwner,AllowAny, GenericCrud, MongoRepository, REGISTERED_COMPONENTS, BackboneConfig,
+    AuthRouter, IsOwner,AllowAny, GenericCrud, BeanieRepository, BackboneConfig,
     GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
@@ -22,6 +22,8 @@ database = client[config.DATABASE_NAME]
 # App Definition
 app = FastAPI(title="Modular Backbone Framework")
 
+from backbone.core.models import User, Session
+
 # --------------------------------------------------------------------------
 # Backbone Global Configuration
 # Sets the default Database and Repository Class for all GenericCrud views.
@@ -32,7 +34,8 @@ BackboneConfig(
     config=config, 
     database=database,
     mongo_client=client, 
-    repository_class=MongoRepository
+    repository_class=BeanieRepository,
+    document_models=[User, Session, BlogSchema, NoteSchema, PlaylistSchema]
 )
 
 # Initialize Resources
@@ -105,14 +108,13 @@ note_delete = GenericDelete(
 # Register Routers
 # We can also automate this if we wanted, but explicit is better for control
 app.include_router(auth.router)
-# app.include_router(blog.router)
+
 # Notes (Granular)
 app.include_router(note_list.router)
 app.include_router(note_create.router)
 app.include_router(note_retrieve.router)
 app.include_router(note_update.router)
 app.include_router(note_delete.router)
-# app.include_router(playlist.router)
 
 if __name__ == "__main__":
     import uvicorn

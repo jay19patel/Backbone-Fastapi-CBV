@@ -3,16 +3,15 @@ from datetime import datetime
 from typing import List, Optional, Any, Type, Dict, Union
 from pydantic import BaseModel
 import math
-from .permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
-from .schemas import UserOut, PaginatedResponse
-from .interface import IDatabaseRepository
+from ..core.permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
+from ..schemas import UserOut, PaginatedResponse
+from ..core.interface import IDatabaseRepository
 
 class BaseGenericView:
     """
     Base class for all Generic components. Handles initialization and shared logic.
     """
-from .repositories import MongoRepository
-import backbone.context as context
+from ..core.repository import BeanieRepository
 
 class BaseGenericView:
     """
@@ -35,22 +34,14 @@ class BaseGenericView:
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
         
-        # Resolve Repository and Database from arguments or Global Context
-        active_db = database if database is not None else context.DATABASE
-        active_repo_class = repository_class if repository_class is not None else context.REPOSITORY_CLASS
+        # Resolve Repository Class
+        active_repo_class = repository_class or BeanieRepository
 
         # Automatic Repository Wiring
         if repository:
             self.repository = repository
-        elif active_db is not None:
-             # Default to MongoRepository if not set globally or locally
-            repo_cls = active_repo_class or MongoRepository
-            self.repository = repo_cls(active_db)
         else:
-            raise ValueError(
-                "Database configuration missing. "
-                "Provide 'database' argument or configure BackboneConfig(database=...)."
-            )
+            self.repository = active_repo_class(database)
 
         self.schema = schema
         
@@ -73,9 +64,6 @@ class BaseGenericView:
         self.list_fields = list_fields
         
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
-        
-        # Auto-register for lifecycle events
-        context.REGISTERED_COMPONENTS.append(self)
 
     def _get_projection(self):
         if self.list_fields:
@@ -249,11 +237,5 @@ class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, Ge
         super().__init__(*args, **kwargs)
 
     async def sync_indexes(self):
-        # Index creation is DB specific. 
-        # For MongoDB, we can keep it here if the repository is specifically MongoRepository
-        if hasattr(self.repository, "collection"):
-            meta = getattr(self.schema, "Meta", None)
-            if meta and hasattr(meta, "indexes"):
-                for index in meta.indexes:
-                    fields = [(field, 1) for field in index["fields"]]
-                    await self.repository.collection.create_index(fields, unique=index.get("unique", False))
+        # Beanie handles indexes automatically via Document.Settings
+        pass
