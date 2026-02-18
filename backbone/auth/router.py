@@ -47,44 +47,36 @@ class AuthRouter:
 
         @self.router.post("/login", response_model=TokenResponse)
         async def login(request: Request, response: Response, login_data: LoginSchema):
-            await self._resolve_repos(request)
-            user = await self.user_repository.get_one({"email": login_data.email})
+            # await self._resolve_repos(request) # No need, AuthService handles it
             
-            if not user or not PasswordManager.verify_password(login_data.password, user.hashed_password):
-                raise HTTPException(status_code=401, detail="Invalid email or password")
+            from .service import AuthService
+            auth_service = AuthService(request)
             
-            # Create Session
-            user_id = str(user.id)
-            session_data = {
-                "user_id": user_id,
-                "refresh_token": "", # Placeholder
-                "expires_at": datetime.utcnow() + timedelta(days=7),
-                "user_agent": request.headers.get("user-agent"),
-                "ip_address": request.client.host if request.client else None,
-                "is_active": True
-            }
-            session = await self.session_repository.create(session_data)
-            sid = str(session.id)
+            user = await auth_service.authenticate_user(login_data.email, login_data.password)
+            if not user:
+                 raise HTTPException(status_code=401, detail="Invalid email or password")
             
-            refresh_token = TokenManager.create_refresh_token({"sub": user_id}, sid=sid)
-            access_token = TokenManager.create_access_token({"sub": user_id}, sid=sid)
-            
-            await self.session_repository.update({"id": session.id}, {"refresh_token": refresh_token})
-            
+            # Create Session via AuthService
+            session_data = await auth_service.create_session(
+                user=user, 
+                user_agent=request.headers.get("user-agent"),
+                ip_address=request.client.host if request.client else None
+            )
+
             # Use environment-aware cookie settings from BackboneConfig
             backbone_config = request.app.state.backbone_config
             cookie_opts = backbone_config.cookie_settings
             
             response.set_cookie(
                 key="refresh_token",
-                value=refresh_token,
+                value=session_data["refresh_token"],
                 max_age=7 * 24 * 60 * 60,
                 **cookie_opts
             )
             
             return {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
+                "access_token": session_data["access_token"],
+                "refresh_token": session_data["refresh_token"],
                 "token_type": "bearer"
             }
 

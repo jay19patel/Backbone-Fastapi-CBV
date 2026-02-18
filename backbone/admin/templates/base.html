@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,37 +8,78 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
     </style>
 </head>
+
 <body class="bg-slate-50 font-sans leading-normal tracking-normal">
     <div class="flex flex-col md:flex-row min-h-screen">
         <!-- Sidebar -->
-        <div class="bg-indigo-900 shadow-xl h-full md:h-screen w-full md:w-64 fixed md:relative z-20 transition-all duration-300">
+        <div
+            class="bg-indigo-900 shadow-xl h-screen w-full md:w-64 fixed md:sticky top-0 z-20 transition-all duration-300">
             <div class="px-6 py-8 border-b border-indigo-800/50">
                 <a href="/admin" class="flex items-center space-x-3 text-white">
                     <div class="bg-indigo-500 p-2 rounded-lg">
                         <i class="fas fa-layer-group text-lg"></i>
                     </div>
-                    <span class="text-xl font-bold tracking-tight">Backbone <span class="text-indigo-300 font-light">Admin</span></span>
+                    <span class="text-xl font-bold tracking-tight">Backbone <span
+                            class="text-indigo-300 font-light">Admin</span></span>
                 </a>
+
+                <div class="mt-6 relative">
+                    <i
+                        class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-indigo-400 text-xs"></i>
+                    <input type="text" id="sidebarSearch" placeholder="Search models..."
+                        class="w-full bg-indigo-800/50 text-indigo-100 placeholder-indigo-400 border border-indigo-700/50 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 focus:outline-none transition-all">
+                </div>
             </div>
-            
-            <div class="mt-8 px-4 overflow-y-auto custom-scrollbar h-[calc(100vh-120px)]">
-                <p class="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-4 px-2">Models</p>
+
+            <div class="mt-4 px-4 overflow-y-auto custom-scrollbar h-[calc(100vh-140px)]">
+                <!-- Models Navigation -->
+                <!-- Core Models -->
+                <p class="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-2 px-2 mt-4">Core</p>
                 <nav class="space-y-1">
                     {% for model in models %}
-                    <a href="/admin/{{ model.name }}" class="flex items-center px-4 py-3 text-indigo-100 hover:bg-indigo-800 rounded-xl transition-colors group">
-                        <i class="far fa-folder text-indigo-400 group-hover:text-white mr-3 transition-colors"></i>
-                        <span class="font-medium">{{ model.name }}</span>
+                    {% if model.category == 'Core Models' %}
+                    <a href="/admin/{{ model.name }}"
+                        class="flex items-center px-4 py-2 text-indigo-100 hover:bg-indigo-800 rounded-lg transition-colors group">
+                        <i
+                            class="fas fa-cube text-indigo-400 group-hover:text-white mr-3 text-sm transition-colors w-5 text-center"></i>
+                        <span class="font-medium text-sm">{{ model.name }}</span>
                     </a>
+                    {% endif %}
+                    {% endfor %}
+                </nav>
+
+                <!-- Custom Models -->
+                <p class="text-xs font-semibold text-indigo-400 uppercase tracking-wider mb-2 px-2 mt-6">Application</p>
+                <nav class="space-y-1">
+                    {% for model in models %}
+                    {% if model.category != 'Core Models' %}
+                    <a href="/admin/{{ model.name }}"
+                        class="flex items-center px-4 py-2 text-indigo-100 hover:bg-indigo-800 rounded-lg transition-colors group">
+                        <i
+                            class="far fa-folder text-indigo-400 group-hover:text-white mr-3 text-sm transition-colors w-5 text-center"></i>
+                        <span class="font-medium text-sm">{{ model.name }}</span>
+                    </a>
+                    {% endif %}
                     {% endfor %}
                 </nav>
 
                 <div class="mt-12 px-2 border-t border-indigo-800/50 pt-8 pb-4">
-                    <a href="/admin/logout" class="flex items-center text-indigo-300 hover:text-white transition-colors">
+                    <a href="/admin/logout"
+                        class="flex items-center text-indigo-300 hover:text-white transition-colors">
                         <i class="fas fa-sign-out-alt mr-2"></i>
                         <span>Logout</span>
                     </a>
@@ -48,14 +90,15 @@
         <!-- Main Content -->
         <div class="flex-1 flex flex-col min-w-0 bg-slate-50">
             <!-- Topbar -->
-            <header class="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-8 sticky top-0 z-10">
+            <header
+                class="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-8 sticky top-0 z-10">
                 <div class="flex items-center">
                     <h1 class="text-lg font-semibold text-slate-800">{% block header %}{% endblock %}</h1>
                 </div>
                 <div class="flex items-center space-x-4">
                     <span class="text-sm text-slate-500 h-8 flex items-center px-3 bg-slate-100 rounded-full">
                         <i class="far fa-user-circle mr-2 text-indigo-500"></i>
-                         {{ user.username if user else 'Admin' }}
+                        {{ user.username if user else 'Admin' }}
                     </span>
                 </div>
             </header>
@@ -64,11 +107,50 @@
             <main class="p-8 flex-1">
                 {% block content %}{% endblock %}
             </main>
-            
+
             <footer class="bg-white border-t border-slate-200 py-4 px-8 text-center text-xs text-slate-400">
                 &copy; {{ now.year }} Backbone Framework - Advanced Admin Interface
             </footer>
         </div>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const searchInput = document.getElementById('sidebarSearch');
+            if (!searchInput) return;
+
+            searchInput.addEventListener('input', function (e) {
+                const term = e.target.value.toLowerCase();
+                const navs = document.querySelectorAll('.overflow-y-auto nav');
+
+                navs.forEach(nav => {
+                    const links = nav.querySelectorAll('a');
+                    let hasVisibleLinks = false;
+
+                    links.forEach(link => {
+                        const text = link.querySelector('span').textContent.toLowerCase();
+                        if (text.includes(term)) {
+                            link.classList.remove('hidden');
+                            link.classList.add('flex'); // Ensure flex is restored
+                            hasVisibleLinks = true;
+                        } else {
+                            link.classList.add('hidden');
+                            link.classList.remove('flex');
+                        }
+                    });
+
+                    // Toggle Section Header
+                    const header = nav.previousElementSibling;
+                    if (header && header.tagName === 'P') {
+                        if (hasVisibleLinks) {
+                            header.classList.remove('hidden');
+                        } else {
+                            header.classList.add('hidden');
+                        }
+                    }
+                });
+            });
+        });
+    </script>
 </body>
+
 </html>

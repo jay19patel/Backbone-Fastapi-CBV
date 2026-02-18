@@ -26,7 +26,7 @@ class AdminSite:
             cls._instance = AdminSite()
         return cls._instance
 
-    def register(self, model: Type[Document], admin_class: Type[ModelAdmin] = ModelAdmin):
+    def register(self, model: Type[Document], admin_class: Type[ModelAdmin] = ModelAdmin, category: str = "Custom Models"):
         """
         Register a model with the Admin site.
         """
@@ -34,7 +34,8 @@ class AdminSite:
         self._registry[model_name] = {
             "model": model,
             "admin": admin_class(),
-            "name": model_name
+            "name": model_name,
+            "category": category
         }
 
     def get_registered_models(self) -> List[Dict[str, Any]]:

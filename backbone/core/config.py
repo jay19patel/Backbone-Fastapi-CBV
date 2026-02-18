@@ -39,8 +39,8 @@ class BackboneConfig:
         self.config = config
         
         # Default Core Models
-        from .models import User, Session, LogEntry
-        core_models = [User, Session, LogEntry]
+        from .models import User, Session, LogEntry, TaskLog
+        core_models = [User, Session, LogEntry, TaskLog]
         # Initialize with provided models, or an empty list if None
         self.document_models = list(document_models) if document_models is not None else []
         # Add core models, ensuring no duplicates
@@ -84,8 +84,13 @@ class BackboneConfig:
         self.app.include_router(self.auth_router.router)
 
         # Register Models with Admin Site
+        # Register Models with Admin Site
+        from .models import User, Session, LogEntry, TaskLog
+        core_models_set = {User, Session, LogEntry, TaskLog}
+        
         for model in self.document_models:
-            admin_site.register(model)
+            category = "Core Models" if model in core_models_set else "Custom Models"
+            admin_site.register(model, category=category)
 
     @property
     def is_development(self) -> bool:

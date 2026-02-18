@@ -15,6 +15,13 @@ router = APIRouter(prefix="/admin")
 template_dir = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=template_dir)
 
+# Custom Filters
+def nice_title(value: str) -> str:
+    if not value: return ""
+    return value.replace("_", " ").title()
+
+templates.env.filters["nice_title"] = nice_title
+
 # Helper to check if logged in via Cookie
 async def get_admin_user(request: Request) -> Optional[User]:
     token = request.cookies.get("admin_session")
@@ -22,7 +29,15 @@ async def get_admin_user(request: Request) -> Optional[User]:
         return None
     
     try:
-        user_id = TokenManager.decode_access_token(token)
+        # Verify token and get user (simplified validation)
+        payload = TokenManager.decode_token(token)
+        if not payload:
+            return None
+            
+        user_id = payload.get("sub")
+        sid = payload.get("sid")
+        
+        # ideally verify session exists/is active too
         user = await User.get(user_id)
         if user and user.is_superuser:
             return user
@@ -75,15 +90,21 @@ async def login_handle(
         await new_superuser.insert()
         user = new_superuser
     else:
-        # 2. Normal Login
+        # 2. Normal Login via AuthService
+        # Note: Admin login usually uses username, but our Auth system uses email.
+        # We might need to adjust this. 
+        # For now, let's assume username is the identifier or we fetch the user by username first.
+        
+        # Fetch user by username manually since AuthService expects email for standard login
         user = await User.find_one(User.username == username)
+        
         if not user or not PasswordManager.verify_password(password, user.hashed_password):
-            return templates.TemplateResponse("login.html", {
+             return templates.TemplateResponse("login.html", {
                 "request": request,
                 "superuser_exists": True,
                 "error": "Invalid username or password"
             })
-        
+            
         if not user.is_superuser:
             return templates.TemplateResponse("login.html", {
                 "request": request,
@@ -91,16 +112,40 @@ async def login_handle(
                 "error": "Access denied. Superuser only."
             })
 
-    # Create Session Cookie
-    token = TokenManager.create_access_token(data={"sub": str(user.id)})
+    # Create Session via AuthService
+    from ..auth.service import AuthService
+    auth_service = AuthService(request)
+    
+    # We use a manual session creation here because we already verified password
+    session_data = await auth_service.create_session(
+        user=user, 
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None
+    )
+    
+    access_token = session_data["access_token"]
+
     response = RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie(key="admin_session", value=token, httponly=True)
+    response.set_cookie(key="admin_session", value=access_token, httponly=True)
     return response
 
 @router.get("/logout")
-async def logout():
+async def logout(request: Request):
     response = RedirectResponse(url="/admin/login")
     response.delete_cookie("admin_session")
+    
+    # Ideally invalidate session in DB too
+    token = request.cookies.get("admin_session")
+    if token:
+         try:
+            payload = TokenManager.decode_token(token)
+            if payload:
+                sid = payload.get("sid")
+                from ..auth.service import AuthService
+                auth_service = AuthService(request)
+                await auth_service.logout(sid)
+         except: pass
+         
     return response
 
 @router.get("/{model_name}", response_class=HTMLResponse)
@@ -132,6 +177,7 @@ async def model_list(
         "total_count": total_count,
         "current_page": page,
         "total_pages": total_pages,
+        "page_size": limit,
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc)

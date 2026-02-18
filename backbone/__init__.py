@@ -1,6 +1,6 @@
 from .core.config import BackboneConfig
 from .core.settings import settings, Settings
-from .core.models import User, Session, LogEntry, EventDocument
+from .core.models import User, Session, LogEntry, EventDocument, TaskLog
 from .core.signals import signals, Signal
 from .generic.views import (
     GenericList, 
@@ -28,6 +28,7 @@ __all__ = [
     "Session",
     "LogEntry",
     "EventDocument",
+    "TaskLog",
     "signals",
     "Signal",
     "GenericList",

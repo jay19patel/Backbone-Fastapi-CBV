@@ -4,8 +4,11 @@ import uuid
 import logging
 import importlib
 import inspect
+import time
+from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Union
 import redis.asyncio as redis
+from ..core.models import TaskLog
 
 logger = logging.getLogger("backbone.queue")
 
@@ -23,23 +26,44 @@ class TaskQueue:
         """
         Enqueue a task to be processed in the background.
         """
-        if not self.enabled:
-            logger.warning("TaskQueue is disabled. Executing task synchronously.")
-            if callable(func):
-                await func(*args, **kwargs)
-            return None
-
-        task_id = str(uuid.uuid4())
-        
-        # Resolve function path
+        # Resolve function path first
         if callable(func):
             module_name = func.__module__
             func_name = func.__name__
-            # If function is in the main script, we might need to handle it specially
-            # for the worker to find it. Standard practice is to use its full path.
             func_path = f"{module_name}:{func_name}"
         else:
             func_path = func
+
+        if not self.enabled:
+            logger.warning("TaskQueue is disabled. Executing task synchronously.")
+            # Just run it
+            if callable(func):
+                if inspect.iscoroutinefunction(func):
+                    await func(*args, **kwargs)
+                else:
+                    func(*args, **kwargs)
+            return None
+
+        # Create Task Log
+        try:
+            task_log = TaskLog(
+                task_id="pending", # Temporary, will use object id
+                function_name=func_path,
+                args=list(args), # Convert tuple to list for JSON serialization compatibility (mostly)
+                kwargs=kwargs,
+                status="queued"
+            )
+            await task_log.insert()
+            task_id = str(task_log.id)
+            
+            # Update task_id field to match the DB ID for easier searching
+            task_log.task_id = task_id
+            await task_log.save()
+            
+        except Exception as e:
+            logger.error(f"Failed to create TaskLog: {e}")
+            # Fallback ID if DB fails
+            task_id = str(uuid.uuid4())
 
         task_data = {
             "id": task_id,
@@ -49,11 +73,16 @@ class TaskQueue:
         }
 
         try:
-            await self.redis.rpush(self.queue_name, json.dumps(task_data))
+            await self.redis.rpush(self.queue_name, json.dumps(task_data, default=str)) # Use default=str for complex types
             logger.info(f"Task enqueued: {func_path} (ID: {task_id})")
             return task_id
         except Exception as e:
             logger.error(f"Failed to enqueue task: {e}")
+            # If enqueue fails, maybe we should update the log to failed?
+            if 'task_log' in locals():
+                task_log.status = "failed"
+                task_log.error_message = f"Redis Enqueue Error: {str(e)}"
+                await task_log.save()
             return None
 
     async def dequeue(self) -> Optional[Dict[str, Any]]:
@@ -105,6 +134,21 @@ class TaskWorker:
 
         logger.info(f"[{self.worker_name}] Processing task: {func_path} (ID: {task_id})")
 
+        # Update Log to Processing
+        task_log = None
+        try:
+            from bson import ObjectId
+            if ObjectId.is_valid(task_id):
+                task_log = await TaskLog.get(task_id)
+                if task_log:
+                    task_log.status = "processing"
+                    task_log.started_at = datetime.utcnow()
+                    await task_log.save()
+        except Exception as e:
+            logger.error(f"Failed to update TaskLog start: {e}")
+
+        start_time = time.time()
+        
         try:
             # Resolve function
             module_name, func_name = func_path.split(":")
@@ -124,9 +168,30 @@ class TaskWorker:
                 # Wrap sync call to avoid blocking the worker's loop
                 await asyncio.to_thread(func, *args, **kwargs)
             
+            end_time = time.time()
+            duration_s = round(end_time - start_time, 2)
+            
             logger.info(f"[{self.worker_name}] Task completed successfully: (ID: {task_id})")
+            
+            # Update Log to Completed
+            if task_log:
+                task_log.status = "completed"
+                task_log.completed_at = datetime.utcnow()
+                task_log.execution_time_s = duration_s
+                await task_log.save()
+
         except Exception as e:
             logger.error(f"[{self.worker_name}] Task failed: (ID: {task_id}) - Error: {e}")
+            
+            # Update Log to Failed
+            if task_log:
+                task_log.status = "failed"
+                task_log.completed_at = datetime.utcnow()
+                task_log.error_message = str(e)
+                try:
+                    await task_log.save()
+                except Exception as save_error:
+                    logger.error(f"Failed to save error log: {save_error}")
 
     def stop(self):
         self.running = False

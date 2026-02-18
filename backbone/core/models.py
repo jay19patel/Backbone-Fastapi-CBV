@@ -115,3 +115,23 @@ class LogEntry(AuditDocument):
             IndexModel([("level", ASCENDING)]),
             IndexModel([("created_at", DESCENDING)])
         ]
+
+class TaskLog(AuditDocument):
+    task_id: str
+    function_name: str
+    args: Optional[List[Any]] = None
+    kwargs: Optional[Dict[str, Any]] = None
+    status: str = "queued"  # queued, processing, completed, failed
+    queued_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    execution_time_s: Optional[float] = None
+
+    class Settings:
+        name = "task_logs"
+        indexes = [
+            IndexModel([("status", ASCENDING)]),
+            IndexModel([("task_id", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)])
+        ]

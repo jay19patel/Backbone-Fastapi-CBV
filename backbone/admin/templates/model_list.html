@@ -31,9 +31,11 @@
         <table class="w-full text-left">
             <thead class="bg-slate-50 border-b border-slate-100">
                 <tr>
+                    <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-16">#</th>
                     {% if items and items[0] %}
                     {% for key in items[0].dict().keys() %}
-                    <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{{ key }}</th>
+                    <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{{
+                        key|nice_title }}</th>
                     {% endfor %}
                     {% else %}
                     <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">No Data</th>
@@ -42,8 +44,11 @@
             </thead>
             <tbody class="divide-y divide-slate-100">
                 {% for item in items %}
-                <tr class="hover:bg-slate-50 transition-colors cursor-pointer"
+                <tr class="hover:bg-slate-50 transition-colors cursor-pointer group"
                     onclick="window.location='/admin/{{ model_name }}/{{ item.id }}'">
+                    <td class="px-6 py-4 text-sm font-medium text-slate-500">
+                        {{ ((current_page - 1) * page_size) + loop.index }}
+                    </td>
                     {% for value in item.dict().values() %}
                     <td class="px-6 py-4 text-sm text-slate-600">
                         <div class="max-w-[200px] truncate">
