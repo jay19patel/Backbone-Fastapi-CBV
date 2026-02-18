@@ -2,7 +2,8 @@ from typing import List, Optional, Dict, Any, TypeVar, Generic, Type
 from pydantic import BaseModel
 from beanie import Document
 from ..schemas import PaginatedResponse
-from datetime import datetime
+from datetime import datetime, timezone
+from .signals import signals
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -43,6 +44,7 @@ class BeanieRepository(Generic[T]):
     async def create(self, data: Dict[str, Any]) -> T:
         obj = self.document_class(**data)
         await obj.insert()
+        await signals.post_create.emit(obj)
         return obj
 
     async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
@@ -52,6 +54,7 @@ class BeanieRepository(Generic[T]):
         item = await self.document_class.find_one(filter_query)
         if item:
             await item.set(data)
+            await signals.post_update.emit(item, changed_fields=data)
             return item
         return None
 
@@ -64,9 +67,10 @@ class BeanieRepository(Generic[T]):
             return False
             
         if soft:
-            await item.set({"is_deleted": True, "deleted_at": datetime.utcnow()})
+            await item.set({"is_deleted": True, "deleted_at": datetime.now(timezone.utc)})
         else:
             await item.delete()
+        await signals.post_delete.emit(item)
         return True
 
     async def count(self, query: Dict[str, Any]) -> int:

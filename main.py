@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI
 from backbone import (
     BackboneConfig, 
@@ -11,7 +12,8 @@ from backbone import (
     AllowAny,
     IsOwner,
     settings,
-    signals
+    signals,
+    background_task
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
 from backbone.core.models import User, Session, LogEntry
@@ -36,9 +38,33 @@ app = FastAPI(title="Modular Backbone Framework")
 # --------------------------------------------------------------------------
 from backbone import logger
 
+async def process_new_note_task(note_id: str):
+    """
+    Simulation of a heavy background task (async).
+    """
+    logger.info(f"⏳ [Background-Async] Started processing for Note: {note_id}")
+    await asyncio.sleep(3)
+    logger.info(f"✅ [Background-Async] Finished processing for Note: {note_id}")
+
+def sync_log_process(message: str):
+    """
+    Example of a synchronous background task.
+    """
+    import time
+    logger.info(f"⏳ [Background-Sync] Processing log: {message}")
+    time.sleep(1) # Simulate sync work
+    logger.info(f"✅ [Background-Sync] Finished log: {message}")
+
 async def note_create_notifier(instance: NoteSchema, **kwargs):
-    logger.info(f"📣 SIGNAL RECIPIED: New Note created - {instance.title}")
-    # You can add logic here to send emails, push notifications, etc.
+    logger.info(f"📣 [Signal] New Note Detected: {instance.title}")
+    
+    # Using the Simplified background_task syntax
+    await background_task(process_new_note_task, note_id=str(instance.id))
+    
+    # Also launching a sync task
+    await background_task(sync_log_process, f"Note {instance.title} created")
+    
+    logger.info(f"🚀 [Queue] Tasks enqueued via background_task()")
 
 async def note_update_notifier(instance: NoteSchema, changed_fields: dict = None, **kwargs):
     if changed_fields:

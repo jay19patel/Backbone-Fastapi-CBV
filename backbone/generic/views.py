@@ -6,9 +6,8 @@ from ..core.repository import BeanieRepository
 from ..core.permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
 from ..schemas import UserOut, PaginatedResponse
 from ..core.config import BackboneConfig
-from ..utils.cache import CacheService
+from ..utils.cache import CacheService, cache
 import hashlib
-import json
 
 class BaseGenericView:
     """
@@ -54,7 +53,7 @@ class BaseGenericView:
 
         self.list_fields = list_fields
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
-        self.cache: Optional[CacheService] = None
+        self.cache_service: Optional[CacheService] = None
 
     async def _resolve_context(self, request: Request):
         """
@@ -64,16 +63,13 @@ class BaseGenericView:
         if not self.repository.db:
             self.repository.db = config.database
         
-        if not self.cache:
-            self.cache = CacheService(
-                redis_client=getattr(config, "redis_client", None),
-                enabled=getattr(config.config, "CACHE_ENABLED", False)
-            )
+        if not self.cache_service:
+            self.cache_service = getattr(config, "cache_service", None)
 
     async def _invalidate_cache(self):
-        if self.cache:
+        if self.cache_service:
             pattern = f"backbone:cache:{self.prefix}:*"
-            await self.cache.delete_pattern(pattern)
+            await self.cache_service.delete_pattern(pattern)
 
     def _get_projection(self):
         if self.list_fields:
@@ -86,24 +82,24 @@ class BaseGenericView:
         await self._resolve_context(request)
         
         cache_key = f"backbone:cache:{self.prefix}:detail:{pk}"
-        if use_cache and self.cache:
-            cached_item = await self.cache.get(cache_key)
-            if cached_item:
-                return self.schema(**cached_item)
-
-        item = await self.repository.get_one({"id": pk, "is_deleted": False})
-        if not item:
-            raise HTTPException(status_code=404, detail="Item not found")
         
-        for permission_class in self.permission_classes:
-            perm = permission_class(request, user)
-            if not await perm.has_object_permission(item):
-                raise HTTPException(status_code=403, detail="Object-level access denied")
-        
-        if use_cache and self.cache:
-            await self.cache.set(cache_key, item.model_dump(by_alias=True), ttl=self.cache_ttl)
+        async def fetch_item():
+            item = await self.repository.get_one({"id": pk, "is_deleted": False})
+            if not item:
+                raise HTTPException(status_code=404, detail="Item not found")
             
-        return item
+            for permission_class in self.permission_classes:
+                perm = permission_class(request, user)
+                if not await perm.has_object_permission(item):
+                    raise HTTPException(status_code=403, detail="Object-level access denied")
+            return item.model_dump(by_alias=True)
+
+        if use_cache and self.cache_service and self.cache_service.enabled:
+            data = await self.cache_service.get_or_set(cache_key, self.cache_ttl, fetch_item)
+            return self.schema(**data)
+            
+        item_data = await fetch_item()
+        return self.schema(**item_data)
 
 class GenericList(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -112,6 +108,7 @@ class GenericList(BaseGenericView):
 
     def _register_list_route(self):
         @self.router.get("/", response_model=PaginatedResponse[Any])
+        @cache(key_prefix=f"backbone:{self.prefix}:list")
         async def list(
             request: Request,
             user: Optional[UserOut] = Depends(self.perm_dep),
@@ -122,45 +119,21 @@ class GenericList(BaseGenericView):
         ):
             await self._resolve_context(request)
             
-            # Generate Cache Key
-            query_params = f"search={search}&sort={sort}&page={page}&page_size={page_size}"
-            query_hash = hashlib.md5(query_params.encode()).hexdigest()
-            cache_key = f"backbone:cache:{self.prefix}:list:{query_hash}"
-            
-            if self.cache:
-                cached_res = await self.cache.get(cache_key)
-                if cached_res:
-                    return cached_res
-
             query = {"is_deleted": False}
-            
             if search and self.search_fields:
-                query["$or"] = [
-                    {field: {"$regex": search, "$options": "i"}} 
-                    for field in self.search_fields
-                ]
+                query["$or"] = [{field: {"$regex": search, "$options": "i"}} for field in self.search_fields]
             
             skip = (page - 1) * page_size
-            results = await self.repository.get_all(
-                query, 
-                skip=skip, 
-                limit=page_size, 
-                projection=self._get_projection()
-            )
+            results = await self.repository.get_all(query, skip=skip, limit=page_size, projection=self._get_projection())
             total = await self.repository.count(query)
             
-            response_data = {
+            return {
                 "total": total,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total + page_size - 1) // page_size,
                 "results": [r.model_dump(by_alias=True) if hasattr(r, "model_dump") else r for r in results]
             }
-            
-            if self.cache:
-                await self.cache.set(cache_key, response_data, ttl=self.cache_ttl)
-                
-            return response_data
 
 class GenericCreate(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -169,12 +142,14 @@ class GenericCreate(BaseGenericView):
         self._register_create_route()
 
     def _register_create_route(self):
+        from datetime import datetime, timezone
         @self.router.post("/", response_model=self.schema, status_code=201)
+        @cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create") # Idempotency
         async def create(request: Request, data: self.schema, user: UserOut = Depends(self.perm_dep)):
             await self._resolve_context(request)
             validated_data = data.model_dump(by_alias=True, exclude={"id"})
             validated_data.update({
-                "created_at": datetime.utcnow(),
+                "created_at": datetime.now(timezone.utc),
                 "created_by": str(user.id),
                 "is_deleted": False
             })
@@ -189,8 +164,20 @@ class GenericRetrieve(BaseGenericView):
 
     def _register_retrieve_route(self):
         @self.router.get("/{pk}", response_model=self.schema)
+        @cache(key_prefix=f"backbone:{self.prefix}:detail")
         async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
-            return await self._get_object_internal(pk, request, user)
+            await self._resolve_context(request)
+            # We bypass the internal _get_object_internal and do it directly for the decorator to work perfectly
+            item = await self.repository.get_one({"id": pk, "is_deleted": False})
+            if not item:
+                raise HTTPException(status_code=404, detail="Item not found")
+            
+            for permission_class in self.permission_classes:
+                perm = permission_class(request, user)
+                if not await perm.has_object_permission(item):
+                    raise HTTPException(status_code=403, detail="Object-level access denied")
+            
+            return item
 
 class GenericUpdate(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -204,7 +191,8 @@ class GenericUpdate(BaseGenericView):
             # Force validation by creating a partial model if needed, but for now simple Dict
             item = await self._get_object_internal(pk, request, user, use_cache=False)
             update_data = {k: v for k, v in data.items() if v is not None}
-            update_data["updated_at"] = datetime.utcnow()
+            from datetime import datetime, timezone
+            update_data["updated_at"] = datetime.now(timezone.utc)
             update_data["updated_by"] = str(user.id)
             
             result = await self.repository.update({"id": pk}, update_data)

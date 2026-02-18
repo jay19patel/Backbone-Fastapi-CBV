@@ -2,11 +2,14 @@ from typing import List, Any, Optional, Type
 from fastapi import FastAPI
 from .repository import BeanieRepository
 from .database import init_database
+from ..utils.cache import CacheService
+from .queue import TaskQueue, TaskWorker
 from pydantic_settings import BaseSettings
 from contextlib import asynccontextmanager
 
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
+import asyncio
 
 class Settings(BaseSettings):
     secret_key: str = "your_super_secret_key_here"  # Override in production
@@ -22,6 +25,8 @@ class Settings(BaseSettings):
     # Cache Settings
     CACHE_ENABLED: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_TTL: int = 300
+    WORKER_COUNT: int = 1
 
     @property
     def is_development(self) -> bool:
@@ -40,6 +45,8 @@ class BackboneConfig:
     Configuration helper for Backbone.
     Sets up the global database context and manages application lifespan.
     """
+    _instance: Optional["BackboneConfig"] = None
+
     def __init__(
         self, 
         app: FastAPI, 
@@ -67,10 +74,18 @@ class BackboneConfig:
         self.mongo_client = AsyncIOMotorClient(self.config.MONGODB_URL)
         self.database = self.mongo_client[self.config.DATABASE_NAME]
 
-        # Redis Client (Optional)
+        # Cache Service
         self.redis_client = None
+        self.cache_service = CacheService(None, enabled=False)
         if getattr(self.config, "CACHE_ENABLED", False):
             self.redis_client = redis.from_url(self.config.REDIS_URL, decode_responses=True)
+            self.cache_service = CacheService(self.redis_client, enabled=True)
+
+        # Task Queue
+        self.task_queue = TaskQueue(self.redis_client)
+
+        # Store Class Instance
+        BackboneConfig._instance = self
 
         # Attach to app state for access in views
         self.app.state.backbone_config = self
@@ -98,6 +113,14 @@ class BackboneConfig:
             document_models=[m for m in self.document_models if hasattr(m, "Settings")]
         )
         print("System: Beanie Initialized.")
+
+        # Start Task Workers
+        if self.task_queue.enabled:
+            worker_count = getattr(self.config, "WORKER_COUNT", 1)
+            print(f"System: Starting {worker_count} Task Worker(s)...")
+            for i in range(worker_count):
+                worker = TaskWorker(self.task_queue, worker_name=f"Worker-{i+1}")
+                asyncio.create_task(worker.run())
 
         print("System: Online and Ready.")
         

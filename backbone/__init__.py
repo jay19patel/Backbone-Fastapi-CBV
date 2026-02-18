@@ -16,6 +16,7 @@ from .core.repository import BeanieRepository
 from .auth.router import AuthRouter
 from .utils import PasswordManager, TokenManager, logger
 from .utils.cache import CacheService
+from .utils.tasks import background_task
 
 __all__ = [
     "BackboneConfig",
@@ -47,5 +48,6 @@ __all__ = [
     "PasswordManager",
     "TokenManager",
     "logger",
-    "CacheService"
+    "CacheService",
+    "background_task"
 ]

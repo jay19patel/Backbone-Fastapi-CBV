@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import asyncio
 
@@ -20,7 +20,7 @@ class DatabaseLoggingHandler(logging.Handler):
                 "module": record.module,
                 "function": record.funcName,
                 "line": record.lineno,
-                "created_at": datetime.fromtimestamp(record.created),
+                "created_at": datetime.fromtimestamp(record.created, tz=timezone.utc),
             }
             
             if record.exc_info:
