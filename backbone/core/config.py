@@ -1,7 +1,6 @@
 from typing import List, Any, Optional, Type
 from fastapi import FastAPI
 from .repository import BeanieRepository
-from .models import User, Session, LogEntry
 from .database import init_database
 from pydantic_settings import BaseSettings
 from contextlib import asynccontextmanager
@@ -50,7 +49,16 @@ class BackboneConfig:
     ):
         self.app = app
         self.config = config
-        self.document_models = document_models or [User, Session, LogEntry]
+        
+        # Default Core Models
+        from .models import User, Session, LogEntry
+        core_models = [User, Session, LogEntry]
+        # Initialize with provided models, or an empty list if None
+        self.document_models = list(document_models) if document_models is not None else []
+        # Add core models, ensuring no duplicates
+        for model in core_models:
+            if model not in self.document_models:
+                self.document_models.append(model)
         
         # Determine Default Repository
         self.repository_class = repository_class

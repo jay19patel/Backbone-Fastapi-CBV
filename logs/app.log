@@ -1,0 +1,10 @@
+2026-02-18 13:31:05,815 - backbone_app - INFO - [test_log.py:6] - TEST MESSAGE: Logging is working at Wed Feb 18 13:31:05 2026
+2026-02-18 13:31:05,816 - backbone_app - ERROR - [test_log.py:7] - TEST ERROR: This should appear in app.log
+2026-02-18 13:31:25,069 - backbone_app - INFO - [verify_events.py:14] - 🚀 STARTING VERIFICATION SCRIPT
+2026-02-18 13:31:54,059 - backbone_app - INFO - [verify_events.py:14] - 🚀 STARTING VERIFICATION SCRIPT
+2026-02-18 13:31:54,082 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'Signal Note'
+2026-02-18 13:31:54,083 - backbone_app - INFO - [schema.py:31] - 📝 Title changed for note 699571f22ffb8b52455fbd62
+2026-02-18 13:31:54,083 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 699571f22ffb8b52455fbd62
+2026-02-18 13:31:54,084 - backbone_app - INFO - [schema.py:31] - 📝 Title changed for note 699571f22ffb8b52455fbd62
+2026-02-18 13:31:54,085 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 699571f22ffb8b52455fbd62
+2026-02-18 13:31:54,092 - backbone_app - WARNING - [schema.py:36] - 🗑️ Note 699571f22ffb8b52455fbd62 was deleted

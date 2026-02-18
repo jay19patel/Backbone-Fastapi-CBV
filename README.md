@@ -4,11 +4,10 @@ A modern, highly-modular FastAPI framework skeleton optimized for MongoDB/Beanie
 
 ## 🛠 Features
 
-- **MongoDB-Only Architecture**: Streamlined Beanie-based models for simplified data management.
-- **Redis Caching**: Built-in caching for Generic Views (`List` and `Retrieve`) with automatic invalidation.
-- **Dockerized Databases**: Easy setup for MongoDB and Redis using Docker Compose.
-- **Fast Development**: Optimized for `uv` and `uvicorn` for a seamless local development experience.
-- **Granular Auth**: JWT-based session management with refresh tokens.
+- **Decoupled Model Signals**: Connect external logic (like notifications) to model events in `main.py` without modifying models.
+- **Model Event Hooks**: Pre-built base class (`EventDocument`) with Beanie lifecycle hooks and change tracking.
+- **Centralized Logging**: Comprehensive logging to Console, `app.log`, and asynchronously to MongoDB.
+- **Automatic Registration**: Core models (`User`, `Session`, `LogEntry`) are automatically registered by `BackboneConfig`.
 
 ---
 
@@ -88,6 +87,46 @@ Generic views automatically handle caching. For example, the `Playlists` endpoin
 - `GET /playlists/`: Retrieves paginated list (Cached)
 - `GET /playlists/{pk}`: Retrieves single item (Cached)
 - `POST/PATCH/DELETE`: Standard operations (Automatically invalidates cache)
+
+### 🔔 Advanced: Model Signals & Events
+The framework provides a decoupled signal system to handle model lifecycles:
+
+1.  **Define a Handler in `main.py`**:
+    ```python
+    async def on_note_created(instance, **kwargs):
+        logger.info(f"Notification: New note '{instance.title}'")
+
+    signals.post_create.connect(NoteSchema, on_note_created)
+    ```
+2.  **Field Specific Tracking**:
+    ```python
+    async def on_pin_changed(instance, changed_fields=None, **kwargs):
+        if "is_pinned" in changed_fields:
+            logger.warning(f"Note {instance.id} pin status: {changed_fields['is_pinned']}")
+
+    signals.on_field_change.connect(NoteSchema, on_pin_changed)
+    ```
+
+### 📝 Logging
+Use the centralized logger to track system activity. Logs are stored in `logs/app.log` and the `log_entries` collection in MongoDB.
+
+```python
+from backbone import logger
+
+logger.info("Something happenened!")
+logger.error("An error occurred", extra_info={"details": "contextual data"})
+```
+
+### 🏗️ Event-Driven Models
+Inherit from `EventDocument` in `schema.py` to enable automatic change tracking and signals:
+
+```python
+class MyModel(EventDocument):
+    ...
+    @after_event(Insert)
+    async def custom_logic(self):
+        logger.info("Internal model hook triggered")
+```
 
 ---
 

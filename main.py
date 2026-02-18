@@ -10,7 +10,8 @@ from backbone import (
     GenericCrud,
     AllowAny,
     IsOwner,
-    settings
+    settings,
+    signals
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
 from backbone.core.models import User, Session, LogEntry
@@ -31,12 +32,39 @@ config = AppConfig()
 app = FastAPI(title="Modular Backbone Framework")
 
 # --------------------------------------------------------------------------
+# Custom Model Event Handlers (Decoupled)
+# --------------------------------------------------------------------------
+from backbone import logger
+
+async def note_create_notifier(instance: NoteSchema, **kwargs):
+    logger.info(f"📣 SIGNAL RECIPIED: New Note created - {instance.title}")
+    # You can add logic here to send emails, push notifications, etc.
+
+async def note_update_notifier(instance: NoteSchema, changed_fields: dict = None, **kwargs):
+    if changed_fields:
+        logger.info(f"📣 SIGNAL RECIPIED: Note updated - {instance.id}. Changes: {changed_fields}")
+
+async def note_field_change_handler(instance: NoteSchema, changed_fields: dict = None, **kwargs):
+    if changed_fields and "is_pinned" in changed_fields:
+        old, new = changed_fields["is_pinned"]
+        logger.warning(f"📌 PIN STATUS CHANGED for note {instance.id}: {old} -> {new}")
+
+async def note_delete_notifier(instance: NoteSchema, **kwargs):
+    logger.warning(f"📣 SIGNAL RECIPIED: Note was deleted - {instance.id}")
+
+# Register Handlers with Signals
+signals.post_create.connect(NoteSchema, note_create_notifier)
+signals.post_update.connect(NoteSchema, note_update_notifier)
+signals.on_field_change.connect(NoteSchema, note_field_change_handler)
+signals.post_delete.connect(NoteSchema, note_delete_notifier)
+
+# --------------------------------------------------------------------------
 # Backbone Global Configuration
 # --------------------------------------------------------------------------
 BackboneConfig(
     app=app, 
     config=config, 
-    document_models=[User, Session, LogEntry, BlogSchema, NoteSchema, PlaylistSchema]
+    document_models=[BlogSchema, NoteSchema, PlaylistSchema]
 )
 
 # 1. Auth
