@@ -1,63 +1,99 @@
+import asyncio
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
-from motor.motor_asyncio import AsyncIOMotorClient
 from backbone import (
-    AuthRouter, IsOwner,AllowAny, GenericCrud, BeanieRepository, BackboneConfig,
-    GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete
+    BackboneConfig, 
+    GenericList, 
+    GenericCreate, 
+    GenericRetrieve, 
+    GenericUpdate, 
+    GenericDelete, 
+    GenericCrud,
+    AllowAny,
+    IsOwner,
+    settings,
+    Settings,
+    signals,
+    background_task
 )
 from schema import BlogSchema, NoteSchema, PlaylistSchema
-from pydantic_settings import BaseSettings
+from backbone.core.models import User, Session, LogEntry
 
-# Configuration
-class AppConfig(BaseSettings):
-    MONGODB_URL: str = "mongodb+srv://justj:admin@cluster0.fsgzjrl.mongodb.net"
+# --------------------------------------------------------------------------
+# Application Setup & Dependencies
+# --------------------------------------------------------------------------
+class AppConfig(Settings):
+    ENVIRONMENT: str = "develop"
+    MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "backbone_app"
+    REDIS_URL: str = "redis://localhost:6380/0"
+    CACHE_ENABLED: bool = True
 
 config = AppConfig()
-
-# Database Connection
-client = AsyncIOMotorClient(config.MONGODB_URL)
-database = client[config.DATABASE_NAME]
 
 # App Definition
 app = FastAPI(title="Modular Backbone Framework")
 
-from backbone.core.models import User, Session
+# --------------------------------------------------------------------------
+# Custom Model Event Handlers (Decoupled)
+# --------------------------------------------------------------------------
+from backbone import logger
+
+async def process_new_note_task(note_id: str):
+    """
+    Simulation of a heavy background task (async).
+    """
+    logger.info(f"⏳ [Background-Async] Started processing for Note: {note_id}")
+    await asyncio.sleep(3)
+    logger.info(f"✅ [Background-Async] Finished processing for Note: {note_id}")
+
+def sync_log_process(message: str):
+    """
+    Example of a synchronous background task.
+    """
+    import time
+    logger.info(f"⏳ [Background-Sync] Processing log: {message}")
+    time.sleep(1) # Simulate sync work
+    logger.info(f"✅ [Background-Sync] Finished log: {message}")
+
+async def note_create_notifier(instance: NoteSchema, **kwargs):
+    logger.info(f"📣 [Signal] New Note Detected: {instance.title}")
+    
+    # Using the Simplified background_task syntax
+    await background_task(process_new_note_task, note_id=str(instance.id))
+    
+    # Also launching a sync task
+    await background_task(sync_log_process, f"Note {instance.title} created")
+    
+    logger.info(f"🚀 [Queue] Tasks enqueued via background_task()")
+
+async def note_update_notifier(instance: NoteSchema, changed_fields: dict = None, **kwargs):
+    if changed_fields:
+        logger.info(f"📣 SIGNAL RECIPIED: Note updated - {instance.id}. Changes: {changed_fields}")
+
+async def note_field_change_handler(instance: NoteSchema, changed_fields: dict = None, **kwargs):
+    if changed_fields and "is_pinned" in changed_fields:
+        old, new = changed_fields["is_pinned"]
+        logger.warning(f"📌 PIN STATUS CHANGED for note {instance.id}: {old} -> {new}")
+
+async def note_delete_notifier(instance: NoteSchema, **kwargs):
+    logger.warning(f"📣 SIGNAL RECIPIED: Note was deleted - {instance.id}")
+
+# Register Handlers with Signals
+signals.post_create.connect(NoteSchema, note_create_notifier)
+signals.post_update.connect(NoteSchema, note_update_notifier)
+signals.on_field_change.connect(NoteSchema, note_field_change_handler)
+signals.post_delete.connect(NoteSchema, note_delete_notifier)
 
 # --------------------------------------------------------------------------
 # Backbone Global Configuration
-# Sets the default Database and Repository Class for all GenericCrud views.
-# Also manages the Application Lifespan (Startup/Shutdown).
 # --------------------------------------------------------------------------
 BackboneConfig(
     app=app, 
     config=config, 
-    database=database,
-    mongo_client=client, 
-    repository_class=BeanieRepository,
-    document_models=[User, Session, BlogSchema, NoteSchema, PlaylistSchema]
+    document_models=[BlogSchema, NoteSchema, PlaylistSchema]
 )
 
-# Initialize Resources
-# Views explicitly use the configured Defaults from BackboneConfig
-
-# 1. Auth (AuthRouter should ideally use context too, but we pass db for now or update it)
-# Let's pass db explicitly to Auth as it might be special, or update Auth to use context.
-# Keeping explicit injection for Auth is fine, but views below use Context.
-auth = AuthRouter(db_instance=database)
-
-# # 2. Blog
-# blog = GenericCrud(
-#     schema=BlogSchema,
-#     prefix="/blogs",
-#     tags=["Blogs"],
-#     list_fields=["title", "author_id"],
-#     filter_fields=["tags"],
-#     permission_classes=[IsOwner]
-# )
-
-# 3. Notes (Demonstrating Granular Control as requested)
-# List & Create
+# 1. Notes (Demonstrating Granular Control)
 note_list = GenericList(
     schema=NoteSchema,
     prefix="/notes",
@@ -74,7 +110,6 @@ note_create = GenericCreate(
     permission_classes=[IsOwner]
 )
 
-# Detail Operations (Retrieve, Update, Delete)
 note_retrieve = GenericRetrieve(
     schema=NoteSchema,
     prefix="/notes",
@@ -96,26 +131,23 @@ note_delete = GenericDelete(
     permission_classes=[IsOwner]
 )
 
-# # 4. Playlists
-# playlist = GenericCrud(
-#     schema=PlaylistSchema,
-#     prefix="/playlists",
-#     tags=["Playlists"],
-#     list_fields=["name", "is_public"],
-#     permission_classes=[IsOwner]
-# )
+# 3. Playlists (Full CRUD)
+playlist_crud = GenericCrud(
+    schema=PlaylistSchema,
+    prefix="/playlists",
+    tags=["Playlists"],
+    search_fields=["name"],
+    permission_classes=[IsOwner]
+)
 
 # Register Routers
-# We can also automate this if we wanted, but explicit is better for control
-app.include_router(auth.router)
-
-# Notes (Granular)
 app.include_router(note_list.router)
 app.include_router(note_create.router)
 app.include_router(note_retrieve.router)
 app.include_router(note_update.router)
 app.include_router(note_delete.router)
+app.include_router(playlist_crud.router)
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8012, reload=True)
+@app.get("/")
+async def root():
+    return {"message": "Backbone Framework: MongoDB-Only Edition"}

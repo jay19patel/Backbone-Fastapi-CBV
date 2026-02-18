@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}{{ model_name }} Detail | Backbone Admin{% endblock %}
+{% block header %}{{ model_name }} Detail{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+    <div class="flex items-center space-x-2 text-sm text-slate-400">
+        <a href="/admin" class="hover:text-indigo-600 transition-colors">Admin</a>
+        <i class="fas fa-chevron-right text-[10px]"></i>
+        <a href="/admin/{{ model_name }}" class="hover:text-indigo-600 transition-colors">{{ model_name }}</a>
+        <i class="fas fa-chevron-right text-[10px]"></i>
+        <span class="text-slate-600 font-medium">Record {{ item.id }}</span>
+    </div>
+    <a href="/admin/{{ model_name }}"
+        class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition-all">
+        <i class="fas fa-arrow-left mr-2"></i> Back to List
+    </a>
+</div>
+
+<form action="/admin/{{ model_name }}/{{ item.id }}" method="POST"
+    class="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-800">Edit Record</h2>
+            <p class="text-slate-500 text-sm mt-1">Update values for this {{ model_name }} entry.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <a href="/admin/{{ model_name }}/{{ item.id }}/delete"
+                onclick="return confirm('Are you sure you want to delete this record?')"
+                class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-xl text-sm font-semibold transition-all">
+                <i class="fas fa-trash-alt mr-2"></i> Delete
+            </a>
+            <div class="h-12 w-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center">
+                <i class="fas fa-edit text-xl"></i>
+            </div>
+        </div>
+    </div>
+
+    <div class="p-8">
+        <div class="grid grid-cols-1 gap-y-6">
+            {% for name, field in model_fields.items() %}
+            <div class="border-b border-slate-50 pb-6 last:border-0 last:pb-0">
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{{ name }}</label>
+
+                {% set value = item[name] %}
+
+                {% if name in ['id', '_id', 'created_at', 'created_by'] %}
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-slate-500 font-mono text-sm">
+                    {{ value }}
+                </div>
+                {% elif field.annotation.__name__ == 'bool' %}
+                <select name="{{ name }}"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                    <option value="true" {% if value %}selected{% endif %}>True</option>
+                    <option value="false" {% if not value %}selected{% endif %}>False</option>
+                </select>
+                {% elif field.annotation.__name__ in ['int', 'float'] %}
+                <input type="number" name="{{ name }}" step="any" value="{{ value }}"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                {% elif value is mapping or (value is iterable and value is not string) %}
+                <textarea name="{{ name }}" rows="4"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) }}</textarea>
+                {% else %}
+                <input type="text" name="{{ name }}" value="{{ value }}"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="p-8 bg-slate-50 border-t border-slate-100 flex justify-end">
+        <button type="submit"
+            class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0">
+            Save Changes
+        </button>
+    </div>
+</form>
+{% endblock %}

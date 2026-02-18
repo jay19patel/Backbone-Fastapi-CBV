@@ -1,0 +1,15 @@
+services:
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017" # Expose to host for local app connection
+    volumes:
+      - mongodb_data:/data/db
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6380:6379" # Expose to host for local app connection
+
+volumes:
+  mongodb_data:

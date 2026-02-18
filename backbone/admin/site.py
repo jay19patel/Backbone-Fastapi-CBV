@@ -1,0 +1,53 @@
+from typing import List, Type, Dict, Any, Optional
+from pydantic import BaseModel
+from beanie import Document
+
+class ModelAdmin:
+    """
+    Configuration for how a model appears in the Admin.
+    """
+    list_display: List[str] = []
+    search_fields: List[str] = []
+    ordering: Optional[str] = None
+    readonly_fields: List[str] = []
+
+class AdminSite:
+    """
+    Registry for models to be managed via the Backbone Admin.
+    """
+    _instance: Optional["AdminSite"] = None
+
+    def __init__(self):
+        self._registry: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def get_instance(cls) -> "AdminSite":
+        if cls._instance is None:
+            cls._instance = AdminSite()
+        return cls._instance
+
+    def register(self, model: Type[Document], admin_class: Type[ModelAdmin] = ModelAdmin):
+        """
+        Register a model with the Admin site.
+        """
+        model_name = model.__name__
+        self._registry[model_name] = {
+            "model": model,
+            "admin": admin_class(),
+            "name": model_name
+        }
+
+    def get_registered_models(self) -> List[Dict[str, Any]]:
+        """
+        Return a list of all registered models.
+        """
+        return list(self._registry.values())
+
+    def get_model_config(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Return the configuration for a specific registered model.
+        """
+        return self._registry.get(model_name)
+
+# Global singleton
+admin_site = AdminSite.get_instance()

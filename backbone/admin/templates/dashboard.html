@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Backbone Admin{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">Total Models</h3>
+            <span class="bg-indigo-50 text-indigo-600 p-2 rounded-lg"><i class="fas fa-cubes"></i></span>
+        </div>
+        <p class="text-3xl font-bold text-slate-800">{{ models|length }}</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">System Status</h3>
+            <span class="bg-green-50 text-green-600 p-2 rounded-lg"><i class="fas fa-check-circle"></i></span>
+        </div>
+        <p class="text-3xl font-bold text-slate-800">Online</p>
+    </div>
+</div>
+
+<h2 class="text-xl font-bold text-slate-800 mb-6">Registered Models</h2>
+<div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <table class="w-full text-left">
+        <thead class="bg-slate-50 border-b border-slate-100">
+            <tr>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Model Name</th>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Actions
+                </th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+            {% for model in models %}
+            <tr class="hover:bg-slate-50 transition-colors group">
+                <td class="px-6 py-4">
+                    <div class="flex items-center">
+                        <div
+                            class="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-500 flex items-center justify-center mr-3 font-bold text-xs">
+                            {{ model.name[0] }}
+                        </div>
+                        <span class="font-medium text-slate-700">{{ model.name }}</span>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-right">
+                    <a href="/admin/{{ model.name }}"
+                        class="text-sm font-semibold text-indigo-600 hover:text-indigo-900 transition-colors">
+                        View Data <i class="fas fa-arrow-right ml-1"></i>
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

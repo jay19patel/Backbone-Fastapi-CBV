@@ -2,7 +2,8 @@ import jwt
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from typing import Optional, Dict, List
-from ..core.config import settings
+from ..core.settings import settings
+from .logger import logger
 
 class PasswordManager:
     """

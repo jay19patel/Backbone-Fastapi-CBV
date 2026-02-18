@@ -1,112 +1,144 @@
-# Modular Backbone Framework (Beanie Edition)
+# 🚀 Backbone FastAPI: MongoDB-Only with Redis Caching
 
-This is a modular FastAPI framework designed for rapid development with MongoDB, using **Beanie** (ODM) for data modeling and **Pydantic** for schemas.
+A modern, highly-modular FastAPI framework skeleton optimized for MongoDB/Beanie and enhanced with a Redis-based caching layer.
 
-## Architecture
+## 🛠 Features
 
-The framework is built around a centralized `BackboneConfig` that handles the application lifecycle, database connections, and component registration.
+- **Decoupled Model Signals**: Connect external logic (like notifications) to model events in `main.py` without modifying models.
+- **Model Event Hooks**: Pre-built base class (`EventDocument`) with Beanie lifecycle hooks and change tracking.
+- **Centralized Logging**: Comprehensive logging to Console, `app.log`, and asynchronously to MongoDB.
+- **Automatic Registration**: Core models (`User`, `Session`, `LogEntry`) are automatically registered by `BackboneConfig`.
 
-```mermaid
-graph TD
-    User([User]) <--> API[FastAPI API]
-    API <--> Auth[Auth Router]
-    API <--> Generic[Generic CRUD Views]
-    
-    subgraph Backbone Core
-        Auth --> Models[Beanie Models]
-        Generic --> Repo[Beanie Repository]
-        Repo --> Models
-        Models <--> DB[(MongoDB)]
-    end
-    
-    subgraph Components
-        Context[Global Context]
-        Config[Backbone Config]
-        Config --> Context
-    end
+---
 
-    Config -- Init --> DB
-    Generic -- Registers --> Context
-    Auth -- Registers --> Context
+## 🚀 Getting Started
+
+### 1. Prerequisites
+- [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/)
+- [uv](https://github.com/astral-sh/uv) (recommended) or Python 3.11+
+
+### 2. Start Databases
+Run the following command to start MongoDB and Redis in the background:
+```bash
+sudo docker-compose up -d
+```
+*Note: Redis is exposed on port `6380` to avoid conflicts with local instances.*
+
+### 3. Install Dependencies
+```bash
+uv pip install -e .
 ```
 
-## Key Concepts
+### 4. Run the Application
+Start the FastAPI server locally:
+```bash
+uv run uvicorn main:app --reload
+```
 
-### 1. Beanie Models (Core)
-Data is modeled using `beanie.Document`. All models inherit from `AuditDocument` to automatically track creation and update times.
+---
+
+## ✅ Verification: Is everything running?
+
+### Check Database Connectivity
+We provide a helper script to confirm that your local app can talk to the Dockerized databases:
+```bash
+uv run verify_db.py
+```
+**Expected Output:**
+```
+✅ MongoDB is UP and responding!
+✅ Redis is UP and responding!
+🚀 All database systems are running correctly!
+```
+
+### Check Docker Status
+To see if the containers are alive:
+```bash
+sudo docker ps
+```
+You should see `backbone-fastapi-cbv-mongodb-1` and `backbone-fastapi-cbv-redis-1`.
+
+---
+
+## ⚙️ Configuration
+
+You can configure the application in `main.py` via the `AppConfig` class:
 
 ```python
-class User(AuditDocument):
-    email: EmailStr
-    # ...
+class AppConfig(settings.__class__):
+    ENVIRONMENT: str = "develop"
+    MONGODB_URL: str = "mongodb://localhost:27017"
+    DATABASE_NAME: str = "backbone_app"
+    REDIS_URL: str = "redis://localhost:6380/0"
+    CACHE_ENABLED: bool = True  # Toggle caching on/off
 ```
 
-### 2. Generic Repository
-The `BeanieRepository` provides a standard interface for CRUD operations, abstracting the underlying Beanie/MongoDB calls. This allows swapping implementations if needed (e.g., to SQLModel).
+---
 
-### 3. Generic Views
-`GenericCrud` and related classes (`GenericList`, `GenericCreate`, etc.) typically use standard Pydantic schemas for API Input/Output, but interact with the database via the `BeanieRepository` and `Beanie Models`.
+## 📖 Usage
 
-**Flow:**
-`API Request` -> `Generic View` -> `Repository` -> `Beanie Document` -> `MongoDB`
+### Authentication
+- **Register**: `POST /auth/register`
+- **Login**: `POST /auth/login` (Returns Access Token & sets Refresh Cookie)
+- **Me**: `GET /auth/me` (Protected)
 
-## Folder Structure
+### Generic CRUD
+Generic views automatically handle caching. For example, the `Playlists` endpoints:
+- `GET /playlists/`: Retrieves paginated list (Cached)
+- `GET /playlists/{pk}`: Retrieves single item (Cached)
+- `POST/PATCH/DELETE`: Standard operations (Automatically invalidates cache)
 
-```
-backend/
-├── main.py                 # Entry point, Configures Backbone
-├── backbone/
-│   ├── core/
-│   │   ├── database.py     # Beanie Initialization
-│   │   ├── models.py       # User, Session, AuditDocument
-│   │   └── repository.py   # Generic Beanie Repository
-│   ├── auth.py             # Auth Router (Login/Register)
-│   ├── config.py           # Lifespan & Settings
-│   ├── dependencies.py     # Auth Dependencies (get_current_user)
-│   ├── generic.py          # Generic CRUD View Classes
-│   ├── interface.py        # Repository Interface
-│   ├── permissions.py      # Permission Classes (IsOwner, etc.)
-│   ├── schemas.py          # shared Pydantic Schemas (API I/O)
-│   └── utils.py            # Password & Token Utilities
-└── schema.py               # App-specific Schemas (Blog, Note, etc.)
-```
+### 🔔 Advanced: Model Signals & Events
+The framework provides a decoupled signal system to handle model lifecycles:
 
-## Setup
+1.  **Define a Handler in `main.py`**:
+    ```python
+    async def on_note_created(instance, **kwargs):
+        logger.info(f"Notification: New note '{instance.title}'")
 
-1.  **Install Dependencies:**
-    ```bash
-    uv add fastapi beanie motor pydantic pydantic-settings
+    signals.post_create.connect(NoteSchema, on_note_created)
+    ```
+2.  **Field Specific Tracking**:
+    ```python
+    async def on_pin_changed(instance, changed_fields=None, **kwargs):
+        if "is_pinned" in changed_fields:
+            logger.warning(f"Note {instance.id} pin status: {changed_fields['is_pinned']}")
+
+    signals.on_field_change.connect(NoteSchema, on_pin_changed)
     ```
 
-2.  **Run Server:**
-    ```bash
-    python main.py
-    ```
-
-## Extending
-
-To add a new resource (e.g., `Product`):
-
-1.  Create a **Beanie Model** in `models.py` (or a valid location used in `init_database`).
-2.  Create **Pydantic Schemas** for API Request/Response.
-3.  Instantiate `GenericCrud` in `main.py` (or a router file).
+### 📝 Logging
+Use the centralized logger to track system activity. Logs are stored in `logs/app.log` and the `log_entries` collection in MongoDB.
 
 ```python
-# Model
-class Product(AuditDocument):
-    name: str
-    price: float
+from backbone import logger
 
-# Schema
-class ProductSchema(BaseModel):
-    name: str
-    price: float
+logger.info("Something happenened!")
+logger.error("An error occurred", extra_info={"details": "contextual data"})
+```
 
-# View
-product_crud = GenericCrud(
-    schema=ProductSchema, 
-    # repository=BeanieRepository(Product), # If manual wiring needed
-    prefix="/products"
-)
-app.include_router(product_crud.router)
+### 🏗️ Event-Driven Models
+Inherit from `EventDocument` in `schema.py` to enable automatic change tracking and signals:
+
+```python
+class MyModel(EventDocument):
+    ...
+    @after_event(Insert)
+    async def custom_logic(self):
+        logger.info("Internal model hook triggered")
+```
+
+---
+
+## 📁 Project Structure
+
+```text
+backbone/
+├── auth/          # Authentication routes & logic
+├── core/          # Config, Models, and Repository
+├── generic/       # Generic CRUD View classes
+├── utils/         # Caching, Logging, and Passwords
+main.py            # App Entry Point & Routing
+schema.py          # Beanie Document Definitions
+docker-compose.yml # DB Infrastructure
 ```

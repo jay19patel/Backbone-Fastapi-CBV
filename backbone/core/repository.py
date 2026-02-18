@@ -1,27 +1,22 @@
-from typing import Any, Dict, List, Optional, Type, TypeVar, Union
-from beanie import Document, PydanticObjectId
+from typing import List, Optional, Dict, Any, TypeVar, Generic, Type
 from pydantic import BaseModel
-from .interface import IDatabaseRepository
+from beanie import Document, PydanticObjectId
+from ..schemas import PaginatedResponse
+from datetime import datetime, timezone
+from .signals import signals
 
-T = TypeVar("T", bound=Document)
+T = TypeVar('T', bound=BaseModel)
 
-class BeanieRepository(IDatabaseRepository[T]):
-    def __init__(self, db: Any = None, collection_name: Optional[str] = None):
-        # Beanie doesn't need explicit db instance per repo, it uses global init
+class BeanieRepository(Generic[T]):
+    def __init__(self, db: Any = None):
         self.db = db
-        self.document_class: Optional[Type[T]] = None
+        self.document_class: Optional[Type[Document]] = None
 
     def initialize(self, schema: Type[BaseModel]):
-        # In Beanie, the schema IS the document class (or we map it)
-        # For this refactor, we assume the 'schema' passed in Generic views might be a Beanie Document
-        # OR we might need a way to map Pydantic Schema -> Beanie Document
         if issubclass(schema, Document):
             self.document_class = schema
         else:
-            # Fallback or strict requirement: generic views must use Beanie Documents as schema
-            # Or we need a mapping registry. For now, let's assume strict usage.
-            # However, existing GenericCrud uses Pydantic schemas (UserSchema). 
-            # We might need to change GenericCrud to accept Document classes.
+            # Fallback if needed, though GenericCrud expects Document for BeanieRepo
             pass
 
     async def get_all(
@@ -32,77 +27,66 @@ class BeanieRepository(IDatabaseRepository[T]):
         sort: Optional[Any] = None, 
         projection: Optional[Dict[str, int]] = None
     ) -> List[T]:
-        if not self.document_class:
-            return []
-        
-        # Beanie find
         find_query = self.document_class.find(query)
-        
         if sort:
             find_query = find_query.sort(sort)
         
-        find_query = find_query.skip(skip).limit(limit)
-        
-        if projection:
-            find_query = find_query.project(projection_model=None) 
-
-        docs = await find_query.to_list()
-        return docs
+        results = await find_query.skip(skip).limit(limit).project(self.document_class).to_list()
+        return results
 
     async def get_one(self, filter_query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> Optional[T]:
-        if not self.document_class:
-            return None
+        # Handle "id" -> "_id" mapping for Beanie and cast to PydanticObjectId
+        if "id" in filter_query:
+            filter_query["_id"] = filter_query.pop("id")
             
-        doc = await self.document_class.find_one(filter_query)
-        return doc
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
+            
+        return await self.document_class.find_one(filter_query)
 
     async def create(self, data: Dict[str, Any]) -> T:
-        if not self.document_class:
-            raise ValueError("Document class not initialized")
-        
-        # Validate and create
-        doc = self.document_class(**data)
-        await doc.insert()
-        return doc
+        obj = self.document_class(**data)
+        await obj.insert()
+        return obj
 
     async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
-        if not self.document_class:
-            return None
+        if "id" in filter_query:
+            filter_query["_id"] = filter_query.pop("id")
+
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
             
-        doc = await self.document_class.find_one(filter_query)
-        if not doc:
-            return None
-            
-        # Update fields
-        req = {k: v for k, v in data.items()}
-        await doc.set(req)
-        return doc
+        item = await self.document_class.find_one(filter_query)
+        if item:
+            await item.set(data)
+            return item
+        return None
 
     async def delete(self, filter_query: Dict[str, Any], soft: bool = True) -> bool:
-        if not self.document_class:
-            return False
+        if "id" in filter_query:
+            filter_query["_id"] = filter_query.pop("id")
+
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
             
-        doc = await self.document_class.find_one(filter_query)
-        if not doc:
+        item = await self.document_class.find_one(filter_query)
+        if not item:
             return False
             
         if soft:
-            doc.is_deleted = True
-            from datetime import datetime
-            doc.deleted_at = datetime.utcnow()
-            await doc.save()
-            return True
+            await item.set({"is_deleted": True, "deleted_at": datetime.now(timezone.utc)})
         else:
-            await doc.delete()
-            return True
+            await item.delete()
+        return True
 
     async def count(self, query: Dict[str, Any]) -> int:
-        if not self.document_class:
-            return 0
         return await self.document_class.find(query).count()
-
-class UserRepository(BeanieRepository[T]):
-    async def get_by_email(self, email: str) -> Optional[T]:
-        if not self.document_class:
-            return None
-        return await self.document_class.find_one({"email": email})
