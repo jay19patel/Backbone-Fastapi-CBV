@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from backbone.core.models import AuditDocument
 from pymongo import IndexModel, ASCENDING
 

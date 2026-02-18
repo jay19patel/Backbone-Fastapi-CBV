@@ -1,50 +1,44 @@
-from fastapi import APIRouter, Request, Query, HTTPException, status, Depends
-from datetime import datetime
-from typing import List, Optional, Any, Type, Dict, Union
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-import math
+from typing import List, Optional, Any, Type, Dict, Union
+from beanie import Document
+from ..core.repository import BeanieRepository
 from ..core.permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
 from ..schemas import UserOut, PaginatedResponse
-from ..core.interface import IDatabaseRepository
+from ..core.config import BackboneConfig
+from ..utils.cache import CacheService
+import hashlib
+import json
 
 class BaseGenericView:
     """
-    Base class for all Generic components. Handles initialization and shared logic.
-    """
-from ..core.repository import BeanieRepository
-
-class BaseGenericView:
-    """
-    Base class for all Generic components. Handles initialization and shared logic.
+    Base class for generic CRUD views using Beanie.
     """
     def __init__(
-        self, 
+        self,
         schema: Type[BaseModel],
         prefix: str,
-        repository: Optional[IDatabaseRepository] = None,
-        database: Any = None, 
-        repository_class: Optional[Type[IDatabaseRepository]] = None,
-        tags: Optional[List[str]] = None,
-        search_fields: Optional[List[str]] = None,
-        filter_fields: Optional[List[str]] = None,
-        ordering_fields: Optional[List[str]] = None,
-        permission_classes: Optional[List[Type[BasePermission]]] = None,
-        list_fields: Optional[List[str]] = None,
-        use_auth: bool = False
+        tags: List[str] = None,
+        repository: BeanieRepository = None,
+        permission_classes: List[Type[BasePermission]] = [IsOwner],
+        list_fields: List[str] = None,
+        search_fields: List[str] = None,
+        filter_fields: List[str] = None,
+        ordering_fields: List[str] = None,
+        database: Any = None,
+        use_auth: bool = False,
+        cache_ttl: int = 300
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
-        
-        # Resolve Repository Class
-        active_repo_class = repository_class or BeanieRepository
-
-        # Automatic Repository Wiring
-        if repository:
-            self.repository = repository
-        else:
-            self.repository = active_repo_class(database)
-
         self.schema = schema
+        self.prefix = prefix
+        self.cache_ttl = cache_ttl
         
+        # Resolve Repository Class and Instance
+        self.repository = repository
+        if not self.repository:
+            self.repository = BeanieRepository(database)
+
         # Initialize repository with schema metadata
         self.repository.initialize(self.schema)
         
@@ -52,30 +46,51 @@ class BaseGenericView:
         self.search_fields = search_fields or []
         self.filter_fields = filter_fields or []
         self.ordering_fields = ordering_fields or []
-        # Ensure permission_classes is a list. User might pass a single class by mistake or we default to empty.
-        if permission_classes is None:
-            self.permission_classes = []
-        elif not isinstance(permission_classes, list):
-             # Fallback if a single class is passed (e.g. permission_classes=AllowAny)
+        
+        if not isinstance(permission_classes, list):
             self.permission_classes = [permission_classes]
         else:
             self.permission_classes = permission_classes
 
         self.list_fields = list_fields
-        
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
+        self.cache: Optional[CacheService] = None
+
+    async def _resolve_context(self, request: Request):
+        """
+        Ensure the repository and cache have the correct DB/Client from BackboneConfig.
+        """
+        config = request.app.state.backbone_config
+        if not self.repository.db:
+            self.repository.db = config.database
+        
+        if not self.cache:
+            self.cache = CacheService(
+                redis_client=getattr(config, "redis_client", None),
+                enabled=getattr(config.config, "CACHE_ENABLED", False)
+            )
+
+    async def _invalidate_cache(self):
+        if self.cache:
+            pattern = f"backbone:cache:{self.prefix}:*"
+            await self.cache.delete_pattern(pattern)
 
     def _get_projection(self):
         if self.list_fields:
             projection = {field: 1 for field in self.list_fields}
-            projection["_id"] = 1 # repository handles mapping to "id"
+            projection["_id"] = 1
             return projection
         return None
 
-    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut]) -> Any:
-        """
-        Internal helper for fetching object and checking permissions.
-        """
+    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut], use_cache: bool = True) -> Any:
+        await self._resolve_context(request)
+        
+        cache_key = f"backbone:cache:{self.prefix}:detail:{pk}"
+        if use_cache and self.cache:
+            cached_item = await self.cache.get(cache_key)
+            if cached_item:
+                return self.schema(**cached_item)
+
         item = await self.repository.get_one({"id": pk, "is_deleted": False})
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -84,6 +99,10 @@ class BaseGenericView:
             perm = permission_class(request, user)
             if not await perm.has_object_permission(item):
                 raise HTTPException(status_code=403, detail="Object-level access denied")
+        
+        if use_cache and self.cache:
+            await self.cache.set(cache_key, item.model_dump(by_alias=True), ttl=self.cache_ttl)
+            
         return item
 
 class GenericList(BaseGenericView):
@@ -99,85 +118,69 @@ class GenericList(BaseGenericView):
             page: int = Query(1, ge=1),
             page_size: int = Query(10, ge=1, le=100),
             search: Optional[str] = None,
-            sort: Optional[str] = None,
+            sort: Optional[str] = None
         ):
+            await self._resolve_context(request)
+            
+            # Generate Cache Key
+            query_params = f"search={search}&sort={sort}&page={page}&page_size={page_size}"
+            query_hash = hashlib.md5(query_params.encode()).hexdigest()
+            cache_key = f"backbone:cache:{self.prefix}:list:{query_hash}"
+            
+            if self.cache:
+                cached_res = await self.cache.get(cache_key)
+                if cached_res:
+                    return cached_res
+
             query = {"is_deleted": False}
-            # Smart Permission Logic
-            # 1. Default (No permissions) -> Public Access (See all)
-            # 2. IsOwner present -> Filter by owner (unless Admin override)
-            # 3. IsAuthenticated present -> See all (Authenticated)
             
-            is_owner_restricted = any(issubclass(p, IsOwner) for p in self.permission_classes)
-            
-            # Check for Admin override if IsAdminUser is also in permissions
-            has_admin_perm = any(issubclass(p, IsAdminUser) for p in self.permission_classes)
-            user_is_admin = user.is_staff if user else False
-            
-            should_filter_by_owner = False
-            
-            if is_owner_restricted:
-                # If Admin permission is allowed AND user is admin, they bypass owner filter
-                if has_admin_perm and user_is_admin:
-                    should_filter_by_owner = False
-                else:
-                    should_filter_by_owner = True
-            
-            if should_filter_by_owner:
-                if not user:
-                    raise HTTPException(status_code=401, detail="Authentication required")
-                query["created_by"] = str(user.id)
-
-            query_params = request.query_params
-            for field in self.filter_fields:
-                if field in query_params:
-                    query[field] = query_params[field]
-
             if search and self.search_fields:
-                # MongoDB specific $or can be handled by repository if needed, 
-                # but for simplicity we keep it here as a Dict that MongoRepository understands.
-                # A more advanced SQL repo would translate this.
-                query["$or"] = [{f: {"$regex": search, "$options": "i"}} for f in self.search_fields]
-
-            projection = self._get_projection()
+                query["$or"] = [
+                    {field: {"$regex": search, "$options": "i"}} 
+                    for field in self.search_fields
+                ]
             
-            # Prepare sort
-            sort_val = None
-            if sort and (sort.strip("-") in self.ordering_fields):
-                direction = -1 if sort.startswith("-") else 1
-                sort_val = [(sort.strip("-"), direction)]
-            else:
-                sort_val = [("created_at", -1)]
-
             skip = (page - 1) * page_size
-            items = await self.repository.get_all(
-                query=query, 
+            results = await self.repository.get_all(
+                query, 
                 skip=skip, 
                 limit=page_size, 
-                sort=sort_val, 
-                projection=projection
+                projection=self._get_projection()
             )
             total = await self.repository.count(query)
-
-            return {
-                "total": total, "page": page, "page_size": page_size,
-                "total_pages": math.ceil(total / page_size), "results": items
+            
+            response_data = {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total + page_size - 1) // page_size,
+                "results": [r.model_dump(by_alias=True) if hasattr(r, "model_dump") else r for r in results]
             }
+            
+            if self.cache:
+                await self.cache.set(cache_key, response_data, ttl=self.cache_ttl)
+                
+            return response_data
 
 class GenericCreate(BaseGenericView):
     def __init__(self, *args, **kwargs):
+        kwargs["use_auth"] = True
         super().__init__(*args, **kwargs)
         self._register_create_route()
 
     def _register_create_route(self):
         @self.router.post("/", response_model=self.schema, status_code=201)
-        async def create(request: Request, data: dict, user: UserOut = Depends(self.perm_dep)):
-            validated_data = self.schema(**data).model_dump(by_alias=True, exclude={"id"})
+        async def create(request: Request, data: self.schema, user: UserOut = Depends(self.perm_dep)):
+            await self._resolve_context(request)
+            validated_data = data.model_dump(by_alias=True, exclude={"id"})
             validated_data.update({
                 "created_at": datetime.utcnow(),
                 "created_by": str(user.id),
                 "is_deleted": False
             })
-            return await self.repository.create(validated_data)
+            result = await self.repository.create(validated_data)
+            await self._invalidate_cache()
+            return result
 
 class GenericRetrieve(BaseGenericView):
     def __init__(self, *args, **kwargs):
@@ -185,57 +188,53 @@ class GenericRetrieve(BaseGenericView):
         self._register_retrieve_route()
 
     def _register_retrieve_route(self):
-        @self.router.get("/{pk}/", response_model=self.schema)
-        async def get(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user)
-            return item
+        @self.router.get("/{pk}", response_model=self.schema)
+        async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
+            return await self._get_object_internal(pk, request, user)
 
 class GenericUpdate(BaseGenericView):
     def __init__(self, *args, **kwargs):
+        kwargs["use_auth"] = True
         super().__init__(*args, **kwargs)
         self._register_update_route()
 
     def _register_update_route(self):
-        @self.router.patch("/{pk}/", response_model=self.schema)
-        async def update(request: Request, pk: str, data: dict, user: UserOut = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user)
-            update_data = data.copy()
-            update_data.update({
-                "updated_at": datetime.utcnow(),
-                "updated_by": str(user.id)
-            })
-            return await self.repository.update({"id": item.id}, update_data)
+        @self.router.patch("/{pk}", response_model=self.schema)
+        async def update(request: Request, pk: str, data: Dict[str, Any], user: UserOut = Depends(self.perm_dep)):
+            # Force validation by creating a partial model if needed, but for now simple Dict
+            item = await self._get_object_internal(pk, request, user, use_cache=False)
+            update_data = {k: v for k, v in data.items() if v is not None}
+            update_data["updated_at"] = datetime.utcnow()
+            update_data["updated_by"] = str(user.id)
+            
+            result = await self.repository.update({"id": pk}, update_data)
+            await self._invalidate_cache()
+            return result
 
 class GenericDelete(BaseGenericView):
     def __init__(self, *args, **kwargs):
+        kwargs["use_auth"] = True
         super().__init__(*args, **kwargs)
         self._register_delete_route()
 
     def _register_delete_route(self):
-        @self.router.delete("/{pk}/")
+        @self.router.delete("/{pk}", status_code=204)
         async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user)
-            await self.repository.delete(
-                {"id": item.id},
-                soft=True
-            )
-            # Add metadata for soft delete if needed, but repository.delete(soft=True) should handle it.
-            # However, BaseGenericView expects to manage created_at/by etc.
-            # Let's update the item to record WHO deleted it if it's a soft delete.
-            await self.repository.update({"id": item.id}, {
-                "deleted_at": datetime.utcnow(), 
-                "deleted_by": str(user.id)
-            })
-            return {"detail": "Deleted"}
+            item = await self._get_object_internal(pk, request, user, use_cache=False)
+            await self.repository.delete({"id": pk}, soft=True)
+            await self._invalidate_cache()
+            return None
 
 class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete):
     """
-    Consolidated View for Full CRUD logic.
-    Inherits all routes from granular Generic components.
+    Combined CRUD view with all standard operations.
     """
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    async def sync_indexes(self):
-        # Beanie handles indexes automatically via Document.Settings
-        pass
+        # We don't call super().__init__ because it would call BaseGenericView and then 
+        # all mixins would call it again. Instead, we call each mixin's _register method.
+        BaseGenericView.__init__(self, *args, **kwargs)
+        self._register_list_route()
+        self._register_create_route()
+        self._register_retrieve_route()
+        self._register_update_route()
+        self._register_delete_route()

@@ -19,6 +19,8 @@ config.DATABASE_NAME = TEST_DATABASE_NAME
 async def db_client():
     # Setup
     client = AsyncIOMotorClient(config.MONGODB_URL)
+    # We don't call init_database here anymore, BackboneConfig will handle it via lifespan if we let it
+    # OR we initialize it here for manual cleanup
     await init_database(client, TEST_DATABASE_NAME, [User, Session, NoteSchema])
     db = client[TEST_DATABASE_NAME]
     await db["users"].delete_many({})
@@ -33,18 +35,24 @@ async def db_client():
 
 @pytest_asyncio.fixture(scope="function")
 async def client(db_client):
-    from contextlib import asynccontextmanager
+    from backbone import BackboneConfig
+    from motor.motor_asyncio import AsyncIOMotorClient
     
-    # Override lifespan to prevent main.py from re-initializing Beanie with Prod DB
-    # The db_client fixture already initializes Beanie with Test DB.
-    @asynccontextmanager
-    async def mock_lifespan(app):
-        yield
-
-    app.router.lifespan_context = mock_lifespan
-
+    # Initialize BackboneConfig manually for the app instance to set state
+    bc = BackboneConfig(
+        app=app,
+        config=config, # Use the new TestConfig instance
+        document_models=[User, Session, NoteSchema]
+    )
+    # Since we are in testing and bypassing real lifespan sometimes, 
+    # ensure state is set.
+    app.state.backbone_config = bc
+    
+    # We still need to ensure Beanie is initialized for the models
+    # This is done in db_client fixture too, but bc.lifespan does it properly.
+    
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        app.dependency_overrides = {} # Clear any overrides
+        app.dependency_overrides = {}
         yield ac
 
 @pytest.mark.asyncio

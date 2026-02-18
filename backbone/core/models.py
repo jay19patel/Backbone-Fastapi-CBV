@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from beanie import Document, PydanticObjectId
 from pydantic import Field, EmailStr
 from pymongo import IndexModel, ASCENDING, DESCENDING
@@ -45,4 +45,20 @@ class Session(AuditDocument):
         indexes = [
             IndexModel([("user_id", ASCENDING)]),
             IndexModel([("refresh_token", ASCENDING)], unique=True)
+        ]
+
+class LogEntry(AuditDocument):
+    level: str
+    message: str
+    module: Optional[str] = None
+    function: Optional[str] = None
+    line: Optional[int] = None
+    exception: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
+
+    class Settings:
+        name = "logs"
+        indexes = [
+            IndexModel([("level", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)])
         ]

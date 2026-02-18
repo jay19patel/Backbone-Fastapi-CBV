@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from typing import Optional, List, Any, Generic, TypeVar
 from datetime import datetime
+from typing import Optional, List, Any, Generic, TypeVar, Union
 from bson import ObjectId
 
 T = TypeVar('T')
@@ -16,7 +16,7 @@ class UserOut(BaseModel):
     """
     User representation for public/response usage.
     """
-    id: Optional[PydanticObjectId] = Field(alias="_id", default=None)
+    id: Optional[Union[PydanticObjectId, int, str]] = Field(alias="_id", default=None)
     email: EmailStr
     full_name: str
     is_active: bool
