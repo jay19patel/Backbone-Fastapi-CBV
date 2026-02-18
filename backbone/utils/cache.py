@@ -6,17 +6,25 @@ from functools import wraps
 from typing import Any, Optional, Callable, TypeVar, Union
 import redis.asyncio as redis
 from pydantic import BaseModel
-from ..core.config import settings
+from ..core.settings import settings
 
 logger = logging.getLogger("backbone.cache")
 
 T = TypeVar("T")
 
+from datetime import datetime
+from bson import ObjectId
+from beanie import PydanticObjectId
+
 class CacheEncoder(json.JSONEncoder):
-    """Custom JSON encoder for Pydantic models."""
+    """Custom JSON encoder for Pydantic models, datetimes, and ObjectIds."""
     def default(self, obj):
         if isinstance(obj, BaseModel):
             return obj.model_dump()
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, (ObjectId, PydanticObjectId)):
+            return str(obj)
         return super().default(obj)
 
 class CacheService:

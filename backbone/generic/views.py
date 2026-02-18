@@ -60,7 +60,7 @@ class BaseGenericView:
         Ensure the repository and cache have the correct DB/Client from BackboneConfig.
         """
         config = request.app.state.backbone_config
-        if not self.repository.db:
+        if self.repository.db is None:
             self.repository.db = config.database
         
         if not self.cache_service:
@@ -68,7 +68,8 @@ class BaseGenericView:
 
     async def _invalidate_cache(self):
         if self.cache_service:
-            pattern = f"backbone:cache:{self.prefix}:*"
+            # Broad pattern to clear both @cache decorator and manual _get_object_internal cache
+            pattern = f"backbone:*{self.prefix}*"
             await self.cache_service.delete_pattern(pattern)
 
     def _get_projection(self):
@@ -132,7 +133,7 @@ class GenericList(BaseGenericView):
                 "page": page,
                 "page_size": page_size,
                 "total_pages": (total + page_size - 1) // page_size,
-                "results": [r.model_dump(by_alias=True) if hasattr(r, "model_dump") else r for r in results]
+                "results": results
             }
 
 class GenericCreate(BaseGenericView):
@@ -164,7 +165,7 @@ class GenericRetrieve(BaseGenericView):
 
     def _register_retrieve_route(self):
         @self.router.get("/{pk}", response_model=self.schema)
-        @cache(key_prefix=f"backbone:{self.prefix}:detail")
+        @cache(key_prefix=f"backbone:cache:{self.prefix}:detail")
         async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
             # We bypass the internal _get_object_internal and do it directly for the decorator to work perfectly

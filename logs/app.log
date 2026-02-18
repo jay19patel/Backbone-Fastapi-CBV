@@ -8,3 +8,94 @@
 2026-02-18 13:31:54,084 - backbone_app - INFO - [schema.py:31] - 📝 Title changed for note 699571f22ffb8b52455fbd62
 2026-02-18 13:31:54,085 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 699571f22ffb8b52455fbd62
 2026-02-18 13:31:54,092 - backbone_app - WARNING - [schema.py:36] - 🗑️ Note 699571f22ffb8b52455fbd62 was deleted
+2026-02-18 17:11:45,902 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 17:11:45,902 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:11:45,902 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:11:45,905 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:11:45,905 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:12:27,311 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 17:12:27,311 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:12:27,314 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:12:27,317 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:12:27,323 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:13:21,785 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 17:13:21,786 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:13:21,788 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:13:21,789 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:13:21,791 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:14:08,687 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 17:14:08,687 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:14:08,689 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:14:08,690 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 17:14:08,692 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 17:23:36,906 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a5a38ed853974dd64fba
+2026-02-18 17:23:39,907 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a5a38ed853974dd64fba
+2026-02-18 17:23:40,014 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:23:41,014 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 17:23:41,115 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a5a38ed853974dd64fba
+2026-02-18 17:23:44,116 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a5a38ed853974dd64fba
+2026-02-18 17:23:44,217 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:23:45,218 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 17:23:45,319 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a5d939a4b3ba41b787a8
+2026-02-18 17:23:48,320 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a5d939a4b3ba41b787a8
+2026-02-18 17:23:48,422 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:23:49,422 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 17:23:49,524 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a5d939a4b3ba41b787a8
+2026-02-18 17:23:52,525 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a5d939a4b3ba41b787a8
+2026-02-18 17:23:52,627 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:23:53,627 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 17:23:53,729 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a608a8d48851ed8019e1
+2026-02-18 17:23:56,730 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a608a8d48851ed8019e1
+2026-02-18 17:23:56,832 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:23:57,832 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 17:23:57,934 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995a608a8d48851ed8019e1
+2026-02-18 17:24:00,934 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995a608a8d48851ed8019e1
+2026-02-18 17:24:01,036 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 17:24:02,037 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 18:30:53,400 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 18:30:53,400 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 18:30:53,402 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 18:31:39,441 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 18:31:39,441 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 18:31:39,442 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 18:32:02,679 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 18:32:02,679 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 18:32:02,680 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 18:32:02,703 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b84aa79fbab831931ac6
+2026-02-18 18:32:02,704 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b84aa79fbab831931ac6. Changes: {'updated_at': (None, datetime.datetime(2026, 2, 18, 13, 2, 2, 701000)), 'updated_by': (None, '6995b84aa79fbab831931ac4'), 'title': ('My First Note', 'Updated Title')}
+2026-02-18 18:32:02,711 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b84aa79fbab831931ac6
+2026-02-18 18:32:02,713 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b84aa79fbab831931ac6. Changes: {'is_deleted': (False, True), 'deleted_at': (None, datetime.datetime(2026, 2, 18, 13, 2, 2, 711000))}
+2026-02-18 18:32:46,791 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 18:32:46,792 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 18:32:46,794 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 18:32:46,817 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b876222321518cdc9319
+2026-02-18 18:32:46,819 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b876222321518cdc9319. Changes: {'updated_at': (None, datetime.datetime(2026, 2, 18, 13, 2, 46, 816000)), 'updated_by': (None, '6995b876222321518cdc9317'), 'title': ('My First Note', 'Updated Title')}
+2026-02-18 18:32:46,826 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b876222321518cdc9319
+2026-02-18 18:32:46,828 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b876222321518cdc9319. Changes: {'is_deleted': (False, True), 'deleted_at': (None, datetime.datetime(2026, 2, 18, 13, 2, 46, 826000))}
+2026-02-18 18:33:01,571 - backbone_app - INFO - [schema.py:26] - ✨ Custom Event: Note created with title 'My First Note'
+2026-02-18 18:33:01,572 - backbone_app - INFO - [main.py:59] - 📣 [Signal] New Note Detected: My First Note
+2026-02-18 18:33:01,574 - backbone_app - INFO - [main.py:67] - 🚀 [Queue] Tasks enqueued via background_task()
+2026-02-18 18:33:01,598 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b885f66950ad1385605e
+2026-02-18 18:33:01,600 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b885f66950ad1385605e. Changes: {'updated_at': (None, datetime.datetime(2026, 2, 18, 13, 3, 1, 597000)), 'updated_by': (None, '6995b885f66950ad1385605c'), 'title': ('My First Note', 'Updated Title')}
+2026-02-18 18:33:01,609 - backbone_app - INFO - [schema.py:32] - 💾 Saving updates for note 6995b885f66950ad1385605e
+2026-02-18 18:33:01,611 - backbone_app - INFO - [main.py:71] - 📣 SIGNAL RECIPIED: Note updated - 6995b885f66950ad1385605e. Changes: {'is_deleted': (False, True), 'deleted_at': (None, datetime.datetime(2026, 2, 18, 13, 3, 1, 609000))}
+2026-02-18 18:33:13,203 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995b80538e751544bebc71f
+2026-02-18 18:33:16,204 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995b80538e751544bebc71f
+2026-02-18 18:33:16,306 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 18:33:17,306 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 18:33:17,408 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995b833a9fd9e20ffd5a780
+2026-02-18 18:33:20,409 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995b833a9fd9e20ffd5a780
+2026-02-18 18:33:20,511 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 18:33:21,511 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 18:33:21,613 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995b84aa79fbab831931ac6
+2026-02-18 18:33:24,615 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995b84aa79fbab831931ac6
+2026-02-18 18:33:24,722 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 18:33:25,722 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 18:33:25,824 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995b876222321518cdc9319
+2026-02-18 18:33:28,824 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995b876222321518cdc9319
+2026-02-18 18:33:28,927 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 18:33:29,927 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created
+2026-02-18 18:33:30,030 - backbone_app - INFO - [main.py:45] - ⏳ [Background-Async] Started processing for Note: 6995b885f66950ad1385605e
+2026-02-18 18:33:33,033 - backbone_app - INFO - [main.py:47] - ✅ [Background-Async] Finished processing for Note: 6995b885f66950ad1385605e
+2026-02-18 18:33:33,134 - backbone_app - INFO - [main.py:54] - ⏳ [Background-Sync] Processing log: Note My First Note created
+2026-02-18 18:33:34,134 - backbone_app - INFO - [main.py:56] - ✅ [Background-Sync] Finished log: Note My First Note created

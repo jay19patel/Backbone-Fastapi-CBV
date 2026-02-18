@@ -17,13 +17,6 @@ class AuditDocument(Document):
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[str] = None
 
-    class Settings:
-        is_root = True  # specific to Beanie inheritance
-
-class EventDocument(AuditDocument):
-    """
-    Base Document that supports event hooks and state tracking.
-    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
@@ -66,19 +59,30 @@ class EventDocument(AuditDocument):
         await signals.post_delete.emit(self)
 
     class Settings:
-        is_root = True
+        pass
+
+class EventDocument(AuditDocument):
+    """
+    Base Document that supports event hooks and state tracking.
+    Now inherits hooks from AuditDocument.
+    """
+    class Settings:
+        pass
 
 class User(AuditDocument):
+    username: str
     email: EmailStr
     full_name: str
     is_active: bool = True
     is_staff: bool = False
+    is_superuser: bool = False
     hashed_password: str
 
     class Settings:
         name = "users"
         indexes = [
-            IndexModel([("email", ASCENDING)], unique=True)
+            IndexModel([("email", ASCENDING)], unique=True),
+            IndexModel([("username", ASCENDING)], unique=True)
         ]
 
 class Session(AuditDocument):

@@ -1,4 +1,5 @@
-from .core.config import BackboneConfig, settings
+from .core.config import BackboneConfig
+from .core.settings import settings, Settings
 from .core.models import User, Session, LogEntry, EventDocument
 from .core.signals import signals, Signal
 from .generic.views import (
@@ -17,10 +18,12 @@ from .auth.router import AuthRouter
 from .utils import PasswordManager, TokenManager, logger
 from .utils.cache import CacheService
 from .utils.tasks import background_task
+from .admin import admin_site
 
 __all__ = [
     "BackboneConfig",
     "settings",
+    "Settings",
     "User",
     "Session",
     "LogEntry",
@@ -49,5 +52,6 @@ __all__ = [
     "TokenManager",
     "logger",
     "CacheService",
-    "background_task"
+    "background_task",
+    "admin_site"
 ]

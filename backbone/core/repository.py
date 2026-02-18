@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, TypeVar, Generic, Type
 from pydantic import BaseModel
-from beanie import Document
+from beanie import Document, PydanticObjectId
 from ..schemas import PaginatedResponse
 from datetime import datetime, timezone
 from .signals import signals
@@ -35,32 +35,48 @@ class BeanieRepository(Generic[T]):
         return results
 
     async def get_one(self, filter_query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> Optional[T]:
-        # Handle "id" -> "_id" mapping for Beanie
+        # Handle "id" -> "_id" mapping for Beanie and cast to PydanticObjectId
         if "id" in filter_query:
             filter_query["_id"] = filter_query.pop("id")
+            
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
             
         return await self.document_class.find_one(filter_query)
 
     async def create(self, data: Dict[str, Any]) -> T:
         obj = self.document_class(**data)
         await obj.insert()
-        await signals.post_create.emit(obj)
         return obj
 
     async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
         if "id" in filter_query:
             filter_query["_id"] = filter_query.pop("id")
+
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
             
         item = await self.document_class.find_one(filter_query)
         if item:
             await item.set(data)
-            await signals.post_update.emit(item, changed_fields=data)
             return item
         return None
 
     async def delete(self, filter_query: Dict[str, Any], soft: bool = True) -> bool:
         if "id" in filter_query:
             filter_query["_id"] = filter_query.pop("id")
+
+        if "_id" in filter_query and isinstance(filter_query["_id"], str):
+            try:
+                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
+            except:
+                pass
             
         item = await self.document_class.find_one(filter_query)
         if not item:
@@ -70,7 +86,6 @@ class BeanieRepository(Generic[T]):
             await item.set({"is_deleted": True, "deleted_at": datetime.now(timezone.utc)})
         else:
             await item.delete()
-        await signals.post_delete.emit(item)
         return True
 
     async def count(self, query: Dict[str, Any]) -> int:

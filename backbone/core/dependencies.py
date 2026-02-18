@@ -41,8 +41,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
         )
 
     # Fetch User
-    from ..core.repository import UserRepository
-    user_repo = UserRepository()
+    from ..core.repository import BeanieRepository
+    user_repo = BeanieRepository()
     user_repo.initialize(User)
     
     try:

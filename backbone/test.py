@@ -19,18 +19,21 @@ config.DATABASE_NAME = TEST_DATABASE_NAME
 async def db_client():
     # Setup
     client = AsyncIOMotorClient(config.MONGODB_URL)
-    # We don't call init_database here anymore, BackboneConfig will handle it via lifespan if we let it
-    # OR we initialize it here for manual cleanup
-    await init_database(client, TEST_DATABASE_NAME, [User, Session, NoteSchema])
     db = client[TEST_DATABASE_NAME]
-    await db["users"].delete_many({})
-    await db["sessions"].delete_many({})
-    await db["notes"].delete_many({})
+    
+    # Aggressive Cleanup
+    collections = ["users", "sessions", "notes", "logs", "blogs", "playlists"]
+    for coll in collections:
+        await db[coll].delete_many({})
+        
+    # Initialize Beanie
+    await init_beanie(database=db, document_models=[User, Session, NoteSchema])
+    
     yield client
-    # Teardown
-    await db["users"].delete_many({})
-    await db["sessions"].delete_many({})
-    await db["notes"].delete_many({})
+    
+    # Teardown Cleanup
+    for coll in collections:
+        await db[coll].delete_many({})
     client.close()
 
 @pytest_asyncio.fixture(scope="function")
@@ -69,11 +72,10 @@ async def test_auth_flow(client):
 
     # 2. Login
     login_data = {
-        "username": "test@example.com", # OAuth2 uses username field
+        "email": "test@example.com",
         "password": "password123"
     }
-    # OAuth2PasswordRequestForm expects form data, not JSON
-    response = await client.post("/auth/login", data=login_data)
+    response = await client.post("/auth/login", json=login_data)
     assert response.status_code == 200, f"Login failed: {response.text}"
     tokens = response.json()
     assert "access_token" in tokens
@@ -102,8 +104,10 @@ async def test_crud_notes(client):
     response = await client.post("/notes/", json=note_data, headers=headers)
     assert response.status_code == 201
     created_note = response.json()
+    print(f"\n[TEST_DEBUG] CREATED NOTE: {created_note}")
     assert created_note["title"] == note_data["title"]
-    note_id = created_note["_id"]
+    note_id = created_note.get("_id") or created_note.get("id")
+    print(f"[TEST_DEBUG] FETCHING ID: {note_id}")
 
     # 2. Get All Notes
     response = await client.get("/notes/", headers=headers)
@@ -113,20 +117,20 @@ async def test_crud_notes(client):
     assert data["results"][0]["title"] == note_data["title"]
 
     # 3. Get Single Note
-    response = await client.get(f"/notes/{note_id}/", headers=headers)
+    response = await client.get(f"/notes/{note_id}", headers=headers)
     assert response.status_code == 200
     assert response.json()["_id"] == note_id
 
     # 4. Update Note
     update_data = {"title": "Updated Title"}
-    response = await client.patch(f"/notes/{note_id}/", json=update_data, headers=headers)
+    response = await client.patch(f"/notes/{note_id}", json=update_data, headers=headers)
     assert response.status_code == 200
     assert response.json()["title"] == "Updated Title"
 
     # 5. Delete Note
-    response = await client.delete(f"/notes/{note_id}/", headers=headers)
-    assert response.status_code == 200
+    response = await client.delete(f"/notes/{note_id}", headers=headers)
+    assert response.status_code == 204 # Changed from 200 to match implementation @self.router.delete("/{pk}", status_code=204)
     
     # Verify Deletion (Soft Delete usually filters it out)
-    response = await client.get(f"/notes/{note_id}/", headers=headers)
+    response = await client.get(f"/notes/{note_id}", headers=headers)
     assert response.status_code == 404

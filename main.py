@@ -2,7 +2,6 @@ import asyncio
 from fastapi import FastAPI
 from backbone import (
     BackboneConfig, 
-    AuthRouter, 
     GenericList, 
     GenericCreate, 
     GenericRetrieve, 
@@ -12,6 +11,7 @@ from backbone import (
     AllowAny,
     IsOwner,
     settings,
+    Settings,
     signals,
     background_task
 )
@@ -21,7 +21,7 @@ from backbone.core.models import User, Session, LogEntry
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
 # --------------------------------------------------------------------------
-class AppConfig(settings.__class__):
+class AppConfig(Settings):
     ENVIRONMENT: str = "develop"
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "backbone_app"
@@ -93,10 +93,7 @@ BackboneConfig(
     document_models=[BlogSchema, NoteSchema, PlaylistSchema]
 )
 
-# 1. Auth
-auth = AuthRouter(config=config)
-
-# 2. Notes (Demonstrating Granular Control)
+# 1. Notes (Demonstrating Granular Control)
 note_list = GenericList(
     schema=NoteSchema,
     prefix="/notes",
@@ -144,7 +141,6 @@ playlist_crud = GenericCrud(
 )
 
 # Register Routers
-app.include_router(auth.router)
 app.include_router(note_list.router)
 app.include_router(note_create.router)
 app.include_router(note_retrieve.router)

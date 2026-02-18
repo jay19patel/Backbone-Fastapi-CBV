@@ -4,41 +4,15 @@ from .repository import BeanieRepository
 from .database import init_database
 from ..utils.cache import CacheService
 from .queue import TaskQueue, TaskWorker
-from pydantic_settings import BaseSettings
-from contextlib import asynccontextmanager
-
+from ..admin.router import router as admin_router
+from ..admin.site import admin_site
+from ..auth.router import AuthRouter
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
 import asyncio
+from .settings import Settings, settings
 
-class Settings(BaseSettings):
-    secret_key: str = "your_super_secret_key_here"  # Override in production
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
-    ENVIRONMENT: str = "production"
-    
-    # Defaults for DB
-    MONGODB_URL: str = "mongodb://localhost:27017"
-    DATABASE_NAME: str = "backbone_app"
-
-    # Cache Settings
-    CACHE_ENABLED: bool = False
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CACHE_TTL: int = 300
-    WORKER_COUNT: int = 1
-
-    @property
-    def is_development(self) -> bool:
-        return self.ENVIRONMENT == "develop"
-
-    @property
-    def cookie_settings(self) -> dict:
-        if self.is_development:
-            return {"secure": False, "httponly": True, "samesite": "lax"}
-        return {"secure": True, "httponly": True, "samesite": "strict"}
-
-settings = Settings()
+from contextlib import asynccontextmanager
 
 class BackboneConfig:
     """
@@ -46,6 +20,13 @@ class BackboneConfig:
     Sets up the global database context and manages application lifespan.
     """
     _instance: Optional["BackboneConfig"] = None
+
+    @classmethod
+    def get_instance(cls) -> "BackboneConfig":
+        """Get the current BackboneConfig instance."""
+        if cls._instance is None:
+            raise RuntimeError("BackboneConfig has not been initialized.")
+        return cls._instance
 
     def __init__(
         self, 
@@ -84,6 +65,9 @@ class BackboneConfig:
         # Task Queue
         self.task_queue = TaskQueue(self.redis_client)
 
+        # Auth Router
+        self.auth_router = AuthRouter(config=self.config)
+
         # Store Class Instance
         BackboneConfig._instance = self
 
@@ -92,6 +76,16 @@ class BackboneConfig:
         
         # Attach Lifespan
         self.app.router.lifespan_context = self.lifespan
+
+        # Include Admin Router
+        self.app.include_router(admin_router)
+
+        # Include Auth Router
+        self.app.include_router(self.auth_router.router)
+
+        # Register Models with Admin Site
+        for model in self.document_models:
+            admin_site.register(model)
 
     @property
     def is_development(self) -> bool:
@@ -121,6 +115,8 @@ class BackboneConfig:
             for i in range(worker_count):
                 worker = TaskWorker(self.task_queue, worker_name=f"Worker-{i+1}")
                 asyncio.create_task(worker.run())
+
+        print("System: Beanie Initialized.")
 
         print("System: Online and Ready.")
         

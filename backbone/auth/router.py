@@ -22,9 +22,9 @@ class AuthRouter:
     
     async def _resolve_repos(self, request: Request):
         config = request.app.state.backbone_config
-        if not self.user_repository.db:
+        if self.user_repository.db is None:
             self.user_repository.db = config.database
-        if not self.session_repository.db:
+        if self.session_repository.db is None:
             self.session_repository.db = config.database
 
     def _register_routes(self):
