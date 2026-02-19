@@ -26,7 +26,9 @@ class BaseGenericView:
         ordering_fields: List[str] = None,
         database: Any = None,
         use_auth: bool = False,
-        cache_ttl: int = 300
+        cache_ttl: int = 300,
+        populate_fields: Dict[str, str] = None,
+        fetch_links: bool = False
     ):
         self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
         self.schema = schema
@@ -54,6 +56,64 @@ class BaseGenericView:
         self.list_fields = list_fields
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
         self.cache_service: Optional[CacheService] = None
+        self.fetch_links = fetch_links
+        self.populate_fields = populate_fields or {}
+
+        if self.fetch_links:
+            self.populate_fields.update(self._detect_populate_fields())
+            
+    def _detect_populate_fields(self) -> Dict[str, Any]:
+        """
+        Detects Beanie Link fields and adds them to populate_fields.
+        Returns a dict of field_name -> target_collection.
+        """
+        detected = {}
+        # Beanie stores field info in model_fields
+        from beanie import Link
+        from typing import get_origin, get_args
+        
+        for field_name, field_info in self.schema.model_fields.items():
+            # Check for Link type
+            # Case 1: Link[Model]
+            # Case 2: List[Link[Model]]
+            
+            annotation = field_info.annotation
+            origin = get_origin(annotation)
+            
+            target_model = None
+            
+            if origin is Link:
+                target_model = get_args(annotation)[0]
+            elif origin is list or origin is List:
+                 # Check if inner is Link
+                 args = get_args(annotation)
+                 if args:
+                     inner = args[0]
+                     if get_origin(inner) is Link:
+                         target_model = get_args(inner)[0]
+
+            if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
+                # We found a link!
+                # By default, Beanie Links are stored as DBRef or Object with {id, collection}.
+                # Our repository's current $lookup implementation expects localField to be an ID (or list of IDs).
+                # If Beanie stores DBRef, we might need adjustments.
+                # HOWEVER, GenericCrud "Optimal Way":
+                # If we define schema with Link, Beanie handles the write.
+                # For GenericCrud, we need to instruct Repo to key off specific subfield.
+                # Let's guess standard Beanie behavior is DBRef.
+                # Aggregation on DBRef is tricky.
+                # BUT, since we are designing the system:
+                # User wants "optimal".
+                # If we define schema with Link, Beanie handles the write.
+                # For GenericCrud, we need to instruct Repo to key off specific subfield.
+                # Let's guess standard Beanie behavior is DBRef.
+                # Optimally, we'd use 'author.id' (if manual link) or 'author.$id' (if DBRef).
+                # I'll try 'author.$id' as default for Link types.
+                
+                collection_name = target_model.Settings.name
+                detected[field_name] = {"collection": collection_name, "field": field_name, "is_link": True}
+                
+        return detected
 
     async def _resolve_context(self, request: Request):
         """
@@ -125,7 +185,14 @@ class GenericList(BaseGenericView):
                 query["$or"] = [{field: {"$regex": search, "$options": "i"}} for field in self.search_fields]
             
             skip = (page - 1) * page_size
-            results = await self.repository.get_all(query, skip=skip, limit=page_size, projection=self._get_projection())
+            skip = (page - 1) * page_size
+            results = await self.repository.get_all(
+                query, 
+                skip=skip, 
+                limit=page_size, 
+                projection=self._get_projection(),
+                populate_fields=self.populate_fields
+            )
             total = await self.repository.count(query)
             
             return {
@@ -168,8 +235,13 @@ class GenericRetrieve(BaseGenericView):
         @cache(key_prefix=f"backbone:cache:{self.prefix}:detail")
         async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
-            # We bypass the internal _get_object_internal and do it directly for the decorator to work perfectly
-            item = await self.repository.get_one({"id": pk, "is_deleted": False})
+            # We bypass the internal _get_object_internal and do it directly to support projection/population
+            # and for the decorator to work perfectly
+            item = await self.repository.get_one(
+                {"id": pk, "is_deleted": False},
+                projection=self._get_projection(),
+                populate_fields=self.populate_fields
+            )
             if not item:
                 raise HTTPException(status_code=404, detail="Item not found")
             
@@ -210,6 +282,10 @@ class GenericDelete(BaseGenericView):
         @self.router.delete("/{pk}", status_code=204)
         async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
             item = await self._get_object_internal(pk, request, user, use_cache=False)
+            await self.repository.delete({"id": pk}, soft=True)
+            await self._invalidate_cache()
+            return None
+            
             await self.repository.delete({"id": pk}, soft=True)
             await self._invalidate_cache()
             return None

@@ -246,6 +246,23 @@ async def model_create_handle(
         # For now simple error, ideally re-render with error
         raise HTTPException(status_code=400, detail=f"Creation failed: {str(e)}")
 
+@router.post("/{model_name}/delete_all")
+async def model_delete_all_handle(
+    model_name: str,
+    user: Optional[User] = Depends(get_admin_user)
+):
+    if not user or not user.is_superuser:
+        return RedirectResponse(url="/admin/login")
+    
+    config = admin_site.get_model_config(model_name)
+    if not config: raise HTTPException(status_code=404)
+    
+    model = config["model"]
+    # Delete All
+    await model.delete_all()
+    
+    return RedirectResponse(url=f"/admin/{model_name}", status_code=status.HTTP_303_SEE_OTHER)
+
 @router.get("/{model_name}/{pk}", response_class=HTMLResponse)
 async def model_detail(
     request: Request,
@@ -273,11 +290,45 @@ async def model_detail(
             
     if not item:
         raise HTTPException(status_code=404, detail="Record not found")
+
+    # PREPARE ITEM FOR TEMPLATE: Convert to dict and handle Link fields
+    from beanie import Link
+    item_dict = item.model_dump()
+    # model_dump might leave Link objects as is if they are not excluded
+    
+    # We iterate over fields to fix Link objects manually
+    for name, field in model.model_fields.items():
+        val = getattr(item, name)
         
+        # 1. Single Link
+        if isinstance(val, Link):
+            try:
+                item_dict[name] = str(val.ref.id)
+            except:
+                item_dict[name] = str(val)
+        
+        # 2. List of Links
+        elif isinstance(val, list):
+             new_list = []
+             original_list = item_dict.get(name, val)
+             for i, v in enumerate(val):
+                 if isinstance(v, Link):
+                     try:
+                         new_list.append(str(v.ref.id))
+                     except:
+                         new_list.append(str(v))
+                 else:
+                     # Keep original value (which might be dict from model_dump or obj)
+                     if i < len(original_list):
+                         new_list.append(original_list[i])
+                     else:
+                        new_list.append(v)
+             item_dict[name] = new_list
+
     return templates.TemplateResponse("model_detail.html", {
         "request": request,
         "model_name": model_name,
-        "item": item,
+        "item": item_dict,
         "model_fields": model.model_fields,
         "models": admin_site.get_registered_models(),
         "user": user,
@@ -362,3 +413,5 @@ async def model_delete_handle(
             await item.delete()
             
     return RedirectResponse(url=f"/admin/{model_name}", status_code=status.HTTP_303_SEE_OTHER)
+
+

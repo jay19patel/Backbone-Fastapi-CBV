@@ -61,5 +61,6 @@ class TokenResponse(BaseModel):
 
 class RegisterSchema(BaseModel):
     email: EmailStr
+    username: str
     password: str
     full_name: str

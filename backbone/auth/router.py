@@ -30,55 +30,75 @@ class AuthRouter:
     def _register_routes(self):
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
         async def register(request: Request, user_data: RegisterSchema):
-            await self._resolve_repos(request)
-            existing_user = await self.user_repository.get_one({"email": user_data.email})
-            if existing_user:
-                raise HTTPException(status_code=400, detail="Email already registered")
-        
-            hashed_pw = PasswordManager.hash_password(user_data.password)
-            user_dict = user_data.model_dump()
-            user_dict["hashed_password"] = hashed_pw
-            del user_dict["password"]
-            user_dict["is_active"] = True
-            user_dict["is_staff"] = False
-        
-            new_user = await self.user_repository.create(user_dict)
-            return UserOut(**new_user.model_dump(by_alias=True))
+            try:
+                await self._resolve_repos(request)
+                existing_user = await self.user_repository.get_one({"email": user_data.email})
+                if existing_user:
+                    raise HTTPException(status_code=400, detail="Email already registered")
+                
+                existing_username = await self.user_repository.get_one({"username": user_data.username})
+                if existing_username:
+                     raise HTTPException(status_code=400, detail="Username already taken")
+            
+                hashed_pw = PasswordManager.hash_password(user_data.password)
+                user_dict = user_data.model_dump()
+                user_dict["hashed_password"] = hashed_pw
+                del user_dict["password"]
+                user_dict["is_active"] = True
+                user_dict["is_staff"] = False
+            
+                new_user = await self.user_repository.create(user_dict)
+                # Verify return type
+                if isinstance(new_user, dict):
+                    print("DEBUG: create returned dict")
+                    return UserOut(**new_user)
+                return UserOut(**new_user.model_dump(by_alias=True))
+            except Exception as e:
+                import traceback
+                with open("error_trace.log", "w") as f:
+                    f.write(traceback.format_exc())
+                raise e
 
         @self.router.post("/login", response_model=TokenResponse)
         async def login(request: Request, response: Response, login_data: LoginSchema):
-            # await self._resolve_repos(request) # No need, AuthService handles it
-            
-            from .service import AuthService
-            auth_service = AuthService(request)
-            
-            user = await auth_service.authenticate_user(login_data.email, login_data.password)
-            if not user:
-                 raise HTTPException(status_code=401, detail="Invalid email or password")
-            
-            # Create Session via AuthService
-            session_data = await auth_service.create_session(
-                user=user, 
-                user_agent=request.headers.get("user-agent"),
-                ip_address=request.client.host if request.client else None
-            )
-
-            # Use environment-aware cookie settings from BackboneConfig
-            backbone_config = request.app.state.backbone_config
-            cookie_opts = backbone_config.cookie_settings
-            
-            response.set_cookie(
-                key="refresh_token",
-                value=session_data["refresh_token"],
-                max_age=7 * 24 * 60 * 60,
-                **cookie_opts
-            )
-            
-            return {
-                "access_token": session_data["access_token"],
-                "refresh_token": session_data["refresh_token"],
-                "token_type": "bearer"
-            }
+            try:
+                # await self._resolve_repos(request) # No need, AuthService handles it
+                
+                from .service import AuthService
+                auth_service = AuthService(request)
+                
+                user = await auth_service.authenticate_user(login_data.email, login_data.password)
+                if not user:
+                     raise HTTPException(status_code=401, detail="Invalid email or password")
+                
+                # Create Session via AuthService
+                session_data = await auth_service.create_session(
+                    user=user, 
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None
+                )
+    
+                # Use environment-aware cookie settings from BackboneConfig
+                backbone_config = request.app.state.backbone_config
+                cookie_opts = backbone_config.cookie_settings
+                
+                response.set_cookie(
+                    key="refresh_token",
+                    value=session_data["refresh_token"],
+                    max_age=7 * 24 * 60 * 60,
+                    **cookie_opts
+                )
+                
+                return {
+                    "access_token": session_data["access_token"],
+                    "refresh_token": session_data["refresh_token"],
+                    "token_type": "bearer"
+                }
+            except Exception as e:
+                import traceback
+                with open("error_trace.log", "a") as f:
+                    f.write(f"\n--- Login Error ---\n{traceback.format_exc()}")
+                raise e
 
         @self.router.post("/refresh")
         async def refresh(request: Request, response: Response):
@@ -103,4 +123,10 @@ class AuthRouter:
 
         @self.router.get("/me", response_model=UserOut)
         async def get_me(user: User = Depends(get_current_user)):
-            return UserOut(**user.model_dump(by_alias=True))
+            try:
+                return UserOut(**user.model_dump(by_alias=True))
+            except Exception as e:
+                import traceback
+                with open("error_trace.log", "a") as f:
+                    f.write(f"\n--- Get Me Error ---\n{traceback.format_exc()}")
+                raise e

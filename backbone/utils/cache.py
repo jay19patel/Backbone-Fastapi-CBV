@@ -25,6 +25,16 @@ class CacheEncoder(json.JSONEncoder):
             return obj.isoformat()
         if isinstance(obj, (ObjectId, PydanticObjectId)):
             return str(obj)
+        from beanie import Link
+        if isinstance(obj, Link):
+            # Link acts as a generic validation container. 
+            # We want to represent it uniquely.
+            # It usually has .ref (DBRef) or .id
+            if hasattr(obj, "ref"):
+                return str(obj.ref.id)
+            if hasattr(obj, "id"):
+                 return str(obj.id)
+            return str(obj)
         return super().default(obj)
 
 class CacheService:

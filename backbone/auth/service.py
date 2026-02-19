@@ -32,7 +32,11 @@ class AuthService:
         user = await self.user_repo.get_one({"email": email})
         if not user:
             return None
-        if not PasswordManager.verify_password(password, user.hashed_password):
+            
+        # Handle both dict and object return types
+        hashed_password = user.get("hashed_password") if isinstance(user, dict) else getattr(user, "hashed_password", None)
+        
+        if not PasswordManager.verify_password(password, hashed_password):
             return None
         return user
 
@@ -40,12 +44,15 @@ class AuthService:
         """
         Create a new session and Generate tokens.
         """
-        user_id = str(user.id)
+        # Handle both dict and object
+        user_id = str(user.get("_id") or user.get("id")) if isinstance(user, dict) else str(user.id)
+        
+        import uuid
         
         # 1. Create Session Record
         session_data = {
             "user_id": user_id,
-            "refresh_token": "", # Placeholder, will update shortly
+            "refresh_token": str(uuid.uuid4()), # Temp unique to avoid index collision
             "expires_at": datetime.utcnow() + timedelta(days=7),
             "user_agent": user_agent,
             "ip_address": ip_address,

@@ -51,6 +51,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
     except Exception:
         user = None
 
+    if isinstance(user, dict):
+        if not user.get("is_active"):
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+        return UserOut(**user)
+        
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
