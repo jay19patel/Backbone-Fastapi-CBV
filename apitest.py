@@ -9,7 +9,7 @@ BASE_URL = "http://127.0.0.1:8000"
 
 # Configuration
 NUM_USERS = 5
-TOTAL_BLOGS_PER_USER = 500  # Total 500 blogs
+TOTAL_BLOGS_PER_USER = 1000  # Total 500 blogs
 CONCURRENT_REQUESTS = 50     # Batch size for concurrency
 
 async def register_user(client: httpx.AsyncClient, i: int) -> dict:
@@ -180,15 +180,15 @@ async def clear_database():
     except Exception as e:
         print(f"Error clearing database: {e}")
 
-async def test_long_process(client: httpx.AsyncClient):
+async def test_long_process(client: httpx.AsyncClient, i: int):
     try:
         resp = await client.post(f"{BASE_URL}/custom-long-process")
         if resp.status_code == 200:
-            print(f"Triggered custom long process: {resp.json()}")
+            print(f"Triggered custom long process {i}: {resp.json()}")
         else:
-            print(f"Failed to trigger long process: {resp.status_code} - {resp.text}")
+            print(f"Failed to trigger long process {i}: {resp.status_code} - {resp.text}")
     except Exception as e:
-        print(f"Error triggering long process: {e}")
+        print(f"Error triggering long process {i}: {e}")
 
 async def main():
     print(f"Starting Load Test: {NUM_USERS} users, {TOTAL_BLOGS_PER_USER} blogs each.")
@@ -197,7 +197,8 @@ async def main():
     await clear_database()
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        await test_long_process(client)
+        long_tasks = [test_long_process(client, i) for i in range(10)]
+        await asyncio.gather(*long_tasks)
     
     tasks = [user_worker(i) for i in range(NUM_USERS)]
     

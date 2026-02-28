@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     CACHE_ENABLED: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_TTL: int = 300
-    WORKER_COUNT: int = 1
+    WORKER_COUNT: int = 2
 
     # Rate Limiting Settings
     RATE_LIMIT_ENABLED: bool = True
