@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     CACHE_TTL: int = 300
     WORKER_COUNT: int = 1
 
+    # Rate Limiting Settings
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_DEFAULT_CALLS: int = 100
+    RATE_LIMIT_DEFAULT_WINDOW: int = 60 # seconds
     @property
     def is_development(self) -> bool:
         return self.ENVIRONMENT == "develop"

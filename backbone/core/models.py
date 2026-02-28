@@ -100,7 +100,8 @@ class Session(AuditDocument):
             IndexModel([("refresh_token", ASCENDING)], unique=True)
         ]
 
-class LogEntry(AuditDocument):
+class LogEntry(Document):
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     level: str
     message: str
     module: Optional[str] = None
@@ -116,7 +117,8 @@ class LogEntry(AuditDocument):
             IndexModel([("created_at", DESCENDING)])
         ]
 
-class TaskLog(AuditDocument):
+class TaskLog(Document):
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     task_id: str
     function_name: str
     args: Optional[List[Any]] = None

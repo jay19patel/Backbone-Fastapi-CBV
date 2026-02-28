@@ -608,3 +608,363 @@ Traceback (most recent call last):
   File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
     raise HTTPException(status_code=401, detail="Invalid email or password")
 fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/home/sanskar/Desktop/Learning/Backbone-Fastapi-CBV/backbone/auth/router.py", line 72, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password
+
+--- Login Error ---
+Traceback (most recent call last):
+  File "/Users/jaypatel/Desktop/Development/Jay/Backbone-Fastapi-CBV/backbone/auth/router.py", line 82, in login
+    raise HTTPException(status_code=401, detail="Invalid email or password")
+fastapi.exceptions.HTTPException: 401: Invalid email or password

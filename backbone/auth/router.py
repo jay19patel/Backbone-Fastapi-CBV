@@ -3,6 +3,7 @@ from ..utils import PasswordManager, TokenManager
 from ..schemas import UserOut, TokenResponse, LoginSchema, RegisterSchema
 from ..core.models import User, Session
 from ..core.dependencies import get_current_user, oauth2_scheme
+from ..core.rate_limit import RateLimit
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from ..core.repository import BeanieRepository
@@ -29,7 +30,11 @@ class AuthRouter:
 
     def _register_routes(self):
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-        async def register(request: Request, user_data: RegisterSchema):
+        async def register(
+            request: Request, 
+            user_data: RegisterSchema, 
+            _rate_limit = Depends(RateLimit(calls=5, window=300)) # Strict: 5 accounts per 5 minutes per IP
+        ):
             try:
                 await self._resolve_repos(request)
                 existing_user = await self.user_repository.get_one({"email": user_data.email})
@@ -60,7 +65,12 @@ class AuthRouter:
                 raise e
 
         @self.router.post("/login", response_model=TokenResponse)
-        async def login(request: Request, response: Response, login_data: LoginSchema):
+        async def login(
+            request: Request, 
+            response: Response, 
+            login_data: LoginSchema,
+            _rate_limit = Depends(RateLimit(calls=10, window=60)) # Strict: Brute force protection
+        ):
             try:
                 # await self._resolve_repos(request) # No need, AuthService handles it
                 
@@ -101,7 +111,11 @@ class AuthRouter:
                 raise e
 
         @self.router.post("/refresh")
-        async def refresh(request: Request, response: Response):
+        async def refresh(
+            request: Request, 
+            response: Response,
+            _rate_limit = Depends(RateLimit(calls=20, window=60)) # Moderate limits
+        ):
             await self._resolve_repos(request)
             refresh_token = request.cookies.get("refresh_token")
             if not refresh_token:
@@ -122,7 +136,10 @@ class AuthRouter:
             return {"access_token": new_access_token, "token_type": "bearer"}
 
         @self.router.get("/me", response_model=UserOut)
-        async def get_me(user: User = Depends(get_current_user)):
+        async def get_me(
+            user: User = Depends(get_current_user), 
+            _rate_limit = Depends(RateLimit(calls=100, window=60)) # Normal API limits
+        ):
             try:
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:

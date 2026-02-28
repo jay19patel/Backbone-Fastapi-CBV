@@ -26,7 +26,7 @@ class BeanieRepository(Generic[T]):
             return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
         if isinstance(data, list):
             return [BeanieRepository._sanitize(v) for v in data]
-        if isinstance(data, ObjectId):
+        if isinstance(data, ObjectId) or isinstance(data, PydanticObjectId):
             return str(data)
         from beanie import Link
         if isinstance(data, Link):
@@ -93,26 +93,57 @@ class BeanieRepository(Generic[T]):
             for local_field, config in populate_fields.items():
                 target_collection = config
                 alias = local_field
+                is_link = False
+                is_string_id = False
                 
                 if isinstance(config, dict):
                     target_collection = config.get("collection")
                     alias = config.get("field", local_field)
+                    is_link = config.get("is_link", False)
+                    is_string_id = config.get("is_string_id", False)
                 
+                if is_string_id:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "let": {"local_id": f"${local_field}"},
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$eq": ["$_id", {"$toObjectId": "$$local_id"}]
+                                        }
+                                    }
+                                }
+                            ],
+                            "as": alias
+                        }
+                    })
+                elif is_link:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "localField": f"{local_field}.$id",
+                            "foreignField": "_id",
+                            "as": alias
+                        }
+                    })
+                else:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "localField": local_field,
+                            "foreignField": "_id",
+                            "as": alias
+                        }
+                    })
+
                 pipeline.append({
-                    "$lookup": {
-                        "from": target_collection,
-                        "localField": local_field,
-                        "foreignField": "_id",
-                        "as": alias
+                    "$unwind": {
+                        "path": f"${alias}",
+                        "preserveNullAndEmptyArrays": True
                     }
                 })
-                # If we are mapping to a SINGLE user/object from a single ID, we might want to unwind
-                # But GenericCrud usually returns list. The UI/Frontend can handle it or we add unwind option.
-                # For now, standard $lookup returns an array.
-                
-                # OPTIONAL: Unwind if the local field is a scalar ID and we want a single object, 
-                # but detecting scalar vs array in generic way without schema inspection is hard.
-                # We'll leave it as array for consistency or let user specify "unwind": True in config later.
 
         # 5. Project
         if projection:
@@ -151,7 +182,13 @@ class BeanieRepository(Generic[T]):
         if not populate_fields and not projection:
             # Use standard Beanie find_one if no complex operations
             doc = await self.document_class.find_one(filter_query)
-            return doc.model_dump(by_alias=True) if doc else None
+            if doc:
+                dumped = doc.model_dump(by_alias=True)
+                sanitized = self._sanitize(dumped)
+                if "_id" in sanitized:
+                    sanitized["id"] = sanitized.pop("_id")
+                return sanitized
+            return None
 
         # Use Aggregation for Population/Projection
         pipeline = [{"$match": filter_query}]
@@ -160,17 +197,55 @@ class BeanieRepository(Generic[T]):
             for local_field, config in populate_fields.items():
                 target_collection = config
                 alias = local_field
+                is_link = False
+                is_string_id = False
                 
                 if isinstance(config, dict):
                     target_collection = config.get("collection")
                     alias = config.get("field", local_field)
+                    is_link = config.get("is_link", False)
+                    is_string_id = config.get("is_string_id", False)
 
+                if is_string_id:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "let": {"local_id": f"${local_field}"},
+                            "pipeline": [
+                                {
+                                    "$match": {
+                                        "$expr": {
+                                            "$eq": ["$_id", {"$toObjectId": "$$local_id"}]
+                                        }
+                                    }
+                                }
+                            ],
+                            "as": alias
+                        }
+                    })
+                elif is_link:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "localField": f"{local_field}.$id",
+                            "foreignField": "_id",
+                            "as": alias
+                        }
+                    })
+                else:
+                    pipeline.append({
+                        "$lookup": {
+                            "from": target_collection,
+                            "localField": local_field,
+                            "foreignField": "_id", 
+                            "as": alias 
+                        }
+                    })
+                    
                 pipeline.append({
-                    "$lookup": {
-                        "from": target_collection,
-                        "localField": local_field,
-                        "foreignField": "_id", 
-                        "as": alias 
+                    "$unwind": {
+                        "path": f"${alias}",
+                        "preserveNullAndEmptyArrays": True
                     }
                 })
 

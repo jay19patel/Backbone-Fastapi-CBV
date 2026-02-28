@@ -50,21 +50,24 @@
                 <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-slate-500 font-mono text-sm">
                     {{ value }}
                 </div>
-                {% elif field.annotation.__name__ == 'bool' %}
+                {% else %}
+                {% set f_type = field.annotation | string %}
+                {% if 'bool' in f_type %}
                 <select name="{{ name }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                     <option value="true" {% if value %}selected{% endif %}>True</option>
                     <option value="false" {% if not value %}selected{% endif %}>False</option>
                 </select>
-                {% elif field.annotation.__name__ in ['int', 'float'] %}
+                {% elif 'int' in f_type or 'float' in f_type %}
                 <input type="number" name="{{ name }}" step="any" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
-                {% elif value is mapping or (value is iterable and value is not string) %}
+                {% elif value is mapping or (value is iterable and value is not string) or 'list' in f_type.lower() or 'dict' in f_type.lower() %}
                 <textarea name="{{ name }}" rows="4"
-                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) }}</textarea>
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) if value is defined and value is not none else '' }}</textarea>
                 {% else %}
                 <input type="text" name="{{ name }}" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                {% endif %}
                 {% endif %}
             </div>
             {% endfor %}

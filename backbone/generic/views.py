@@ -72,7 +72,20 @@ class BaseGenericView:
         from beanie import Link
         from typing import get_origin, get_args
         
+        # Hardcode audit fields mapper
+        audit_fields = ["created_by", "updated_by", "deleted_by"]
+        for audit_field in audit_fields:
+            if audit_field in self.schema.model_fields:
+                detected[audit_field] = {
+                    "collection": "users", 
+                    "field": audit_field, 
+                    "is_string_id": True
+                }
+        
         for field_name, field_info in self.schema.model_fields.items():
+            if field_name in detected:
+                continue
+
             # Check for Link type
             # Case 1: Link[Model]
             # Case 2: List[Link[Model]]
@@ -149,11 +162,12 @@ class BaseGenericView:
             if not item:
                 raise HTTPException(status_code=404, detail="Item not found")
             
+            # Note: item is a dict here, make sure permission_class handles dict or convert if needed
             for permission_class in self.permission_classes:
                 perm = permission_class(request, user)
                 if not await perm.has_object_permission(item):
                     raise HTTPException(status_code=403, detail="Object-level access denied")
-            return item.model_dump(by_alias=True)
+            return item if isinstance(item, dict) else item.model_dump(by_alias=True)
 
         if use_cache and self.cache_service and self.cache_service.enabled:
             data = await self.cache_service.get_or_set(cache_key, self.cache_ttl, fetch_item)
@@ -231,7 +245,7 @@ class GenericRetrieve(BaseGenericView):
         self._register_retrieve_route()
 
     def _register_retrieve_route(self):
-        @self.router.get("/{pk}", response_model=self.schema)
+        @self.router.get("/{pk}", response_model=Any)
         @cache(key_prefix=f"backbone:cache:{self.prefix}:detail")
         async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
@@ -239,7 +253,6 @@ class GenericRetrieve(BaseGenericView):
             # and for the decorator to work perfectly
             item = await self.repository.get_one(
                 {"id": pk, "is_deleted": False},
-                projection=self._get_projection(),
                 populate_fields=self.populate_fields
             )
             if not item:

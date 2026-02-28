@@ -88,6 +88,26 @@ Generic views automatically handle caching. For example, the `Playlists` endpoin
 - `GET /playlists/{pk}`: Retrieves single item (Cached)
 - `POST/PATCH/DELETE`: Standard operations (Automatically invalidates cache)
 
+#### GenericCrud Parameters Explained
+When initializing `GenericCrud` or `BaseGenericView`, you have a number of configurable options:
+- `schema`: The Beanie `Document` model that this CRUD router controls (e.g. `User`, `BlogSchema`).
+- `prefix`: The URL prefix for the endpoints (e.g. `/blogs`).
+- `tags`: OpenAPI tags used for grouping the endpoints in the Swagger UI.
+- `repository`: An optional `BeanieRepository` instance. If omitted, one is automatically created for the `schema`.
+- `permission_classes`: A list of backend permissions (e.g. `[IsOwner]`, `[AllowAny]`, `[IsAdminUser]`) that are executed before endpoints resolve.
+- `list_fields`: A list of string fields (e.g., `["title", "author"]`) that dictate *which* fields are returned in the response for `GET` requests using MongoDB Projection. Other fields are omitted.
+- `search_fields`: Fields to apply `$regex` indexing to when a `?search=` query parameter is supplied.
+- `filter_fields`: Fields used for exact matching filters.
+- `ordering_fields`: Fields allowing developers to request `?sort=` ordering.
+- `database`: Used to override the default database.
+- `use_auth`: A boolean flag defining whether backend authentication endpoints require a valid user token.
+- `cache_ttl`: An integer representing the time in seconds a `GET` result remains cached in Redis.
+- **`populate_fields`**: A dictionary detailing how to join external collections via `$lookup`. Format: `{"local_author_id": "target_users_collection"}`. *Note: this manually defines the relations MongoDB should merge together.*
+- **`fetch_links`**: A massive shortcut bool. When set to `True`, the backend inspects your `schema` for Beanie `Link[x]` types and Audit fields, and auto-generates the `populate_fields` dictionary for you!
+
+**Difference between `list_fields` and `populate_fields`**: 
+`populate_fields` controls the MongoDB `$lookup` pipeline, determining which ID-referenced relations in other collections should be fetched and merged into the document (transforming an ID string into a full object dictionary). `list_fields` is used at the end of the query (Projection) to slice the returned dictionary and *only* send the specific list of keys to the user, stripping away sensitive or heavy data.
+
 ### 🔔 Advanced: Model Signals & Events
 The framework provides a decoupled signal system to handle model lifecycles:
 
