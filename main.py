@@ -61,8 +61,7 @@ models_to_register = [
 BackboneConfig(
     app=app, 
     config=config, 
-    document_models=models_to_register,
-    prefix="/api"
+    document_models=models_to_register
 )
 
 # --------------------------------------------------------------------------

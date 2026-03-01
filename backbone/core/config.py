@@ -36,12 +36,10 @@ class BackboneConfig:
         app: FastAPI, 
         config: Any, 
         repository_class: Type[BeanieRepository] = BeanieRepository,
-        document_models: List[Any] = None,
-        prefix: Optional[str] = None
+        document_models: List[Any] = None
     ):
         self.app = app
         self.config = config
-        self.prefix = prefix if prefix is not None else ""
         
         # Default Core Models
         from .models import User, Session, LogEntry, TaskLog, Attachment
@@ -83,14 +81,14 @@ class BackboneConfig:
         self.app.router.lifespan_context = self.lifespan
 
         # Include Admin Router
-        self.app.include_router(admin_router, prefix=self.prefix)
+        self.app.include_router(admin_router)
 
         # Include Auth Router
-        self.app.include_router(self.auth_router.router, prefix=self.prefix)
+        self.app.include_router(self.auth_router.router)
         
         # Include Media Router
         from .media_router import router as core_media_router
-        self.app.include_router(core_media_router, prefix=self.prefix)
+        self.app.include_router(core_media_router)
         
         # ----------------------------------------------------------------------
         # Media & Static Files Setup

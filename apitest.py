@@ -3,6 +3,7 @@ import httpx
 import random
 import time
 from typing import List, Optional
+from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 
@@ -108,14 +109,35 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
 
     async def _create_one(idx):
         async with sem:
+            now_iso = datetime.now(timezone.utc).isoformat()
             blog_data = {
                 "title": f"Blog Post {idx} by User {user_id}",
-                "slug": f"blog-post-{user_id}-{idx}-{random.randint(1000, 9999)}",
-                "content": f"This is some realistic content for blog post {idx}. " * 5,
-                "category": category_id if category_id else None,
+                "subtitle": f"An engaging subtitle for blog post {idx} to test the API thoroughly.",
+                "slug": f"blog-post-{user_id}-{idx}-{int(time.time())}-{random.randint(1000, 9999)}",
+                "excerpt": f"This is an excerpt summarizing the key takeaways for blog post {idx}.",
+                "introduction": "Welcome to this dummy blog post. We are generating lots of dummy text to make it realistic.",
+                "sections": [
+                    {
+                        "type": "paragraph",
+                        "content": f"This is the first main section of blog {idx}. Here is some detailed content to flesh out the body. " * 3
+                    },
+                    {
+                        "type": "image",
+                        "url": image_url,
+                        "caption": "A cool dummy image for this section"
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": "Another paragraph with more details to ensure we cover all required lengths. " * 3
+                    }
+                ],
+                "conclusion": "In conclusion, this setup should perfectly populate the blog with all necessary real-world fields.",
                 "author": str(user_id),
+                "category": category_id if category_id else None,
                 "thumbnail": image_url,
-                "tags": [f"tag{idx}", "test", "load"]
+                "isPublished": True,
+                "publishedDate": now_iso,
+                "embedding": [random.uniform(0, 1) for _ in range(10)]
             }
             try:
                 resp = await client.post(f"{BASE_URL}/api/blogs/", json=blog_data, headers=headers)

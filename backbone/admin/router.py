@@ -249,6 +249,7 @@ async def model_create_handle(
 
 @router.post("/{model_name}/delete_all")
 async def model_delete_all_handle(
+    request: Request,
     model_name: str,
     user: Optional[User] = Depends(get_admin_user)
 ):
@@ -389,6 +390,7 @@ async def model_update_handle(
 
 @router.get("/{model_name}/{pk}/delete")
 async def model_delete_handle(
+    request: Request,
     model_name: str,
     pk: str,
     user: Optional[User] = Depends(get_admin_user)
