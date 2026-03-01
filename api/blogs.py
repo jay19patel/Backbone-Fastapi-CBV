@@ -19,7 +19,8 @@ blog_crud = GenericCrud(
     search_fields=["title", "subtitle", "excerpt", "introduction"],
     list_fields=["id", "title", "slug", "thumbnail", "author", "category", "created_at"],
     fetch_links=True,
-    permission_classes=[AllowAny]
+    permission_classes=[AllowAny],
+    lookup_field="slug"
 )
 
 router = APIRouter()

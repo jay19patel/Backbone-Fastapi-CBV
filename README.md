@@ -102,6 +102,7 @@ When initializing `GenericCrud` or `BaseGenericView`, you have a number of confi
 - `database`: Used to override the default database.
 - `use_auth`: A boolean flag defining whether backend authentication endpoints require a valid user token.
 - `cache_ttl`: An integer representing the time in seconds a `GET` result remains cached in Redis.
+- **`lookup_field`**: A string defining which field to use when fetching, updating, or deleting a single record. Defaults to `"id"`. Set this to `"slug"` (e.g., `lookup_field="slug"`) if you want your detail endpoints to query by a custom slug instead of the Beanie Document ID.
 - **`populate_fields`**: A dictionary detailing how to join external collections via `$lookup`. Format: `{"local_author_id": "target_users_collection"}`. *Note: this manually defines the relations MongoDB should merge together.*
 - **`fetch_links`**: A massive shortcut bool. When set to `True`, the backend inspects your `schema` for Beanie `Link[x]` types and Audit fields, and auto-generates the `populate_fields` dictionary for you!
 

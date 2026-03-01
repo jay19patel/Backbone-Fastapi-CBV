@@ -29,7 +29,8 @@ class BaseGenericView:
         cache_ttl: int = 300,
         populate_fields: Dict[str, str] = None,
         fetch_links: bool = False,
-        rate_limit: Optional[Any] = None
+        rate_limit: Optional[Any] = None,
+        lookup_field: str = "id"
     ):
         
         from ..core.rate_limit import RateLimit
@@ -49,6 +50,7 @@ class BaseGenericView:
         self.schema = schema
         self.prefix = prefix
         self.cache_ttl = cache_ttl
+        self.lookup_field = lookup_field
         
         # Resolve Repository Class and Instance
         self.repository = repository
@@ -115,7 +117,7 @@ class BaseGenericView:
         cache_key = f"backbone:cache:{self.prefix}:detail:{pk}"
         
         async def fetch_item():
-            item = await self.repository.get_one({"id": pk, "is_deleted": False})
+            item = await self.repository.get_one({self.lookup_field: pk, "is_deleted": False})
             if not item:
                 raise HTTPException(status_code=404, detail="Item not found")
             
@@ -209,7 +211,7 @@ class GenericRetrieve(BaseGenericView):
             # We bypass the internal _get_object_internal and do it directly to support projection/population
             # and for the decorator to work perfectly
             item = await self.repository.get_one(
-                {"id": pk, "is_deleted": False},
+                {self.lookup_field: pk, "is_deleted": False},
                 populate_fields=self.populate_fields
             )
             if not item:
@@ -238,7 +240,7 @@ class GenericUpdate(BaseGenericView):
             update_data["updated_at"] = datetime.now(timezone.utc)
             update_data["updated_by"] = str(user.id)
             
-            result = await self.repository.update({"id": pk}, update_data)
+            result = await self.repository.update({self.lookup_field: pk}, update_data)
             await self._invalidate_cache()
             return result
 
@@ -252,11 +254,7 @@ class GenericDelete(BaseGenericView):
         @self.router.delete("/{pk}", status_code=204)
         async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
             item = await self._get_object_internal(pk, request, user, use_cache=False)
-            await self.repository.delete({"id": pk}, soft=True)
-            await self._invalidate_cache()
-            return None
-            
-            await self.repository.delete({"id": pk}, soft=True)
+            await self.repository.delete({self.lookup_field: pk}, soft=True)
             await self._invalidate_cache()
             return None
 
