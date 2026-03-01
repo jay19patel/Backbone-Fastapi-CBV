@@ -2,42 +2,75 @@ import asyncio
 import httpx
 import random
 import time
-from typing import List
+from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
+import os
 
 BASE_URL = "http://127.0.0.1:8000"
 
 # Configuration
-NUM_USERS = 5
-TOTAL_BLOGS_PER_USER = 1000  # Total 500 blogs
-CONCURRENT_REQUESTS = 50     # Batch size for concurrency
+NUM_USERS = 10
+TOTAL_BLOGS_PER_USER = 10  # 10 users * 10 blogs = 100 total blogs
+TOTAL_PLAYLISTS_PER_USER = 2 # 10 users * 2 playlists = 20 total playlists
+CONCURRENT_REQUESTS = 5
+
+IMAGE_PATH = "bg.jpg" # Required for blogs
+PROFILE_IMAGE_PATH = "profile.jpg" # Required for users
+
+async def upload_image(client: httpx.AsyncClient, token: str, file_path: str, collection: str = None, doc_id: str = None, field: str = None) -> Optional[str]:
+    try:
+        filename = os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            files = {"file": (filename, f, "image/jpeg")}
+            data = {}
+            if collection: data["collection_name"] = collection
+            if doc_id: data["document_id"] = doc_id
+            if field: data["field_name"] = field
+            
+            headers = {"Authorization": f"Bearer {token}"}
+            resp = await client.post(f"{BASE_URL}/api/media/upload/image", files=files, data=data, headers=headers)
+            if resp.status_code == 200:
+                resp_data = resp.json()
+                attachment_id = resp_data.get("id")
+                print(f"Upload initiated for {filename}. Attachment ID: {attachment_id}")
+                return attachment_id
+            else:
+                print(f"Failed to upload {filename}: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"Error uploading {file_path}: {e}")
+    return None
+
+async def update_user_profile(client: httpx.AsyncClient, token: str, user_id: str, attachment_id: str):
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        # Since field is Link[Attachment], we pass the attachment ID
+        resp = await client.patch(f"{BASE_URL}/api/user/{user_id}", json={"profile_image": attachment_id}, headers=headers)
+        if resp.status_code == 200:
+            print(f"User {user_id} profile updated with attachment link.")
+        else:
+            print(f"Failed to update user profile: {resp.text}")
+    except Exception as e:
+        print(f"Error updating user: {e}")
 
 async def register_user(client: httpx.AsyncClient, i: int) -> dict:
     ts = int(time.time())
     user_data = {
         "email": f"user{i}_{ts}@test.com",
         "password": "password123",
-        "full_name": f"Test User {i}"
+        "full_name": f"Test User {i}",
+        "headline": f"Top Author Level {i}",
+        "bio": f"I am a passionate writer testing this out."
     }
     try:
-        # Try login first to perform idempotent run
-        login_resp = await client.post(f"{BASE_URL}/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
-        if login_resp.status_code == 200:
-            print(f"User {i} logged in.")
-            return login_resp.json()
-            
         print(f"Registering User {i}...")
         resp = await client.post(f"{BASE_URL}/auth/register", json=user_data)
         if resp.status_code == 201:
-            # Login after register
             login_resp = await client.post(f"{BASE_URL}/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
             return login_resp.json()
         elif resp.status_code == 400:
-             print(f"User {i} already exists (400). Logging in...")
              login_resp = await client.post(f"{BASE_URL}/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
              if login_resp.status_code == 200:
                  return login_resp.json()
-                 
         print(f"Failed to register user {i}: {resp.text}")
     except Exception as e:
         print(f"Error user {i}: {e}")
@@ -45,106 +78,95 @@ async def register_user(client: httpx.AsyncClient, i: int) -> dict:
 
 async def create_category(client: httpx.AsyncClient, token: str, i: int) -> str:
     headers = {"Authorization": f"Bearer {token}"}
-    cat_data = {"name": f"Category {i}", "slug": f"cat-{i}-{random.randint(1000, 9999)}"}
+    ts = int(time.time() * 1000)
+    # 1. Create Parent Category
+    parent_data = {"name": f"Main Category {i}", "slug": f"main-cat-{i}-{ts}"}
     try:
-        resp = await client.post(f"{BASE_URL}/blog-categories/", json=cat_data, headers=headers)
+        resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=parent_data, headers=headers)
         if resp.status_code == 201:
-             return resp.json().get("_id") or resp.json().get("id")
-    except:
-        pass
+             data = resp.json()
+             parent_id = data.get("id") or data.get("_id")
+             # 2. Create Sub Category
+             sub_data = {"name": f"Sub Category {i}", "slug": f"sub-cat-{ts+1}"}
+             sub_resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=sub_data, headers=headers)
+             if sub_resp.status_code == 201:
+                 sub_data_resp = sub_resp.json()
+                 cat_id = sub_data_resp.get("id") or sub_data_resp.get("_id")
+                 print(f"Sub-category created: {cat_id}")
+                 return cat_id
+             return parent_id
+        else:
+            print(f"Failed to create category: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"Error creating category: {e}")
     return None 
 
-async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str) -> List[str]:
+async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, image_url: str) -> List[str]:
     headers = {"Authorization": f"Bearer {token}"}
     
-    # Semaphore for concurrency control
     sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
     async def _create_one(idx):
         async with sem:
             blog_data = {
                 "title": f"Blog Post {idx} by User {user_id}",
-                "content": f"This is some realistic content for blog post {idx}. " * 10,
-                "categories": [category_id] if category_id else [],
+                "slug": f"blog-post-{user_id}-{idx}-{random.randint(1000, 9999)}",
+                "content": f"This is some realistic content for blog post {idx}. " * 5,
+                "category": category_id if category_id else None,
                 "author": str(user_id),
+                "thumbnail": image_url,
                 "tags": [f"tag{idx}", "test", "load"]
             }
             try:
-                # We need to pass author ID.
-                # Let's fix user_worker to capture ID.
-                resp = await client.post(f"{BASE_URL}/blogs/", json=blog_data, headers=headers)
+                resp = await client.post(f"{BASE_URL}/api/blogs/", json=blog_data, headers=headers)
                 if resp.status_code == 201:
                     data = resp.json()
                     return data.get("_id") or data.get("id")
-                # Print error for first few failures or rate limit exceeded
-                if resp.status_code == 429:
-                    print(f"Rate limit exceeded (429) for blog {idx}: {resp.text}")
-                elif idx < 5:
-                    print(f"Blog create failed {idx}: {resp.status_code} - {resp.text}")
                 return None
             except Exception as e:
-                print(f"Req Error: {e}")
                 return None
 
     print(f"User {user_id} starting {num_blogs} blogs creation...")
-    start = time.time()
-    
     tasks = [_create_one(i) for i in range(num_blogs)]
     results = await asyncio.gather(*tasks)
     created_ids = [r for r in results if r]
-    
-    end = time.time()
-    print(f"User {user_id} finished. Created: {len(created_ids)}/{num_blogs}. Time: {end-start:.2f}s")
     return created_ids
 
-async def read_blogs(client: httpx.AsyncClient, token: str):
-    # READ All
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        resp = await client.get(f"{BASE_URL}/blogs/", headers=headers)
-        if resp.status_code == 200:
-            count = len(resp.json())
-            print(f"Successfully fetched {count} blogs via GET overall.")
-    except Exception as e:
-        print(f"Error fetching blogs: {e}")
-
-async def test_crud_single_blog(client: httpx.AsyncClient, token: str, blog_id: str):
+async def create_playlists(client: httpx.AsyncClient, token: str, user_id: str, num_playlists: int, blog_ids: List[str], image_url: str):
     headers = {"Authorization": f"Bearer {token}"}
     
-    # READ Single
-    try:
-        resp = await client.get(f"{BASE_URL}/blogs/{blog_id}", headers=headers)
-        if resp.status_code == 200:
-            print(f"Successfully picked single blog {blog_id} via GET.")
-        else:
-            print(f"Failed to read single blog: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"Error reading single blog: {e}")
+    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
-    # UPDATE Single
-    try:
-        update_data = {"title": f"Updated Blog Title {random.randint(100, 999)}"}
-        resp = await client.patch(f"{BASE_URL}/blogs/{blog_id}", json=update_data, headers=headers)
-        if resp.status_code == 200:
-            print(f"Successfully updated single blog {blog_id} via PATCH.")
-        else:
-            print(f"Failed to update single blog: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"Error updating single blog: {e}")
+    async def _create_one(idx):
+        async with sem:
+            playlist_blogs = random.sample(blog_ids, min(len(blog_ids), 3))
+            
+            playlist_data = {
+                "name": f"Playlist {idx} by {user_id}",
+                "slug": f"playlist-{user_id}-{idx}-{random.randint(1000, 9999)}",
+                "description": "My awesome playlist of blogs.",
+                "thumbnail": image_url,
+                "blogs": playlist_blogs,
+                "owner": str(user_id)
+            }
+            try:
+                resp = await client.post(f"{BASE_URL}/api/playlists/", json=playlist_data, headers=headers)
+                if resp.status_code == 201:
+                    data = resp.json()
+                    return data.get("_id") or data.get("id")
+                return None
+            except Exception as e:
+                return None
 
-    # DELETE Single
-    try:
-        resp = await client.delete(f"{BASE_URL}/blogs/{blog_id}", headers=headers)
-        if resp.status_code in [200, 204]:
-            print(f"Successfully deleted single blog {blog_id} via DELETE.")
-        else:
-            print(f"Failed to delete single blog: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"Error deleting single blog: {e}")
+    print(f"User {user_id} starting {num_playlists} playlists creation...")
+    tasks = [_create_one(i) for i in range(num_playlists)]
+    results = await asyncio.gather(*tasks)
+    created_ids = [r for r in results if r]
+    return created_ids
 
 async def user_worker(i: int):
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # 1. Auth
+        # 1. Auth & Register
         auth_data = await register_user(client, i)
         if not auth_data:
             return
@@ -159,19 +181,23 @@ async def user_worker(i: int):
             return
         real_user_id = me_resp.json()["_id"]
         
-        # 2. Get/Create Category
+        # 2. Upload Profile Image
+        print(f"User {i} uploading profile image...")
+        prof_att_id = await upload_image(client, token, PROFILE_IMAGE_PATH, collection="users", doc_id=real_user_id, field="profile_image")
+        if prof_att_id:
+            await update_user_profile(client, token, real_user_id, prof_att_id)
+            
+        # 3. Upload Blog Image
+        print(f"User {i} uploading blog background image...")
+        image_att_id = await upload_image(client, token, IMAGE_PATH, collection="blogs", field="thumbnail")
+        if not image_att_id:
+            return
+            
+        # 4. Content Creation
         cat_id = await create_category(client, token, i)
-        
-        # 3. Create Blogs
-        created_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id)
-
-        # 4. READ All blogs (GET)
-        await read_blogs(client, token)
-
-        # 5. READ, UPDATE, DELETE a single blog if we created any
-        if created_ids:
-            target_id = created_ids[0]
-            await test_crud_single_blog(client, token, target_id)
+        blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id)
+        if blog_ids:
+             await create_playlists(client, token, real_user_id, TOTAL_PLAYLISTS_PER_USER, blog_ids, image_att_id)
 
 async def clear_database():
     try:
@@ -181,33 +207,21 @@ async def clear_database():
     except Exception as e:
         print(f"Error clearing database: {e}")
 
-async def test_long_process(client: httpx.AsyncClient, i: int):
-    try:
-        resp = await client.post(f"{BASE_URL}/custom-long-process")
-        if resp.status_code == 200:
-            print(f"Triggered custom long process {i}: {resp.json()}")
-        else:
-            print(f"Failed to trigger long process {i}: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"Error triggering long process {i}: {e}")
 
 async def main():
-    print(f"Starting Load Test: {NUM_USERS} users, {TOTAL_BLOGS_PER_USER} blogs each.")
-    print("Ensure the server is running on localhost:8000")
-    
-    await clear_database()
+    print(f"Starting Content Generation:")
+    if not os.path.exists(IMAGE_PATH) or not os.path.exists(PROFILE_IMAGE_PATH):
+        print(f"Error: {IMAGE_PATH} or {PROFILE_IMAGE_PATH} not found.")
+        return
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        long_tasks = [test_long_process(client, i) for i in range(10)]
-        await asyncio.gather(*long_tasks)
-    
+    await clear_database()
     tasks = [user_worker(i) for i in range(NUM_USERS)]
     
     start_time = time.time()
     await asyncio.gather(*tasks)
     end_time = time.time()
     
-    print(f"\n--- Total Load Test Time: {end_time - start_time:.2f}s ---")
+    print(f"\n--- Total Generation Time: {end_time - start_time:.2f}s ---")
 
 if __name__ == "__main__":
     asyncio.run(main())

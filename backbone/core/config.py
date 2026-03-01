@@ -10,6 +10,9 @@ from ..auth.router import AuthRouter
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
 import asyncio
+import os
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 from .settings import Settings, settings
 
 from contextlib import asynccontextmanager
@@ -39,8 +42,8 @@ class BackboneConfig:
         self.config = config
         
         # Default Core Models
-        from .models import User, Session, LogEntry, TaskLog
-        core_models = [User, Session, LogEntry, TaskLog]
+        from .models import User, Session, LogEntry, TaskLog, Attachment
+        core_models = [User, Session, LogEntry, TaskLog, Attachment]
         # Initialize with provided models, or an empty list if None
         self.document_models = list(document_models) if document_models is not None else []
         # Add core models, ensuring no duplicates
@@ -83,12 +86,23 @@ class BackboneConfig:
         # Include Auth Router
         self.app.include_router(self.auth_router.router)
         
+        # Include Media Router
+        from .media_router import router as core_media_router
+        self.app.include_router(core_media_router, prefix="/api")
+        
+        # ----------------------------------------------------------------------
+        # Media & Static Files Setup
+        # ----------------------------------------------------------------------
+        self.media_path = Path("media")
+        self.media_path.mkdir(parents=True, exist_ok=True)
+        self.app.mount("/media", StaticFiles(directory=str(self.media_path)), name="media")
+        
         self._register_exception_handlers()
 
         # Register Models with Admin Site
         # Register Models with Admin Site
-        from .models import User, Session, LogEntry, TaskLog
-        core_models_set = {User, Session, LogEntry, TaskLog}
+        from .models import User, Session, LogEntry, TaskLog, Attachment
+        core_models_set = {User, Session, LogEntry, TaskLog, Attachment}
         
         for model in self.document_models:
             category = "Core Models" if model in core_models_set else "Custom Models"

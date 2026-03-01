@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Type
 from .signals import signals
-from beanie import Document, PydanticObjectId, Insert, Replace, Save, Delete, Update, before_event, after_event
+from beanie import Document, PydanticObjectId, Insert, Replace, Save, Delete, Update, before_event, after_event, Link
 from pydantic import Field, EmailStr
 from pymongo import IndexModel, ASCENDING, DESCENDING
 
@@ -76,6 +76,11 @@ class User(AuditDocument):
     is_staff: bool = False
     is_superuser: bool = False
     hashed_password: str
+    
+    # Profile fields
+    profile_image: Optional[Link["Attachment"]] = None
+    headline: Optional[str] = Field(default=None, max_length=255, description="A short professional headline")
+    bio: Optional[str] = Field(default=None, description="Bio or about section")
 
     class Settings:
         name = "users"
@@ -135,3 +140,34 @@ class TaskLog(Document):
             IndexModel([("task_id", ASCENDING)]),
             IndexModel([("created_at", DESCENDING)])
         ]
+
+class Attachment(Document):
+    """
+    Universal Attachment model to track all media files.
+    """
+    filename: str
+    file_path: Optional[str] = None
+    content_type: str
+    collection_name: Optional[str] = None
+    document_id: Optional[str] = None
+    field_name: Optional[str] = None
+    status: str = "pending" # pending, completed, failed
+    size: Optional[float] = None
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = None
+    
+    class Settings:
+        name = "attachments"
+        # Fields to return when this model is linked/populated
+        return_link_data = ["id", "filename", "file_path", "content_type", "status", "size"]
+        indexes = [
+            IndexModel([("collection_name", ASCENDING)]),
+            IndexModel([("document_id", ASCENDING)]),
+            IndexModel([("status", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)])
+        ]
+
+# Resolve forward references
+User.model_rebuild()
+Attachment.model_rebuild()

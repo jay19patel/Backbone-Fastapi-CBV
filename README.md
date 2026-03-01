@@ -90,7 +90,7 @@ Generic views automatically handle caching. For example, the `Playlists` endpoin
 
 #### GenericCrud Parameters Explained
 When initializing `GenericCrud` or `BaseGenericView`, you have a number of configurable options:
-- `schema`: The Beanie `Document` model that this CRUD router controls (e.g. `User`, `BlogSchema`).
+- `schema`: The Beanie `Document` model that this CRUD router controls (e.g. `User`, `Blog`).
 - `prefix`: The URL prefix for the endpoints (e.g. `/blogs`).
 - `tags`: OpenAPI tags used for grouping the endpoints in the Swagger UI.
 - `repository`: An optional `BeanieRepository` instance. If omitted, one is automatically created for the `schema`.
@@ -105,8 +105,37 @@ When initializing `GenericCrud` or `BaseGenericView`, you have a number of confi
 - **`populate_fields`**: A dictionary detailing how to join external collections via `$lookup`. Format: `{"local_author_id": "target_users_collection"}`. *Note: this manually defines the relations MongoDB should merge together.*
 - **`fetch_links`**: A massive shortcut bool. When set to `True`, the backend inspects your `schema` for Beanie `Link[x]` types and Audit fields, and auto-generates the `populate_fields` dictionary for you!
 
-**Difference between `list_fields` and `populate_fields`**: 
 `populate_fields` controls the MongoDB `$lookup` pipeline, determining which ID-referenced relations in other collections should be fetched and merged into the document (transforming an ID string into a full object dictionary). `list_fields` is used at the end of the query (Projection) to slice the returned dictionary and *only* send the specific list of keys to the user, stripping away sensitive or heavy data.
+
+### 🖼️ Core Media System
+Backbone includes a built-in, background-processed media handling system.
+
+#### 1. The Attachment Model
+All uploads are tracked via the `Attachment` model. It stores:
+- `filename`, `file_path`, `content_type`
+- `status` (pending, completed, failed)
+- `size` (automatically converted to **MB**)
+- `collection_name`, `document_id`, `field_name` (for automatic linking)
+
+#### 2. Usage in Schemas
+To add an image or file to a model, use `Link[Attachment]`:
+```python
+class Blog(AuditDocument):
+    title: str
+    thumbnail: Optional[Link["Attachment"]] = None
+```
+
+#### 3. Uploading Files
+Use the built-in endpoint: `POST /api/media/upload/image`
+- **Payload**: Form-data with `file` (UploadFile).
+- **Optional Params**: `collection_name`, `document_id`, `field_name`.
+
+#### 4. Automatic Linking
+If you provide `collection_name`, `document_id`, and `field_name` during upload, Backbone will:
+1. Save the file to `media/{collection_name}/`.
+2. Automatically update the target document's field with a link to the new `Attachment`.
+
+---
 
 ### 🔔 Advanced: Model Signals & Events
 The framework provides a decoupled signal system to handle model lifecycles:

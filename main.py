@@ -1,23 +1,27 @@
-import asyncio
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from backbone import (
-    BackboneConfig, 
-    GenericList, 
-    GenericCreate, 
-    GenericRetrieve, 
-    GenericUpdate, 
-    GenericDelete, 
-    GenericCrud,
-    AllowAny,
-    IsOwner,
-    settings,
+    BackboneConfig,
     Settings,
-    signals,
     background_task
 )
-from schema import BlogSchema, BlogCategory
-from backbone.core.models import User, Session, LogEntry
 from backbone.core.rate_limit import RateLimit
+import os
+
+# Schemas
+from backbone.core.models import User
+from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
+from schemas.playlists import Playlist
+from schemas.content import FAQ, Testimonial, ContactMessage
+from schemas.notes import Note
+
+# Routers
+from api.users import router as users_router
+from api.blogs import router as blogs_router
+from api.playlists import router as playlists_router
+from api.content import router as content_router
+from api.notes import router as notes_router
 
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
@@ -32,55 +36,44 @@ class AppConfig(Settings):
 
 config = AppConfig()
 
-# App Definition
 app = FastAPI(title="Modular Backbone Framework")
+
+# CORS middleware for Nextjs frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --------------------------------------------------------------------------
 # Backbone Global Configuration
 # --------------------------------------------------------------------------
+models_to_register = [
+    User,
+    Blog, BlogCategory, BlogLike, BlogView,
+    Playlist,
+    FAQ, Testimonial, ContactMessage,
+    Note
+]
+
 BackboneConfig(
     app=app, 
     config=config, 
-    document_models=[BlogSchema, BlogCategory]
+    document_models=models_to_register
 )
 
-# 4. Blog Categories (Simple CRUD)
-blog_category_crud = GenericCrud(
-    schema=BlogCategory,
-    prefix="/blog-categories",
-    tags=["Blog Categories"],
-    search_fields=["name"],
-    # permission_classes=[IsOwner] 
-)
-
-# 5. Blogs (With Optimization & Population)
-blog_crud = GenericCrud(
-    schema=BlogSchema,
-    prefix="/blogs",
-    tags=["Blogs"],
-    search_fields=["title", "content"],
-    list_fields=["title", "categories", "author", "created_by", "created_at"], # Show 'author' (linked), manual fields
-    fetch_links=True,
-    permission_classes=[AllowAny],
-    rate_limit=Depends(RateLimit(calls=50, window=60))
-)
-
-
-
-async def long_process_task():
-    print("Starting custom long process...")
-    await asyncio.sleep(30)
-    print("Completed custom long process.")
-
-@app.post("/custom-long-process", tags=["Background Tasks"])
-async def trigger_long_process():
-    task_id = await background_task(long_process_task)
-    return {"message": "Long process task enqueued", "task_id": str(task_id)}
-
+# --------------------------------------------------------------------------
 # Register Routers
-app.include_router(blog_category_crud.router)
-app.include_router(blog_crud.router)
+# --------------------------------------------------------------------------
+# Use standard naming conventions for APIs
+app.include_router(users_router, prefix="/api")
+app.include_router(blogs_router, prefix="/api")
+app.include_router(playlists_router, prefix="/api")
+app.include_router(content_router, prefix="/api")
+app.include_router(notes_router, prefix="/api")
 
 @app.get("/")
 async def root():
-    return {"message": "Backbone Framework: MongoDB-Only Edition"}
+    return {"message": "Blogermenia Backbone FastApi Server"}

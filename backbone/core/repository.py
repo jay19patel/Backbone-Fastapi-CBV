@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any, TypeVar, Generic, Type
+from typing import List, Optional, Dict, Any, TypeVar, Generic, Type, Union
 from bson import ObjectId
 from pydantic import BaseModel
 from beanie import Document, PydanticObjectId
@@ -52,12 +52,25 @@ class BeanieRepository(Generic[T]):
             
             if origin is Link:
                 target_model = get_args(annotation)[0]
-            elif origin is list or origin is List:
+            elif origin in (list, List):
                  args = get_args(annotation)
                  if args:
                      inner = args[0]
                      if get_origin(inner) is Link:
                          target_model = get_args(inner)[0]
+            elif origin is Union or origin is Any: # Handle Optional[Link]
+                args = get_args(annotation)
+                for arg in args:
+                    if get_origin(arg) is Link:
+                        target_model = get_args(arg)[0]
+                        break
+                    # Also handle List[Link] inside Optional
+                    if get_origin(arg) in (list, List):
+                        inner_args = get_args(arg)
+                        if inner_args and get_origin(inner_args[0]) is Link:
+                            target_model = get_args(inner_args[0])[0]
+                            is_list = True
+                            break
 
             if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
                 return_fields = getattr(target_model.Settings, "return_link_data", None)
@@ -83,10 +96,13 @@ class BeanieRepository(Generic[T]):
         if isinstance(data, ObjectId) or isinstance(data, PydanticObjectId):
             return str(data)
         from beanie import Link
+        from bson.dbref import DBRef
         if isinstance(data, Link):
             if hasattr(data, "ref"): return str(data.ref.id)
             if hasattr(data, "id"): return str(data.id)
             return str(data)
+        if isinstance(data, DBRef):
+            return str(data.id)
         return data
 
     async def get_all(
