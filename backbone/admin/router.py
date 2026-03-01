@@ -70,7 +70,7 @@ async def login_page(request: Request):
 @router.post("/login")
 async def login_handle(
     request: Request,
-    username: str = Form(...),
+    email: str = Form(...),
     password: str = Form(...)
 ):
     superuser_count = await User.find(User.is_superuser == True).count()
@@ -79,9 +79,8 @@ async def login_handle(
     if superuser_count == 0:
         hashed_pw = PasswordManager.hash_password(password)
         new_superuser = User(
-            username=username,
-            email=f"{username}@admin.com",
-            full_name=username.capitalize(),
+            email=email,
+            full_name="Admin User",
             hashed_password=hashed_pw,
             is_superuser=True,
             is_staff=True,
@@ -91,12 +90,8 @@ async def login_handle(
         user = new_superuser
     else:
         # 2. Normal Login via AuthService
-        # Note: Admin login usually uses username, but our Auth system uses email.
-        # We might need to adjust this. 
-        # For now, let's assume username is the identifier or we fetch the user by username first.
-        
-        # Fetch user by username manually since AuthService expects email for standard login
-        user = await User.find_one(User.username == username)
+        # Fetch user by email manually since AuthService expects email for standard login
+        user = await User.find_one(User.email == email)
         
         if not user or not PasswordManager.verify_password(password, user.hashed_password):
              return templates.TemplateResponse("login.html", {
@@ -167,7 +162,13 @@ async def model_list(
     skip = (page - 1) * limit
     
     total_count = await model.find_all().count()
-    items = await model.find_all().skip(skip).limit(limit).to_list()
+    
+    from ..core.repository import BeanieRepository
+    repo = BeanieRepository()
+    repo.document_class = model
+    populate_fields = BeanieRepository.detect_populate_fields(model)
+    
+    items = await repo.get_all({}, skip=skip, limit=limit, populate_fields=populate_fields)
     total_pages = math.ceil(total_count / limit)
     
     return templates.TemplateResponse("model_list.html", {
@@ -278,52 +279,26 @@ async def model_detail(
         raise HTTPException(status_code=404, detail="Model not found")
     
     model = config["model"]
-    # Handle Beanie ID mapping
-    item = await model.find_one({"_id": pk}) if "_" in str(type(pk)) else await model.get(pk)
     
-    if not item:
-        from bson import ObjectId
-        try:
-            item = await model.find_one({"_id": ObjectId(pk)})
-        except:
-            pass
-            
-    if not item:
+    from bson import ObjectId
+    from ..core.repository import BeanieRepository
+    
+    repo = BeanieRepository()
+    repo.document_class = model
+    populate_fields = BeanieRepository.detect_populate_fields(model)
+    
+    # query
+    query = {"_id": pk}
+    try:
+        if len(str(pk)) == 24:
+            query = {"_id": ObjectId(pk)}
+    except:
+        pass
+        
+    item_dict = await repo.get_one(query, populate_fields=populate_fields)
+    
+    if not item_dict:
         raise HTTPException(status_code=404, detail="Record not found")
-
-    # PREPARE ITEM FOR TEMPLATE: Convert to dict and handle Link fields
-    from beanie import Link
-    item_dict = item.model_dump()
-    # model_dump might leave Link objects as is if they are not excluded
-    
-    # We iterate over fields to fix Link objects manually
-    for name, field in model.model_fields.items():
-        val = getattr(item, name)
-        
-        # 1. Single Link
-        if isinstance(val, Link):
-            try:
-                item_dict[name] = str(val.ref.id)
-            except:
-                item_dict[name] = str(val)
-        
-        # 2. List of Links
-        elif isinstance(val, list):
-             new_list = []
-             original_list = item_dict.get(name, val)
-             for i, v in enumerate(val):
-                 if isinstance(v, Link):
-                     try:
-                         new_list.append(str(v.ref.id))
-                     except:
-                         new_list.append(str(v))
-                 else:
-                     # Keep original value (which might be dict from model_dump or obj)
-                     if i < len(original_list):
-                         new_list.append(original_list[i])
-                     else:
-                        new_list.append(v)
-             item_dict[name] = new_list
 
     return templates.TemplateResponse("model_detail.html", {
         "request": request,
@@ -374,6 +349,31 @@ async def model_update_handle(
                 val = int(val)
             elif field.annotation == float:
                 val = float(val)
+            
+            # If the user submitted a JSON string for a Link field, extract ID
+            if "Link" in str(field.annotation) and isinstance(val, str) and val.startswith("{"):
+                import json
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, dict) and "id" in parsed:
+                        val = parsed["id"]
+                except:
+                    pass
+            elif "Link" in str(field.annotation) and isinstance(val, str) and val.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, list):
+                        new_val = []
+                        for el in parsed:
+                            if isinstance(el, dict) and "id" in el:
+                                new_val.append(el["id"])
+                            else:
+                                new_val.append(el)
+                        val = new_val
+                except:
+                    pass
+
             update_data[key] = val
 
     try:

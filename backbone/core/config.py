@@ -82,6 +82,8 @@ class BackboneConfig:
 
         # Include Auth Router
         self.app.include_router(self.auth_router.router)
+        
+        self._register_exception_handlers()
 
         # Register Models with Admin Site
         # Register Models with Admin Site
@@ -91,6 +93,46 @@ class BackboneConfig:
         for model in self.document_models:
             category = "Core Models" if model in core_models_set else "Custom Models"
             admin_site.register(model, category=category)
+
+    def _register_exception_handlers(self):
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        from fastapi.responses import JSONResponse
+        from fastapi import Request
+        import traceback
+        from .models import LogEntry
+
+        @self.app.exception_handler(StarletteHTTPException)
+        async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+            level = "warning" if exc.status_code < 500 else "error"
+            try:
+                if exc.status_code >= 400:
+                    await LogEntry(
+                        level=level,
+                        message=str(exc.detail),
+                        extra={"status_code": exc.status_code, "url": str(request.url), "method": request.method},
+                        module="http_exception_handler"
+                    ).insert()
+            except Exception as log_exc:
+                print(f"Failed to log HTTP exception: {log_exc}")
+            
+            headers = getattr(exc, "headers", None)
+            if headers:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+        @self.app.exception_handler(Exception)
+        async def global_exception_handler(request: Request, exc: Exception):
+            try:
+                await LogEntry(
+                    level="error",
+                    message=str(exc),
+                    exception=traceback.format_exc(),
+                    extra={"url": str(request.url), "method": request.method},
+                    module="global_exception_handler"
+                ).insert()
+            except Exception as log_exc:
+                print(f"Failed to log global exception: {log_exc}")
+            return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
 
     @property
     def is_development(self) -> bool:

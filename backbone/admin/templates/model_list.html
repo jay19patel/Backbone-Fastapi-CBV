@@ -41,7 +41,7 @@
                 <tr>
                     <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-16">#</th>
                     {% if items and items[0] %}
-                    {% for key in items[0].dict().keys() %}
+                    {% for key in items[0].keys() %}
                     <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{{
                         key|nice_title }}</th>
                     {% endfor %}
@@ -57,7 +57,7 @@
                     <td class="px-6 py-4 text-sm font-medium text-slate-500">
                         {{ ((current_page - 1) * page_size) + loop.index }}
                     </td>
-                    {% for value in item.dict().values() %}
+                    {% for value in item.values() %}
                     <td class="px-6 py-4 text-sm text-slate-600">
                         <div class="max-w-[200px] truncate">
                             {% if value is string and value|length > 50 %}

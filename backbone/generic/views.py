@@ -28,9 +28,24 @@ class BaseGenericView:
         use_auth: bool = False,
         cache_ttl: int = 300,
         populate_fields: Dict[str, str] = None,
-        fetch_links: bool = False
+        fetch_links: bool = False,
+        rate_limit: Optional[Any] = None
     ):
-        self.router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")])
+        
+        from ..core.rate_limit import RateLimit
+        
+        router_kwargs = {"prefix": prefix, "tags": tags or [prefix.strip("/")]}
+        
+        if rate_limit is True:
+            router_kwargs["dependencies"] = [Depends(RateLimit())]
+        elif rate_limit:
+            if isinstance(rate_limit, list):
+                router_kwargs["dependencies"] = rate_limit
+            else:
+                router_kwargs["dependencies"] = [rate_limit]
+
+        self.router = APIRouter(**router_kwargs)
+        
         self.schema = schema
         self.prefix = prefix
         self.cache_ttl = cache_ttl
@@ -67,66 +82,8 @@ class BaseGenericView:
         Detects Beanie Link fields and adds them to populate_fields.
         Returns a dict of field_name -> target_collection.
         """
-        detected = {}
-        # Beanie stores field info in model_fields
-        from beanie import Link
-        from typing import get_origin, get_args
-        
-        # Hardcode audit fields mapper
-        audit_fields = ["created_by", "updated_by", "deleted_by"]
-        for audit_field in audit_fields:
-            if audit_field in self.schema.model_fields:
-                detected[audit_field] = {
-                    "collection": "users", 
-                    "field": audit_field, 
-                    "is_string_id": True
-                }
-        
-        for field_name, field_info in self.schema.model_fields.items():
-            if field_name in detected:
-                continue
-
-            # Check for Link type
-            # Case 1: Link[Model]
-            # Case 2: List[Link[Model]]
-            
-            annotation = field_info.annotation
-            origin = get_origin(annotation)
-            
-            target_model = None
-            
-            if origin is Link:
-                target_model = get_args(annotation)[0]
-            elif origin is list or origin is List:
-                 # Check if inner is Link
-                 args = get_args(annotation)
-                 if args:
-                     inner = args[0]
-                     if get_origin(inner) is Link:
-                         target_model = get_args(inner)[0]
-
-            if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
-                # We found a link!
-                # By default, Beanie Links are stored as DBRef or Object with {id, collection}.
-                # Our repository's current $lookup implementation expects localField to be an ID (or list of IDs).
-                # If Beanie stores DBRef, we might need adjustments.
-                # HOWEVER, GenericCrud "Optimal Way":
-                # If we define schema with Link, Beanie handles the write.
-                # For GenericCrud, we need to instruct Repo to key off specific subfield.
-                # Let's guess standard Beanie behavior is DBRef.
-                # Aggregation on DBRef is tricky.
-                # BUT, since we are designing the system:
-                # User wants "optimal".
-                # If we define schema with Link, Beanie handles the write.
-                # For GenericCrud, we need to instruct Repo to key off specific subfield.
-                # Let's guess standard Beanie behavior is DBRef.
-                # Optimally, we'd use 'author.id' (if manual link) or 'author.$id' (if DBRef).
-                # I'll try 'author.$id' as default for Link types.
-                
-                collection_name = target_model.Settings.name
-                detected[field_name] = {"collection": collection_name, "field": field_name, "is_link": True}
-                
-        return detected
+        from ..core.repository import BeanieRepository
+        return BeanieRepository.detect_populate_fields(self.schema)
 
     async def _resolve_context(self, request: Request):
         """

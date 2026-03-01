@@ -1,8 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
-import traceback
+from fastapi import FastAPI, Request, Depends
 from backbone import (
     BackboneConfig, 
     GenericList, 
@@ -20,6 +17,7 @@ from backbone import (
 )
 from schema import BlogSchema, BlogCategory
 from backbone.core.models import User, Session, LogEntry
+from backbone.core.rate_limit import RateLimit
 
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
@@ -30,6 +28,7 @@ class AppConfig(Settings):
     DATABASE_NAME: str = "backbone_app"
     REDIS_URL: str = "redis://localhost:6380/0"
     CACHE_ENABLED: bool = True
+    RATE_LIMIT_ENABLED: bool = True
 
 config = AppConfig()
 
@@ -62,41 +61,11 @@ blog_crud = GenericCrud(
     search_fields=["title", "content"],
     list_fields=["title", "categories", "author", "created_by", "created_at"], # Show 'author' (linked), manual fields
     fetch_links=True,
-    permission_classes=[AllowAny]
+    permission_classes=[AllowAny],
+    rate_limit=Depends(RateLimit(calls=50, window=60))
 )
 
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    level = "warning" if exc.status_code < 500 else "error"
-    try:
-        if exc.status_code >= 400:
-             await LogEntry(
-                 level=level,
-                 message=str(exc.detail),
-                 extra={"status_code": exc.status_code, "url": str(request.url), "method": request.method},
-                 module="http_exception_handler"
-             ).insert()
-    except Exception as log_exc:
-        print(f"Failed to log HTTP exception: {log_exc}")
-    
-    headers = getattr(exc, "headers", None)
-    if headers:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    try:
-         await LogEntry(
-             level="error",
-             message=str(exc),
-             exception=traceback.format_exc(),
-             extra={"url": str(request.url), "method": request.method},
-             module="global_exception_handler"
-         ).insert()
-    except Exception as log_exc:
-        print(f"Failed to log global exception: {log_exc}")
-    return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
 
 async def long_process_task():
     print("Starting custom long process...")

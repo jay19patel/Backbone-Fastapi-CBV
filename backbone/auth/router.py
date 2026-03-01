@@ -32,18 +32,13 @@ class AuthRouter:
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
         async def register(
             request: Request, 
-            user_data: RegisterSchema, 
-            _rate_limit = Depends(RateLimit(calls=5, window=300)) # Strict: 5 accounts per 5 minutes per IP
+            user_data: RegisterSchema
         ):
             try:
                 await self._resolve_repos(request)
                 existing_user = await self.user_repository.get_one({"email": user_data.email})
                 if existing_user:
                     raise HTTPException(status_code=400, detail="Email already registered")
-                
-                existing_username = await self.user_repository.get_one({"username": user_data.username})
-                if existing_username:
-                     raise HTTPException(status_code=400, detail="Username already taken")
             
                 hashed_pw = PasswordManager.hash_password(user_data.password)
                 user_dict = user_data.model_dump()
@@ -68,8 +63,7 @@ class AuthRouter:
         async def login(
             request: Request, 
             response: Response, 
-            login_data: LoginSchema,
-            _rate_limit = Depends(RateLimit(calls=10, window=60)) # Strict: Brute force protection
+            login_data: LoginSchema
         ):
             try:
                 # await self._resolve_repos(request) # No need, AuthService handles it
@@ -113,8 +107,7 @@ class AuthRouter:
         @self.router.post("/refresh")
         async def refresh(
             request: Request, 
-            response: Response,
-            _rate_limit = Depends(RateLimit(calls=20, window=60)) # Moderate limits
+            response: Response
         ):
             await self._resolve_repos(request)
             refresh_token = request.cookies.get("refresh_token")
@@ -137,8 +130,7 @@ class AuthRouter:
 
         @self.router.get("/me", response_model=UserOut)
         async def get_me(
-            user: User = Depends(get_current_user), 
-            _rate_limit = Depends(RateLimit(calls=100, window=60)) # Normal API limits
+            user: User = Depends(get_current_user)
         ):
             try:
                 return UserOut(**user.model_dump(by_alias=True))

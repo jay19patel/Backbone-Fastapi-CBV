@@ -105,7 +105,12 @@ class RateLimit:
         self.limiter = RateLimiter(calls=calls, window=window)
 
     async def __call__(self, request: Request, response: Response):
-        if not settings.RATE_LIMIT_ENABLED:
+        app_config = getattr(request.app.state, "backbone_config", None)
+        rate_limit_enabled = settings.RATE_LIMIT_ENABLED
+        if app_config and hasattr(app_config.config, "RATE_LIMIT_ENABLED"):
+            rate_limit_enabled = app_config.config.RATE_LIMIT_ENABLED
+
+        if not rate_limit_enabled:
             return True
 
         redis_client = await self.limiter._get_redis(request)

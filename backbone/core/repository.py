@@ -21,6 +21,60 @@ class BeanieRepository(Generic[T]):
             pass
 
     @staticmethod
+    def detect_populate_fields(schema: Type[BaseModel]) -> Dict[str, Any]:
+        """
+        Detects Beanie Link fields and explicit audit fields and returns populate_fields config.
+        """
+        detected = {}
+        from beanie import Link
+        from typing import get_origin, get_args
+        
+        # Hardcode audit fields mapper
+        audit_fields = ["created_by", "updated_by", "deleted_by"]
+        for audit_field in audit_fields:
+            if audit_field in schema.model_fields:
+                detected[audit_field] = {
+                    "collection": "users", 
+                    "field": audit_field, 
+                    "is_string_id": True,
+                    "fields": ["id", "email", "full_name"]
+                }
+        
+        for field_name, field_info in schema.model_fields.items():
+            if field_name in detected:
+                continue
+
+            # Check for Link type
+            annotation = field_info.annotation
+            origin = get_origin(annotation)
+            
+            target_model = None
+            
+            if origin is Link:
+                target_model = get_args(annotation)[0]
+            elif origin is list or origin is List:
+                 args = get_args(annotation)
+                 if args:
+                     inner = args[0]
+                     if get_origin(inner) is Link:
+                         target_model = get_args(inner)[0]
+
+            if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
+                return_fields = getattr(target_model.Settings, "return_link_data", None)
+                collection_name = target_model.Settings.name
+                config_dict = {"collection": collection_name, "field": field_name, "is_link": True, "is_list": origin in (list, List)}
+                
+                if return_fields and isinstance(return_fields, list):
+                    config_dict["fields"] = return_fields
+                else:
+                    if collection_name == "users":
+                        config_dict["fields"] = ["id", "email", "full_name"]
+                        
+                detected[field_name] = config_dict
+                
+        return detected
+
+    @staticmethod
     def _sanitize(data: Any) -> Any:
         if isinstance(data, dict):
             return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
@@ -95,70 +149,86 @@ class BeanieRepository(Generic[T]):
                 alias = local_field
                 is_link = False
                 is_string_id = False
+                is_list = False
+                fields_to_return = None
                 
                 if isinstance(config, dict):
                     target_collection = config.get("collection")
                     alias = config.get("field", local_field)
                     is_link = config.get("is_link", False)
                     is_string_id = config.get("is_string_id", False)
+                    is_list = config.get("is_list", False)
+                    fields_to_return = config.get("fields")
                 
-                if is_string_id:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "let": {"local_id": f"${local_field}"},
-                            "pipeline": [
-                                {
-                                    "$match": {
-                                        "$expr": {
-                                            "$eq": ["$_id", {"$toObjectId": "$$local_id"}]
-                                        }
-                                    }
-                                }
-                            ],
-                            "as": alias
-                        }
-                    })
-                elif is_link:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "localField": f"{local_field}.$id",
-                            "foreignField": "_id",
-                            "as": alias
-                        }
-                    })
+                # Extract the local value: it could be a string, ObjectId, dict with id, or dict with $id (DBRef)
+                if is_list:
+                    # For lists (like categories), we need to extract the ID from each element
+                    if is_link:
+                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
+                    else:
+                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
                 else:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "localField": local_field,
-                            "foreignField": "_id",
-                            "as": alias
-                        }
-                    })
+                    if is_link:
+                        # In MongoDB aggregations, $id is an operator if used at top level, but safe in path.
+                        # DBRefs store the id in a field called `$id`
+                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
+                    else:
+                        local_val_expr = f"${local_field}"
+                    
+                inner_match = {}
+                if is_string_id and is_list:
+                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
+                elif is_string_id:
+                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
+                elif is_list:
+                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
+                else:
+                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
+                    
+                inner_pipeline = [{"$match": inner_match}]
+                
+                if fields_to_return and isinstance(fields_to_return, list):
+                    project_stage = {f: 1 for f in fields_to_return}
+                    project_stage["id"] = "$_id"
+                    project_stage["_id"] = 0
+                    inner_pipeline.append({"$project": project_stage})
+                else:
+                    inner_pipeline.append({"$addFields": {"id": "$_id"}})
+                    inner_pipeline.append({"$project": {"_id": 0}})
 
                 pipeline.append({
-                    "$unwind": {
-                        "path": f"${alias}",
-                        "preserveNullAndEmptyArrays": True
+                    "$lookup": {
+                        "from": target_collection,
+                        "let": {"local_val": local_val_expr},
+                        "pipeline": inner_pipeline,
+                        "as": alias
                     }
                 })
+
+                if not is_list:
+                    pipeline.append({
+                        "$unwind": {
+                            "path": f"${alias}",
+                            "preserveNullAndEmptyArrays": True
+                        }
+                    })
 
         # 5. Project
         if projection:
             pipeline.append({"$project": projection})
 
         # Execute Aggregation
-        # Execute Aggregation
         results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=None)
         
         cleaned_results = []
         for doc in results:
-            # Sanitize ObjectIds recursively
-            doc = self._sanitize(doc)
+            # First move root _id to id
             if "_id" in doc:
-                doc["id"] = doc["_id"]
+                doc["id"] = str(doc.pop("_id"))
+                
+            # Then sanitize remaining ObjectIds recursively
+            doc = self._sanitize(doc)
+            
             cleaned_results.append(doc)
         
         return cleaned_results
@@ -184,9 +254,9 @@ class BeanieRepository(Generic[T]):
             doc = await self.document_class.find_one(filter_query)
             if doc:
                 dumped = doc.model_dump(by_alias=True)
+                if "_id" in dumped:
+                    dumped["id"] = str(dumped.pop("_id"))
                 sanitized = self._sanitize(dumped)
-                if "_id" in sanitized:
-                    sanitized["id"] = sanitized.pop("_id")
                 return sanitized
             return None
 
@@ -199,55 +269,67 @@ class BeanieRepository(Generic[T]):
                 alias = local_field
                 is_link = False
                 is_string_id = False
+                is_list = False
+                fields_to_return = None
                 
                 if isinstance(config, dict):
                     target_collection = config.get("collection")
                     alias = config.get("field", local_field)
                     is_link = config.get("is_link", False)
                     is_string_id = config.get("is_string_id", False)
-
-                if is_string_id:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "let": {"local_id": f"${local_field}"},
-                            "pipeline": [
-                                {
-                                    "$match": {
-                                        "$expr": {
-                                            "$eq": ["$_id", {"$toObjectId": "$$local_id"}]
-                                        }
-                                    }
-                                }
-                            ],
-                            "as": alias
-                        }
-                    })
-                elif is_link:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "localField": f"{local_field}.$id",
-                            "foreignField": "_id",
-                            "as": alias
-                        }
-                    })
+                    is_list = config.get("is_list", False)
+                    fields_to_return = config.get("fields")
+                
+                # Extract the local value: it could be a string, ObjectId, dict with id, or dict with $id (DBRef)
+                if is_list:
+                    # For lists (like categories), we need to extract the ID from each element
+                    if is_link:
+                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
+                    else:
+                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
                 else:
-                    pipeline.append({
-                        "$lookup": {
-                            "from": target_collection,
-                            "localField": local_field,
-                            "foreignField": "_id", 
-                            "as": alias 
-                        }
-                    })
+                    if is_link:
+                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
+                    else:
+                        local_val_expr = f"${local_field}"
                     
+                inner_match = {}
+                if is_string_id and is_list:
+                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
+                elif is_string_id:
+                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
+                elif is_list:
+                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
+                else:
+                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
+                    
+                inner_pipeline = [{"$match": inner_match}]
+                
+                if fields_to_return and isinstance(fields_to_return, list):
+                    project_stage = {f: 1 for f in fields_to_return}
+                    project_stage["id"] = "$_id"
+                    project_stage["_id"] = 0
+                    inner_pipeline.append({"$project": project_stage})
+                else:
+                    inner_pipeline.append({"$addFields": {"id": "$_id"}})
+                    inner_pipeline.append({"$project": {"_id": 0}})
+
                 pipeline.append({
-                    "$unwind": {
-                        "path": f"${alias}",
-                        "preserveNullAndEmptyArrays": True
+                    "$lookup": {
+                        "from": target_collection,
+                        "let": {"local_val": local_val_expr},
+                        "pipeline": inner_pipeline,
+                        "as": alias
                     }
                 })
+
+                if not is_list:
+                    pipeline.append({
+                        "$unwind": {
+                            "path": f"${alias}",
+                            "preserveNullAndEmptyArrays": True
+                        }
+                    })
 
         if projection:
             pipeline.append({"$project": projection})
@@ -255,9 +337,10 @@ class BeanieRepository(Generic[T]):
         results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=1)
         
         if results:
-            doc = self._sanitize(results[0])
+            doc = results[0]
             if "_id" in doc:
-                doc["id"] = doc["_id"]
+                doc["id"] = str(doc.pop("_id"))
+            doc = self._sanitize(doc)
             return doc
             
         return None

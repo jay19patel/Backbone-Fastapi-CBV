@@ -11,6 +11,7 @@ class BlogCategory(AuditDocument):
     
     class Settings:
         name = "blog_categories"
+        return_link_data = ["id", "name", "slug"]
         indexes = [
             IndexModel([("name", ASCENDING)], unique=True),
             IndexModel([("slug", ASCENDING)], unique=True)

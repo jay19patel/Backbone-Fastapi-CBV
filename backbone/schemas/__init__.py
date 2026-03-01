@@ -59,8 +59,12 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
 
+class UserResponse(BaseModel):
+    id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
+    email: str
+    full_name: str
+
 class RegisterSchema(BaseModel):
     email: EmailStr
-    username: str
     password: str
     full_name: str

@@ -16,7 +16,6 @@ async def register_user(client: httpx.AsyncClient, i: int) -> dict:
     ts = int(time.time())
     user_data = {
         "email": f"user{i}_{ts}@test.com",
-        "username": f"user{i}_{ts}",
         "password": "password123",
         "full_name": f"Test User {i}"
     }
@@ -77,8 +76,10 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
                 if resp.status_code == 201:
                     data = resp.json()
                     return data.get("_id") or data.get("id")
-                # Print error for first few failures
-                if idx < 5:
+                # Print error for first few failures or rate limit exceeded
+                if resp.status_code == 429:
+                    print(f"Rate limit exceeded (429) for blog {idx}: {resp.text}")
+                elif idx < 5:
                     print(f"Blog create failed {idx}: {resp.status_code} - {resp.text}")
                 return None
             except Exception as e:

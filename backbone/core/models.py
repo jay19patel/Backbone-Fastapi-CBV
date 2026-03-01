@@ -70,7 +70,6 @@ class EventDocument(AuditDocument):
         pass
 
 class User(AuditDocument):
-    username: str
     email: EmailStr
     full_name: str
     is_active: bool = True
@@ -81,8 +80,7 @@ class User(AuditDocument):
     class Settings:
         name = "users"
         indexes = [
-            IndexModel([("email", ASCENDING)], unique=True),
-            IndexModel([("username", ASCENDING)], unique=True)
+            IndexModel([("email", ASCENDING)], unique=True)
         ]
 
 class Session(AuditDocument):
