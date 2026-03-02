@@ -105,6 +105,51 @@ class BeanieRepository(Generic[T]):
             return str(data.id)
         return data
 
+    @classmethod
+    def _prepare_query(cls, query: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recursively prepares a query dictionary for MongoDB by:
+        1. Replacing "id" keys with "_id"
+        2. Attempting to convert string IDs to PydanticObjectId/ObjectId safely
+        3. Traversing into operators like $or, $and, $in, $ne
+        """
+        if not isinstance(query, dict):
+            return query
+
+        prepared = {}
+        for k, v in query.items():
+            new_key = "_id" if k == "id" else k
+            
+            if isinstance(v, dict):
+                prepared[new_key] = cls._prepare_query(v)
+            elif isinstance(v, list):
+                if k in ("$or", "$and", "$nor"):
+                    # Process each condition in the list
+                    prepared[new_key] = [cls._prepare_query(item) if isinstance(item, dict) else item for item in v]
+                elif new_key == "_id" or (isinstance(new_key, str) and (new_key.endswith(".id") or new_key.endswith(".$id"))):
+                     # Process $in / $nin lists
+                     prepared_list = []
+                     for item in v:
+                         if isinstance(item, str):
+                             try: prepared_list.append(PydanticObjectId(item))
+                             except: prepared_list.append(item)
+                         else:
+                             prepared_list.append(item)
+                     prepared[new_key] = prepared_list
+                else:
+                    prepared[new_key] = v
+            elif isinstance(v, str):
+                 # Attempt conversion to ObjectId if the key suggests an ID
+                 if new_key == "_id" or new_key.endswith(".id") or new_key.endswith(".$id"):
+                     try: prepared[new_key] = PydanticObjectId(v)
+                     except: prepared[new_key] = v
+                 else:
+                     prepared[new_key] = v
+            else:
+                 prepared[new_key] = v
+                 
+        return prepared
+
     async def get_all(
         self, 
         query: Dict[str, Any], 
@@ -130,9 +175,7 @@ class BeanieRepository(Generic[T]):
 
         # 1. Match (Filtering)
         # Beanie's find(query) handles some magic, but for aggregation we need raw query
-        # We might need to handle ID conversion if query uses "id" vs "_id"
-        if "id" in query:
-            query["_id"] = query.pop("id")
+        query = self._prepare_query(query)
             
         pipeline.append({"$match": query})
 
@@ -255,15 +298,7 @@ class BeanieRepository(Generic[T]):
         projection: Optional[Dict[str, int]] = None,
         populate_fields: Optional[Dict[str, str]] = None
     ) -> Optional[Dict[str, Any]]:
-        # Handle "id" -> "_id" mapping
-        if "id" in filter_query:
-            filter_query["_id"] = filter_query.pop("id")
-            
-        if "_id" in filter_query and isinstance(filter_query["_id"], str):
-            try:
-                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
-            except:
-                pass
+        filter_query = self._prepare_query(filter_query)
 
         if not populate_fields and not projection:
             # Use standard Beanie find_one if no complex operations
@@ -367,15 +402,7 @@ class BeanieRepository(Generic[T]):
         return obj
 
     async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
-        if "id" in filter_query:
-            filter_query["_id"] = filter_query.pop("id")
-
-        if "_id" in filter_query and isinstance(filter_query["_id"], str):
-            try:
-                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
-            except:
-                pass
-            
+        filter_query = self._prepare_query(filter_query)
         item = await self.document_class.find_one(filter_query)
         if item:
             await item.set(data)
@@ -383,15 +410,7 @@ class BeanieRepository(Generic[T]):
         return None
 
     async def delete(self, filter_query: Dict[str, Any], soft: bool = True) -> bool:
-        if "id" in filter_query:
-            filter_query["_id"] = filter_query.pop("id")
-
-        if "_id" in filter_query and isinstance(filter_query["_id"], str):
-            try:
-                filter_query["_id"] = PydanticObjectId(filter_query["_id"])
-            except:
-                pass
-            
+        filter_query = self._prepare_query(filter_query)
         item = await self.document_class.find_one(filter_query)
         if not item:
             return False
@@ -403,4 +422,5 @@ class BeanieRepository(Generic[T]):
         return True
 
     async def count(self, query: Dict[str, Any]) -> int:
+        query = self._prepare_query(query)
         return await self.document_class.find(query).count()

@@ -29,7 +29,7 @@ async def upload_image(client: httpx.AsyncClient, token: str, file_path: str, co
             if field: data["field_name"] = field
             
             headers = {"Authorization": f"Bearer {token}"}
-            resp = await client.post(f"{BASE_URL}/api/media/upload/image", files=files, data=data, headers=headers)
+            resp = await client.post(f"{BASE_URL}/media/upload/image", files=files, data=data, headers=headers)
             if resp.status_code == 200:
                 resp_data = resp.json()
                 attachment_id = resp_data.get("id")

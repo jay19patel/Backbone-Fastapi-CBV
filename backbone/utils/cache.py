@@ -156,7 +156,14 @@ def cache(expire: Optional[int] = None, key_prefix: str = "cache", include_ip: b
                 key_parts.append(ip)
 
             # Hash args and kwargs
-            arg_data = {"args": str(args), "kwargs": {k: v for k, v in kwargs.items() if k != "request"}}
+            arg_data = {
+                "args": str(args), 
+                "kwargs": {k: v for k, v in kwargs.items() if k != "request"}
+            }
+            
+            # Include query params in hash if request exists
+            if request:
+                arg_data["query_params"] = dict(request.query_params)
             
             # Special handling for POST/PUT body if 'data' is in kwargs
             if include_body and request and request.method in ["POST", "PUT", "PATCH"]:

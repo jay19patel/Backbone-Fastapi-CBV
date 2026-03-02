@@ -10,7 +10,7 @@ from backbone.core.rate_limit import RateLimit
 import os
 
 # Schemas
-from backbone.core.models import User
+from backbone.core.models import User, Session, Attachment, LogEntry, TaskLog
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
 from schemas.playlists import Playlist
 from schemas.content import FAQ, Testimonial, ContactMessage
@@ -51,7 +51,7 @@ app.add_middleware(
 # Backbone Global Configuration
 # --------------------------------------------------------------------------
 models_to_register = [
-    User,
+    User, Session, Attachment, LogEntry, TaskLog,
     Blog, BlogCategory, BlogLike, BlogView,
     Playlist,
     FAQ, Testimonial, ContactMessage,
