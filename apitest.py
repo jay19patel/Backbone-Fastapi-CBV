@@ -66,12 +66,12 @@ async def register_user(client: httpx.AsyncClient, i: int) -> dict:
     }
     try:
         print(f"Registering User {i}...")
-        resp = await client.post(f"{BASE_URL}/auth/register", json=user_data)
+        resp = await client.post(f"{BASE_URL}/api/auth/register", json=user_data)
         if resp.status_code == 201:
-            login_resp = await client.post(f"{BASE_URL}/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
+            login_resp = await client.post(f"{BASE_URL}/api/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
             return login_resp.json()
         elif resp.status_code == 400:
-             login_resp = await client.post(f"{BASE_URL}/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
+             login_resp = await client.post(f"{BASE_URL}/api/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
              if login_resp.status_code == 200:
                  return login_resp.json()
         print(f"Failed to register user {i}: {resp.text}")
@@ -217,11 +217,12 @@ async def user_worker(i: int):
         
         # Get User ID
         headers = {"Authorization": f"Bearer {token}"}
-        me_resp = await client.get(f"{BASE_URL}/auth/me", headers=headers)
+        me_resp = await client.get(f"{BASE_URL}/api/auth/me", headers=headers)
         if me_resp.status_code != 200:
             print(f"Failed to get me: {me_resp.text}")
             return
-        real_user_id = me_resp.json()["_id"]
+        me_data = me_resp.json()
+        real_user_id = me_data.get("id") or me_data.get("_id")
         
         # 2. Upload Profile Image
         print(f"User {i} uploading profile image...")
@@ -244,6 +245,33 @@ async def user_worker(i: int):
         blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id, user_name)
         if blog_ids:
              await create_playlists(client, token, real_user_id, TOTAL_PLAYLISTS_PER_USER, blog_ids, playlist_att_id)
+
+async def create_faqs():
+    faqs = [
+        {"question": "How do I create a blog?", "answer": "Simply sign up and click the 'Write' button in the dashboard."},
+        {"question": "Is BlogerMenia free?", "answer": "Yes, it is completely free for all creators."},
+        {"question": "Can I edit my blogs?", "answer": "Yes, you can edit or delete your blogs anytime from your profile."},
+        {"question": "How to make a playlist popular?", "answer": "Share it with your friends and add high-quality blogs to it."},
+        {"question": "What is a featured blog?", "answer": "Featured blogs are hand-picked by our editors for their quality and relevance."}
+    ]
+    async with httpx.AsyncClient() as client:
+        for faq in faqs:
+            await client.post(f"{BASE_URL}/api/faqs/", json=faq)
+    print("FAQs created.")
+
+async def create_testimonials():
+    testimonials = [
+        {"author": "Sarah Jenkins", "content": "BlogerMenia has completely transformed how I share my thoughts. The platform is intuitive and the community is supportive.", "designation": "Content Creator"},
+        {"author": "David Miller", "content": "The best blogging platform I've used. The editor is powerful yet simple, and managing my posts is a breeze.", "designation": "Tech Blogger"},
+        {"author": "Emily Chen", "content": "I love the clean design and how easy it is to connect with readers. Highly recommended for anyone starting clear blog.", "designation": "Travel Writer"},
+        {"author": "Michael Ross", "content": "The playlist feature is a game changer for organizing my tutorial series. My readers love it!", "designation": "Software Engineer"}
+    ]
+    async with httpx.AsyncClient() as client:
+        for test in testimonials:
+            await client.post(f"{BASE_URL}/api/testimonials/", json=test)
+    print("Testimonials created.")
+
+
 
 async def clear_database():
     try:
@@ -269,6 +297,9 @@ async def main():
     start_time = time.time()
     await asyncio.gather(*tasks)
     end_time = time.time()
+
+    await create_faqs()
+    await create_testimonials()
     
     print(f"\n--- Total Generation Time: {end_time - start_time:.2f}s ---")
 

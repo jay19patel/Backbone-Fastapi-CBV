@@ -77,12 +77,9 @@
                     {% endfor %}
                 </nav>
 
-                <div class="mt-12 px-2 border-t border-indigo-800/50 pt-8 pb-4">
-                    <a href="/admin/logout"
-                        class="flex items-center text-indigo-300 hover:text-white transition-colors">
-                        <i class="fas fa-sign-out-alt mr-2"></i>
-                        <span>Logout</span>
-                    </a>
+                <div class="mt-8 px-2 opacity-20 hover:opacity-100 transition-opacity">
+                    <p class="text-[10px] font-bold text-indigo-400 uppercase tracking-widest text-center px-4">Backbone
+                        Admin Framework</p>
                 </div>
             </div>
         </div>
@@ -95,12 +92,34 @@
                 <div class="flex items-center">
                     <h1 class="text-lg font-semibold text-slate-800">{% block header %}{% endblock %}</h1>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <div
-                        class="px-3 py-1 bg-white/10 rounded-lg backdrop-blur text-sm font-medium text-indigo-100 border border-white/5">
-                        <i class="fas fa-hammer mr-2 text-indigo-300"></i>
-                        {{ user.full_name if user else 'Admin' }}
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center">
+                        {% if user.profile_image and user.profile_image.file_path %}
+                        <img src="{{ user.profile_image.file_path }}"
+                            class="h-9 w-9 rounded-xl object-cover border-2 border-indigo-100 mr-3" alt="p">
+                        {% else %}
+                        <div
+                            class="h-9 w-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mr-3 border border-indigo-200">
+                            <i class="fas fa-user-shield"></i>
+                        </div>
+                        {% endif %}
+                        <div class="flex flex-col">
+                            <span class="text-sm font-bold text-slate-700 leading-tight">{{ user.full_name or 'Admin
+                                User' }}</span>
+                            <span class="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">{{ 'Superuser'
+                                if user.is_superuser else 'Staff' }}</span>
+                        </div>
                     </div>
+
+                    <div class="h-8 w-px bg-slate-200"></div>
+
+                    <a href="/admin/logout"
+                        class="flex items-center space-x-2 text-slate-400 hover:text-red-500 transition-colors group">
+                        <div class="p-2 rounded-lg group-hover:bg-red-50 transition-colors">
+                            <i class="fas fa-power-off text-sm"></i>
+                        </div>
+                        <span class="text-sm font-bold">Logout</span>
+                    </a>
                 </div>
             </header>
 

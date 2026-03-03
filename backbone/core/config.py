@@ -69,7 +69,7 @@ class BackboneConfig:
         self.task_queue = TaskQueue(self.redis_client)
 
         # Auth Router
-        self.auth_router = AuthRouter(config=self.config)
+        self.auth_router = AuthRouter(config=self.config, prefix="/api/auth")
 
         # Store Class Instance
         BackboneConfig._instance = self

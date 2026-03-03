@@ -19,13 +19,8 @@ playlist_crud = GenericCrud(
     lookup_field="slug"
 )
 
-router = playlist_crud.router
-
-class PlaylistRepository(BeanieRepository[Playlist]):
-    pass
-
-class BlogRepository(BeanieRepository[Blog]):
-    pass
+# Create a new router to control route order
+router = APIRouter()
 
 def get_repo(model) -> BeanieRepository:
     from backbone import BackboneConfig
@@ -33,13 +28,52 @@ def get_repo(model) -> BeanieRepository:
     repo.initialize(model)
     return repo
 
+# --- Custom Routes FIRST (to avoid being shadowed by generic slug route) ---
+
+@router.get("/playlists/public/", tags=["Playlists"])
+async def get_public_playlists():
+    """Get all public playlists."""
+    repo = get_repo(Playlist)
+    # Filter for public playlists that are not deleted
+    query = {"is_public": True, "is_deleted": False}
+    results = await repo.get_all(
+        query, 
+        populate_fields=repo.detect_populate_fields(Playlist)
+    )
+    return {"results": results, "total": len(results)}
+
+@router.get("/playlists/popular/", tags=["Playlists"])
+async def get_popular_playlists():
+    """Get popular (public) playlists."""
+    repo = get_repo(Playlist)
+    # For now, popular = public playlists sorted by newest
+    query = {"is_public": True, "is_deleted": False}
+    results = await repo.get_all(
+        query, 
+        populate_fields=repo.detect_populate_fields(Playlist),
+        limit=6,
+        sort=[("views", -1)]
+    )
+    return {"results": results, "total": len(results)}
+
+# Include generic routes AFTER custom specific routes
+router.include_router(playlist_crud.router)
+
+
+class PlaylistRepository(BeanieRepository[Playlist]):
+    pass
+
+class BlogRepository(BeanieRepository[Blog]):
+    pass
+
+
 
 # --- Custom Routes ---
 
 
 # --- Custom POST/DELETE Routes ---
 
-@router.post("/{playlist_id_or_slug}/blogs/", tags=["Playlists"])
+@router.post("/playlists/{playlist_id_or_slug}/blogs/", tags=["Playlists"])
 async def add_blog_to_playlist(
     playlist_id_or_slug: str,
     blog_data: dict,
@@ -77,7 +111,7 @@ async def add_blog_to_playlist(
     
     return {"status": "success", "message": "Blog added"}
 
-@router.delete("/{playlist_id_or_slug}/blogs/{blog_id}/", tags=["Playlists"])
+@router.delete("/playlists/{playlist_id_or_slug}/blogs/{blog_id}/", tags=["Playlists"])
 async def remove_blog_from_playlist(
     playlist_id_or_slug: str,
     blog_id: str,

@@ -40,6 +40,7 @@
     <div class="p-8">
         <div class="grid grid-cols-1 gap-y-6">
             {% for name, field in model_fields.items() %}
+            {% if name not in ['hashed_password', 'password'] %}
             <div class="border-b border-slate-50 pb-6 last:border-0 last:pb-0">
                 <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{{ name|nice_title
                     }}</label>
@@ -52,6 +53,7 @@
                 </div>
                 {% else %}
                 {% set f_type = field.annotation | string %}
+                {% set link_model = field_links.get(name) %}
                 {% if 'bool' in f_type %}
                 <select name="{{ name }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
@@ -61,7 +63,47 @@
                 {% elif 'int' in f_type or 'float' in f_type %}
                 <input type="number" name="{{ name }}" step="any" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
-                {% elif value is mapping or (value is iterable and value is not string) or 'list' in f_type.lower() or 'dict' in f_type.lower() %}
+                {% elif link_model and value is mapping and value.id %}
+                {% if link_model == 'Attachment' and value.file_path %}
+                <a href="/admin/{{ link_model }}/{{ value.id }}"
+                    class="block w-64 overflow-hidden rounded-xl border border-slate-200 hover:border-indigo-400 transition-colors shadow-sm bg-white">
+                    <img src="{{ value.file_path }}" alt="Attachment"
+                        class="w-full h-40 object-cover border-b border-slate-100">
+                    <div
+                        class="p-3 bg-slate-50 text-xs flex justify-between items-center text-slate-600 truncate font-medium">
+                        <span>{{ value.filename or 'Attachment' }}</span>
+                        <i class="fas fa-external-link-alt text-slate-400"></i>
+                    </div>
+                </a>
+                {% else %}
+                <a href="/admin/{{ link_model }}/{{ value.id }}"
+                    class="block p-4 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-indigo-700">
+                            {{ value.name or value.title or value.email or value.full_name or value.id }}
+                        </span>
+                        <span
+                            class="text-[10px] uppercase font-bold text-indigo-400 bg-white px-2 py-1 rounded-md border border-indigo-100 shadow-sm flex items-center shadow-sm">
+                            {{ link_model }} <i class="fas fa-arrow-right ml-1"></i>
+                        </span>
+                    </div>
+                </a>
+                {% endif %}
+                {% elif link_model and value is iterable and value is not string and value|length > 0 and value[0] is
+                mapping and value[0].id %}
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {% for rel_val in value %}
+                    <a href="/admin/{{ link_model }}/{{ rel_val.id }}"
+                        class="block p-3 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors flex items-center justify-between">
+                        <span class="text-sm font-medium text-indigo-700 truncate mr-2">
+                            {{ rel_val.name or rel_val.title or rel_val.email or rel_val.full_name or rel_val.id }}
+                        </span>
+                        <i class="fas fa-external-link-alt text-indigo-400 text-xs flex-shrink-0"></i>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% elif value is mapping or (value is iterable and value is not string) or 'list' in f_type.lower() or
+                'dict' in f_type.lower() %}
                 <textarea name="{{ name }}" rows="4"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) if value is defined and value is not none else '' }}</textarea>
                 {% else %}
@@ -70,6 +112,7 @@
                 {% endif %}
                 {% endif %}
             </div>
+            {% endif %}
             {% endfor %}
         </div>
     </div>

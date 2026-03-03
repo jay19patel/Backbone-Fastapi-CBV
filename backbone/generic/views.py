@@ -267,7 +267,9 @@ class GenericList(BaseGenericView):
 
 class GenericCreate(BaseGenericView):
     def __init__(self, *args, **kwargs):
-        kwargs["use_auth"] = True
+        # Default use_auth to True for creation unless explicitly set
+        if "use_auth" not in kwargs:
+            kwargs["use_auth"] = True
         super().__init__(*args, **kwargs)
         self._register_create_route()
 
@@ -275,14 +277,19 @@ class GenericCreate(BaseGenericView):
         from datetime import datetime, timezone
         @self.router.post("/", response_model=self.schema, status_code=201)
         @cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create") # Idempotency
-        async def create(request: Request, data: self.schema, user: UserOut = Depends(self.perm_dep)):
+        async def create(request: Request, data: self.schema, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
             validated_data = data.model_dump(by_alias=True, exclude={"id"})
-            validated_data.update({
+            
+            # Prepare audit fields
+            audit_data = {
                 "created_at": datetime.now(timezone.utc),
-                "created_by": str(user.id),
                 "is_deleted": False
-            })
+            }
+            if user:
+                audit_data["created_by"] = str(user.id)
+                
+            validated_data.update(audit_data)
             result = await self.repository.create(validated_data)
             await self._invalidate_cache()
             return result
@@ -314,6 +321,13 @@ class GenericRetrieve(BaseGenericView):
                 perm = permission_class(request, user)
                 if not await perm.has_object_permission(item):
                     raise HTTPException(status_code=403, detail="Object-level access denied")
+            
+            # Emit Signal for analytics (View counting, etc.)
+            from ..core.signals import signals
+            try:
+                await signals.on_view.emit(item, model_class=self.schema, request=request, user=user)
+            except Exception:
+                pass 
             
             return item
 

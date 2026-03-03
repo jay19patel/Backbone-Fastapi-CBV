@@ -36,7 +36,11 @@ class Blog(AuditDocument):
     
     isPublished: bool = False
     publishedDate: Optional[datetime] = None
-    
+
+    # Analytics
+    views: int = 0
+    likes: int = 0
+
     # Store embeddings as vector/list
     embedding: Optional[List[float]] = Field(default=None, description="Mistral embeddings (1024 dim)")
 

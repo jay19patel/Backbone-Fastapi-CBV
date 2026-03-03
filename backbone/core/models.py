@@ -124,8 +124,6 @@ class TaskLog(Document):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     task_id: str
     function_name: str
-    args: Optional[List[Any]] = None
-    kwargs: Optional[Dict[str, Any]] = None
     status: str = "queued"  # queued, processing, completed, failed
     queued_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None

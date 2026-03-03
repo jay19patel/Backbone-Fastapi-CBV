@@ -81,3 +81,6 @@ temp/
 
 # App specific
 error_trace.log
+
+/media
+/media/*

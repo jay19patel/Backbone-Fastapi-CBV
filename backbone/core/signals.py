@@ -17,9 +17,10 @@ class Signal:
         if handler not in self._handlers[model_class]:
             self._handlers[model_class].append(handler)
 
-    async def emit(self, instance: Any, **kwargs):
+    async def emit(self, instance: Any, model_class: Optional[Type] = None, **kwargs):
         """Emit the signal to all handlers registered for the instance's class."""
-        model_class = type(instance)
+        if model_class is None:
+            model_class = type(instance)
         handlers = self._handlers.get(model_class, [])
         
         # Also call handlers registered for base classes (if needed)
@@ -43,6 +44,7 @@ class SignalManager:
     post_update = Signal("post_update")
     post_delete = Signal("post_delete")
     on_field_change = Signal("on_field_change")
+    on_view = Signal("on_view")
 
 # Global instance for easy access
 signals = SignalManager()

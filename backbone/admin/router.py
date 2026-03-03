@@ -80,7 +80,7 @@ async def login_handle(
         hashed_pw = PasswordManager.hash_password(password)
         new_superuser = User(
             email=email,
-            full_name="Admin User",
+            full_name=email.split('@')[0].title() or "Admin",
             hashed_password=hashed_pw,
             is_superuser=True,
             is_staff=True,
@@ -161,15 +161,29 @@ async def model_list(
     limit = 20
     skip = (page - 1) * limit
     
-    total_count = await model.find_all().count()
+    query = {}
+    if "is_deleted" in model.model_fields:
+        query["is_deleted"] = {"$ne": True}
+        
+    total_count = await model.find(query).count()
     
     from ..core.repository import BeanieRepository
     repo = BeanieRepository()
     repo.document_class = model
     populate_fields = BeanieRepository.detect_populate_fields(model)
     
-    items = await repo.get_all({}, skip=skip, limit=limit, populate_fields=populate_fields)
-    total_pages = math.ceil(total_count / limit)
+    items = await repo.get_all(query, skip=skip, limit=limit, populate_fields=populate_fields)
+    total_pages = math.ceil(total_count / limit) if limit > 0 else 1
+    
+    field_links = {}
+    if populate_fields:
+        for fname, fconfig in populate_fields.items():
+            if isinstance(fconfig, dict) and "collection" in fconfig:
+                coll = fconfig["collection"]
+                for m_config in admin_site.get_registered_models():
+                    if hasattr(m_config["model"], "Settings") and getattr(m_config["model"].Settings, "name", None) == coll:
+                        field_links[fname] = m_config["name"]
+                        break
     
     return templates.TemplateResponse("model_list.html", {
         "request": request,
@@ -181,7 +195,9 @@ async def model_list(
         "page_size": limit,
         "models": admin_site.get_registered_models(),
         "user": user,
-        "now": datetime.now(timezone.utc)
+        "now": datetime.now(timezone.utc),
+        "field_links": field_links,
+        "model_fields": model.model_fields
     })
 
 @router.get("/{model_name}/create", response_class=HTMLResponse)
@@ -235,6 +251,12 @@ async def model_create_handle(
                 val = int(val)
             elif field.annotation == float:
                 val = float(val)
+                
+            if model_name == "User" and key == "hashed_password":
+                from ..utils import PasswordManager
+                if not val.startswith("$argon2"):
+                    val = PasswordManager.hash_password(val)
+                    
             data[key] = val
             
     try:
@@ -298,8 +320,19 @@ async def model_detail(
         
     item_dict = await repo.get_one(query, populate_fields=populate_fields)
     
+    
     if not item_dict:
         raise HTTPException(status_code=404, detail="Record not found")
+
+    field_links = {}
+    if populate_fields:
+        for fname, fconfig in populate_fields.items():
+            if isinstance(fconfig, dict) and "collection" in fconfig:
+                coll = fconfig["collection"]
+                for m_config in admin_site.get_registered_models():
+                    if hasattr(m_config["model"], "Settings") and getattr(m_config["model"].Settings, "name", None) == coll:
+                        field_links[fname] = m_config["name"]
+                        break
 
     return templates.TemplateResponse("model_detail.html", {
         "request": request,
@@ -308,7 +341,8 @@ async def model_detail(
         "model_fields": model.model_fields,
         "models": admin_site.get_registered_models(),
         "user": user,
-        "now": datetime.now(timezone.utc)
+        "now": datetime.now(timezone.utc),
+        "field_links": field_links
     })
 
 @router.post("/{model_name}/{pk}")
@@ -375,6 +409,11 @@ async def model_update_handle(
                 except:
                     pass
 
+            if model_name == "User" and key == "hashed_password" and val:
+                from ..utils import PasswordManager
+                if not val.startswith("$argon2"):
+                    val = PasswordManager.hash_password(val)
+
             update_data[key] = val
 
     try:
@@ -402,12 +441,18 @@ async def model_delete_handle(
     if not config: raise HTTPException(status_code=404)
     
     model = config["model"]
-    item = await model.find_one({"_id": pk})
+    try:
+        item = await model.get(pk)
+    except Exception:
+        item = None
+        
     if not item:
         from bson import ObjectId
-        try: item = await model.find_one({"_id": ObjectId(pk)})
-        except: pass
-        
+        try:
+            item = await model.find_one({"_id": ObjectId(pk)})
+        except Exception:
+            pass
+            
     if item:
         if hasattr(item, "is_deleted"):
             await item.set({"is_deleted": True, "deleted_at": datetime.now(timezone.utc)})

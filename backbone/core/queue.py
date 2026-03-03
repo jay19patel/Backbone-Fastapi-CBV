@@ -49,8 +49,6 @@ class TaskQueue:
             task_log = TaskLog(
                 task_id="pending", # Temporary, will use object id
                 function_name=func_path,
-                args=list(args), # Convert tuple to list for JSON serialization compatibility (mostly)
-                kwargs=kwargs,
                 status="queued"
             )
             await task_log.insert()
