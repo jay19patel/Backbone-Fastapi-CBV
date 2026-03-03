@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from backbone import GenericCrud, AllowAny, BeanieRepository
 from backbone.core.dependencies import get_current_user, get_optional_user
 from backbone.core.models import User
@@ -22,18 +22,27 @@ playlist_crud = GenericCrud(
 # Create a new router to control route order
 router = APIRouter()
 
-def get_repo(model) -> BeanieRepository:
+def get_repo(model, request: Request = None) -> BeanieRepository:
     from backbone import BackboneConfig
-    repo = BeanieRepository(BackboneConfig.get_instance().database)
+    db = None
+    if request and hasattr(request.app.state, "backbone_config"):
+        db = request.app.state.backbone_config.database
+    else:
+        try:
+            db = BackboneConfig.get_instance().database
+        except:
+            pass
+            
+    repo = BeanieRepository(db)
     repo.initialize(model)
     return repo
 
 # --- Custom Routes FIRST (to avoid being shadowed by generic slug route) ---
 
 @router.get("/playlists/public/", tags=["Playlists"])
-async def get_public_playlists():
+async def get_public_playlists(request: Request):
     """Get all public playlists."""
-    repo = get_repo(Playlist)
+    repo = get_repo(Playlist, request)
     # Filter for public playlists that are not deleted
     query = {"is_public": True, "is_deleted": False}
     results = await repo.get_all(
@@ -43,9 +52,9 @@ async def get_public_playlists():
     return {"results": results, "total": len(results)}
 
 @router.get("/playlists/popular/", tags=["Playlists"])
-async def get_popular_playlists():
+async def get_popular_playlists(request: Request):
     """Get popular (public) playlists."""
-    repo = get_repo(Playlist)
+    repo = get_repo(Playlist, request)
     # For now, popular = public playlists sorted by newest
     query = {"is_public": True, "is_deleted": False}
     results = await repo.get_all(
