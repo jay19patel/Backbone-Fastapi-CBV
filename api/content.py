@@ -25,10 +25,12 @@ testimonial_router = GenericCrud(
 )
 router.include_router(testimonial_router.router)
 
-# Register ContactMessage CRUD
+# Register ContactMessage CRUD - Public can send messages
 contact_router = GenericCrud(
     schema=ContactMessage,
     prefix="/contact",
-    tags=["Contact"]
+    tags=["Contact"],
+    permission_classes=[AllowAny],
+    use_auth=False
 )
-router.include_router(contact_router.router)
+router.include_router(contact_router.router, prefix="/content")

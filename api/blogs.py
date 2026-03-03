@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from backbone import GenericCrud, AllowAny, BeanieRepository
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
 from backbone.core.models import User
-from backbone.core.dependencies import get_optional_user
+from backbone.core.dependencies import get_optional_user, get_current_user
+from beanie import PydanticObjectId
 from typing import List, Optional
 import random
 
@@ -86,6 +87,43 @@ async def get_featured_blogs(request: Request):
     )
     return {"results": results, "total": len(results)}
 
+@router.get("/blogs/my-blogs/", tags=["Blogs"])
+async def get_my_blogs(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 10,
+    search: Optional[str] = None,
+    category: Optional[str] = None
+):
+    """Get blogs for the currently authenticated user."""
+    repo = get_repo(Blog, request)
+    query = {"author.$id": PydanticObjectId(current_user.id), "is_deleted": False}
+    
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"subtitle": {"$regex": search, "$options": "i"}}
+        ]
+        
+    if category and category != "All":
+        query["category.name"] = category
+
+    results = await repo.get_all(
+        query,
+        skip=skip,
+        limit=limit,
+        sort=[("created_at", -1)],
+        populate_fields=repo.detect_populate_fields(Blog)
+    )
+    total = await repo.count(query)
+    
+    return {"results": results, "total": total}
+
+# Include generic routes 
+router.include_router(blog_category_crud.router)
+
+# Custom Detail Route (Catch-all slug)
 @router.get("/blogs/{id_or_slug}/", tags=["Blogs"])
 async def get_blog_detail(
     request: Request,
@@ -124,8 +162,32 @@ async def get_blog_detail(
         
     return blog
 
-# Include generic routes AFTER custom specific routes
-router.include_router(blog_category_crud.router)
+@router.post("/blogs/{id}/toggle-featured/", tags=["Blogs"])
+async def toggle_featured_blog(
+    request: Request,
+    id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle featured status (Staff/Admin only)."""
+    if not (current_user.is_staff or current_user.is_superuser):
+        raise HTTPException(status_code=403, detail="Staff access required")
+        
+    repo = get_repo(Blog, request)
+    blog = await repo.get_one({"$or": [{"id": id}, {"slug": id}], "is_deleted": False})
+    if not blog:
+        raise HTTPException(status_code=404, detail="Blog not found")
+        
+    new_status = not blog.get("featured", False)
+    # Update directly in DB to avoid validation issues if any
+    from bson import ObjectId
+    await Blog.get_pymongo_collection().update_one(
+        {"_id": ObjectId(blog["id"])},
+        {"$set": {"featured": new_status}}
+    )
+    
+    return {"status": "success", "featured": new_status}
+
+# Generic Blogs CRUD (detail will be shadowed by the custom one above)
 router.include_router(blog_crud.router)
 
 class BlogRepository(BeanieRepository[Blog]):
