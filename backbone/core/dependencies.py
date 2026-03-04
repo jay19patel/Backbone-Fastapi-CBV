@@ -8,9 +8,9 @@ from beanie import PydanticObjectId
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
-    Dependency to fetch the current authenticated user as a Pydantic model.
+    Dependency to fetch the current authenticated User Beanie document.
     """
     payload = TokenManager.decode_token(token)
     if not payload or payload.get("type") != "access":
@@ -33,36 +33,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOut:
                 headers={"WWW-Authenticate": "Bearer"},
             )
     except Exception:
-        # If ID is invalid or other error
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session invalid",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Fetch User
-    from ..core.repository import BeanieRepository
-    user_repo = BeanieRepository()
-    user_repo.initialize(User)
-    
-    try:
-        # Repository get_one expects a filter. Beanie uses _id for primary key.
-        user = await user_repo.get_one({"_id": PydanticObjectId(user_id)})
-    except Exception:
-        user = None
-
-    if isinstance(user, dict):
-        if not user.get("is_active"):
-             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
-        return UserOut(**user)
-        
+    # Fetch User Document
+    user = await User.get(PydanticObjectId(user_id))
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail="User not found or inactive"
         )
     
-    return UserOut(**user.model_dump(by_alias=True))
+    return user
 
 async def get_optional_user(token: str = Depends(oauth2_scheme)) -> Optional[UserOut]:
     """
@@ -71,6 +56,7 @@ async def get_optional_user(token: str = Depends(oauth2_scheme)) -> Optional[Use
     try:
         if not token:
             return None
-        return await get_current_user(token)
+        user = await get_current_user(token)
+        return UserOut(**user.model_dump(by_alias=True))
     except:
         return None

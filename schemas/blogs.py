@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from beanie import Link
-from pydantic import Field
+from pydantic import Field, field_serializer
 from pymongo import IndexModel, ASCENDING, DESCENDING
 from backbone.core.models import AuditDocument, User
 
@@ -44,9 +44,20 @@ class Blog(AuditDocument):
     # Store embeddings as vector/list
     embedding: Optional[List[float]] = Field(default=None, description="Mistral embeddings (1024 dim)")
 
+    @field_serializer('thumbnail')
+    def serialize_thumbnail(self, thumbnail: Any):
+        if not thumbnail:
+            return None
+        from backbone.core.settings import settings
+        if hasattr(thumbnail, "to_ref"): return None
+        path = thumbnail.get("file_path") if isinstance(thumbnail, dict) else getattr(thumbnail, "file_path", str(thumbnail))
+        if path and path.startswith("/media/"):
+            return f"{settings.BACKEND_URL}{path}"
+        return path
+
     class Settings:
         name = "blogs"
-        return_link_data = ["id", "title", "slug", "thumbnail", "author", "category"]
+        return_link_data = ["id", "title", "slug", "thumbnail", "author", "category", "views", "likes"]
         indexes = [
             IndexModel([("slug", ASCENDING)], unique=False),
             IndexModel([("author.id", ASCENDING)], unique=False),

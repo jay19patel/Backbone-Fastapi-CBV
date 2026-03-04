@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Response, Form, File, UploadFile
 from ..utils import PasswordManager, TokenManager
-from ..schemas import UserOut, TokenResponse, LoginSchema, RegisterSchema
+from ..schemas import UserOut, TokenResponse, LoginSchema, RegisterSchema, UserUpdate
 from ..core.models import User, Session
 from ..core.dependencies import get_current_user, oauth2_scheme
 from ..core.rate_limit import RateLimit
@@ -133,9 +133,68 @@ class AuthRouter:
             user: User = Depends(get_current_user)
         ):
             try:
+                # await user.fetch_all_links() # Environment-specific bug with Motor/Python 3.13
+                if user.profile_image and hasattr(user.profile_image, "ref"):
+                    from ..core.models import Attachment
+                    user.profile_image = await Attachment.get(user.profile_image.ref.id)
+                # Use UserOut to serialize
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:
                 import traceback
-                with open("error_trace.log", "a") as f:
-                    f.write(f"\n--- Get Me Error ---\n{traceback.format_exc()}")
+                with open("get_me_error.log", "w") as f:
+                    f.write(traceback.format_exc())
+                raise e
+
+        @self.router.patch("/me", response_model=UserOut)
+        async def update_me(
+            request: Request,
+            full_name: Optional[str] = Form(None),
+            headline: Optional[str] = Form(None),
+            bio: Optional[str] = Form(None),
+            profile_image: Optional[UploadFile] = File(None),
+            user: User = Depends(get_current_user)
+        ):
+            try:
+                if full_name is not None:
+                    user.full_name = full_name
+                if headline is not None:
+                    user.headline = headline
+                if bio is not None:
+                    user.bio = bio
+                
+                if profile_image:
+                    from ..core.models import Attachment
+                    from ..utils.media import process_attachment_upload
+                    from beanie import Link
+                    
+                    # Create Attachment record
+                    attachment = Attachment(
+                        filename=profile_image.filename,
+                        content_type=profile_image.content_type,
+                        collection_name="users",
+                        document_id=str(user.id),
+                        field_name="profile_image",
+                        created_by=str(user.id)
+                    )
+                    await attachment.insert()
+                    
+                    # Read file data
+                    file_data = await profile_image.read()
+                    
+                    # Process upload
+                    await process_attachment_upload(str(attachment.id), file_data)
+                    
+                    # Link to user
+                    user.profile_image = attachment
+                
+                await user.save()
+                # await user.fetch_all_links() # Environment-specific bug with Motor/Python 3.13
+                if user.profile_image and hasattr(user.profile_image, "ref"):
+                    from ..core.models import Attachment
+                    user.profile_image = await Attachment.get(user.profile_image.ref.id)
+                return UserOut(**user.model_dump(by_alias=True))
+            except Exception as e:
+                import traceback
+                with open("update_me_error.log", "w") as f:
+                    f.write(traceback.format_exc())
                 raise e

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Type
 from .signals import signals
 from beanie import Document, PydanticObjectId, Insert, Replace, Save, Delete, Update, before_event, after_event, Link
-from pydantic import Field, EmailStr
+from pydantic import Field, EmailStr, field_serializer
 from pymongo import IndexModel, ASCENDING, DESCENDING
 
 class AuditDocument(Document):
@@ -82,6 +82,16 @@ class User(AuditDocument):
     headline: Optional[str] = Field(default=None, max_length=255, description="A short professional headline")
     bio: Optional[str] = Field(default=None, description="Bio or about section")
 
+    @field_serializer('profile_image', when_used='json')
+    def serialize_profile_image(self, profile_image: Any):
+        if not profile_image: return None
+        from .settings import settings
+        if hasattr(profile_image, "to_ref"): return None
+        path = profile_image.get("file_path") if isinstance(profile_image, dict) else getattr(profile_image, "file_path", str(profile_image))
+        if path and path.startswith("/media/"):
+            return f"{settings.BACKEND_URL}{path}"
+        return path
+
     class Settings:
         name = "users"
         indexes = [
@@ -154,6 +164,14 @@ class Attachment(Document):
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: Optional[str] = None
+    
+    @field_serializer('file_path', when_used='json')
+    def serialize_file_path(self, file_path: Optional[str]):
+        if not file_path: return None
+        if file_path.startswith("/media/"):
+            from .settings import settings
+            return f"{settings.BACKEND_URL}{file_path}"
+        return file_path
     
     class Settings:
         name = "attachments"

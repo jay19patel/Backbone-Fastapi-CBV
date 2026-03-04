@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from datetime import datetime
 from typing import Optional, List, Any, Generic, TypeVar, Union
 from bson import ObjectId
+from pydantic import field_serializer
+from beanie import Link
 
 T = TypeVar('T')
 
@@ -30,6 +32,42 @@ class UserOut(BaseModel):
     full_name: str
     is_active: bool
     is_staff: bool
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    description: Optional[str] = None # For frontend compatibility (aliased to bio)
+    profile_image: Optional[Any] = None
+    created_at: Optional[datetime] = None
+
+    @field_serializer('profile_image')
+    def serialize_profile_image(self, profile_image: Any):
+        if not profile_image:
+            return None
+        
+        from ..core.settings import settings
+        
+        # If it's a Beanie Link (not fetched)
+        if hasattr(profile_image, "to_ref"):
+             return None
+             
+        path = None
+        # If it's the actual Attachment object/dict
+        if isinstance(profile_image, dict):
+            path = profile_image.get("file_path")
+        elif hasattr(profile_image, "file_path"):
+            path = profile_image.file_path
+        else:
+            path = str(profile_image)
+
+        if path and path.startswith("/media/"):
+            return f"{settings.BACKEND_URL}{path}"
+        return path
+
+    from pydantic import model_validator
+    @model_validator(mode='after')
+    def set_description(self) -> 'UserOut':
+        if not self.description:
+            self.description = self.bio
+        return self
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -37,6 +75,14 @@ class UserOut(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str}
     )
+
+class UserUpdate(BaseModel):
+    """
+    Schema for updating user profile fields.
+    """
+    full_name: Optional[str] = None
+    headline: Optional[str] = None
+    bio: Optional[str] = None
 
 class PaginatedResponse(BaseModel, Generic[T]):
     total: int

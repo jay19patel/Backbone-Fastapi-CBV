@@ -46,7 +46,7 @@ async def process_attachment_upload(attachment_id: str, file_data: bytes, subfol
         config = BackboneConfig.get_instance()
         if config.cache_service.enabled:
             cache_key = f"attachment:{attachment_id}"
-            await config.cache_service.set(cache_key, attachment.model_dump_json(), expire=3600)
+            await config.cache_service.set(cache_key, attachment.model_dump_json(), ttl=3600)
             
             # If associated with a document, invalidate that document's cache if applicable
             if attachment.collection_name and attachment.document_id:

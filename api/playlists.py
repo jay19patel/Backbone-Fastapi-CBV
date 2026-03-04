@@ -14,6 +14,8 @@ class PlaylistRepository(BeanieRepository[Playlist]):
         for res in results:
             blogs = res.get("blogs", [])
             res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
+            res["total_views"] = sum(b.get("views", 0) for b in blogs) if isinstance(blogs, list) else 0
+            res["total_likes"] = sum(b.get("likes", 0) for b in blogs) if isinstance(blogs, list) else 0
         return results
 
     async def get_one(self, *args, **kwargs):
@@ -22,6 +24,8 @@ class PlaylistRepository(BeanieRepository[Playlist]):
             # When fetching one, blogs are usually fetched as links if fetch_links=True
             blogs = res.get("blogs", [])
             res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
+            res["total_views"] = sum(b.get("views", 0) for b in blogs) if isinstance(blogs, list) else 0
+            res["total_likes"] = sum(b.get("likes", 0) for b in blogs) if isinstance(blogs, list) else 0
         return res
 
 # Repository Instance
