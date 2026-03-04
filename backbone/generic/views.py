@@ -481,3 +481,43 @@ class GenericSubResource(BaseGenericView):
             await self._invalidate_cache()
             return {"status": "success", "message": f"Removed from {self.array_field}"}
 
+
+class GenericCustomApi(BaseGenericView):
+    """
+    Generic view to easily build custom endpoints using standard Backbone permissions logic.
+    Subclasses should override `get` or `post`.
+    """
+    def __init__(self, endpoint: str = "", *args, **kwargs):
+        # BaseGenericView needs a schema, but custom APIs might not map to a DB collection.
+        # We can pass schema=None if it doesn't map directly, but the repository logic might complain 
+        # so typically a dummy schema or the main model schema is passed.
+        from ..core.permissions import AllowAny
+        kwargs.setdefault("permission_classes", [AllowAny])
+        super().__init__(*args, **kwargs)
+        self.endpoint = endpoint
+        self._register_custom_routes()
+
+    def _register_custom_routes(self):
+        from fastapi import Body
+
+        # Check if the subclass implemented `get`
+        if type(self).get != GenericCustomApi.get:
+            @self.router.get(self.endpoint, tags=self.router.tags)
+            async def custom_get(request: Request, user: Optional[UserOut] = Depends(self.perm_dep)):
+                await self._resolve_context(request) # Ensure db access is ready if needed
+                return await self.get(request, user)
+
+        # Check if the subclass implemented `post`
+        if type(self).post != GenericCustomApi.post:
+            @self.router.post(self.endpoint, tags=self.router.tags)
+            async def custom_post(request: Request, data: Dict[str, Any] = Body(...), user: Optional[UserOut] = Depends(self.perm_dep)):
+                await self._resolve_context(request)
+                return await self.post(request, data, user)
+
+    async def get(self, request: Request, user: Optional[UserOut]) -> Any:
+        # Override in subclass
+        raise NotImplementedError("GET method not implemented")
+
+    async def post(self, request: Request, data: Dict[str, Any], user: Optional[UserOut]) -> Any:
+        # Override in subclass
+        raise NotImplementedError("POST method not implemented")
