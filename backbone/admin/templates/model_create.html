@@ -33,8 +33,7 @@
     <div class="p-8">
         <div class="grid grid-cols-1 gap-y-6">
             {% for name, field in model_fields.items() %}
-            {% if name not in ['id', '_id', 'created_at', 'updated_at', 'created_by', 'updated_by', 'is_deleted',
-            'deleted_at', 'deleted_by'] %}
+            {% if name not in internal_fields and name not in ['hashed_password', 'password'] %}
             <div>
                 <label class="block text-sm font-semibold text-slate-700 mb-2">{{ name|nice_title }}</label>
                 {% if field.annotation.__name__ == 'bool' %}

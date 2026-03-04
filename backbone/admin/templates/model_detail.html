@@ -40,14 +40,14 @@
     <div class="p-8">
         <div class="grid grid-cols-1 gap-y-6">
             {% for name, field in model_fields.items() %}
-            {% if name not in ['hashed_password', 'password'] %}
+            {% if name not in ['hashed_password', 'password'] and name not in internal_fields %}
             <div class="border-b border-slate-50 pb-6 last:border-0 last:pb-0">
                 <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{{ name|nice_title
                     }}</label>
 
                 {% set value = item[name] %}
 
-                {% if name in ['id', '_id', 'created_at', 'created_by'] %}
+                {% if name in internal_fields %}
                 <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-slate-500 font-mono text-sm">
                     {{ value }}
                 </div>

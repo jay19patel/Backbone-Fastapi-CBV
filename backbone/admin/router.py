@@ -5,9 +5,13 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ConfigDict # Added for pydantic models
 from ..core.models import User
 from ..utils import PasswordManager, TokenManager
 from .site import admin_site
+
+# Define INTERNAL_FIELDS globally
+INTERNAL_FIELDS = ["id", "_id", "revision_id", "created_at", "created_by", "updated_at", "updated_by", "is_deleted", "deleted_at", "deleted_by"]
 
 router = APIRouter(prefix="/admin")
 
@@ -197,7 +201,8 @@ async def model_list(
         "user": user,
         "now": datetime.now(timezone.utc),
         "field_links": field_links,
-        "model_fields": model.model_fields
+        "model_fields": model.model_fields,
+        "internal_fields": INTERNAL_FIELDS
     })
 
 @router.get("/{model_name}/create", response_class=HTMLResponse)
@@ -218,6 +223,7 @@ async def model_create_page(
         "request": request,
         "model_name": model_name,
         "model_fields": model.model_fields,
+        "internal_fields": INTERNAL_FIELDS, # Added internal_fields
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc)
@@ -241,7 +247,11 @@ async def model_create_handle(
     
     # Filter and cast form data
     data = {}
+    
     for key, field in model.model_fields.items():
+        if key in INTERNAL_FIELDS: # Used INTERNAL_FIELDS
+            continue
+            
         if key in form_data and form_data[key]:
             val = form_data[key]
             # Simple type casting
@@ -342,7 +352,8 @@ async def model_detail(
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc),
-        "field_links": field_links
+        "field_links": field_links,
+        "internal_fields": INTERNAL_FIELDS # Added internal_fields
     })
 
 @router.post("/{model_name}/{pk}")
@@ -372,8 +383,9 @@ async def model_update_handle(
 
     form_data = await request.form()
     update_data = {}
+    
     for key, field in model.model_fields.items():
-        if key in ["id", "_id", "created_at", "created_by"]:
+        if key in INTERNAL_FIELDS: # Used INTERNAL_FIELDS
             continue
             
         if key in form_data:

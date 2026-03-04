@@ -247,14 +247,25 @@ class GenericList(BaseGenericView):
             
             skip_val = (page - 1) * page_size
             
+            sort_parsed = None
+            if sort:
+                sort_parsed = []
+                for s in sort.split(","):
+                    s = s.strip()
+                    if s.startswith("-"):
+                        sort_parsed.append((s[1:], -1))
+                    else:
+                        sort_parsed.append((s, 1))
+            
             results = await self.repository.get_all(
                 query, 
                 skip=skip_val, 
                 limit=page_size, 
+                sort=sort_parsed,
                 projection=self._get_projection(),
                 populate_fields=self.populate_fields
             )
-            total = await self.repository.count(query)
+            total = await self.repository.count(query, populate_fields=self.populate_fields)
             
             return {
                 "total": total,
@@ -417,9 +428,15 @@ class GenericStats(BaseGenericView):
                     results[name] = count
                 elif stat_type == "sum":
                     field = config.get("field")
-                    cursor = model.find(filters).aggregate([{"$group": {"_id": None, "total": {"$sum": f"${field}"}}}])
-                    agg_results = await cursor.to_list(length=1)
-                    results[name] = agg_results[0]["total"] if agg_results else 0
+                    # Use get_pymongo_collection (which is the Motor collection in this setup)
+                    # and handle the Motor 3.x cursor correctly (aggregate() is not awaitable)
+                    collection = model.get_pymongo_collection()
+                    pipeline = [
+                        {"$match": filters},
+                        {"$group": {"_id": None, "total": {"$sum": f"${field}"}}}
+                    ]
+                    # Ensure we return 0 if total is None or result is empty
+                    results[name] = (agg_results[0].get("total") or 0) if agg_results else 0
             return results
 
 

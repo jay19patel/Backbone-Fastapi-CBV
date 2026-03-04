@@ -22,7 +22,7 @@ blog_crud = GenericCrud(
     prefix="/blogs",
     tags=["Blogs"],
     search_fields=["title", "subtitle", "excerpt", "introduction"],
-    list_fields=["id", "title", "slug", "thumbnail", "author", "category", "created_at"],
+    list_fields=["id", "title", "slug", "thumbnail", "author", "category", "created_at", "views", "likes"],
     fetch_links=True,
     permission_classes=[AllowAny],
     lookup_field="slug",
@@ -38,12 +38,14 @@ blog_stats = GenericStats(
     prefix="/blogs/stats",
     tags=["Blogs"],
     stats_config=[
-        {"name": "total_posts", "model": Blog, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "blogs_published", "model": Blog, "type": "count", "filters": {"is_deleted": False, "isPublished": True}},
         {"name": "total_categories", "model": BlogCategory, "type": "count", "filters": {"is_deleted": False}},
-        {"name": "total_views", "model": Blog, "type": "sum", "field": "views", "filters": {"is_deleted": False}},
-        {"name": "total_likes", "model": Blog, "type": "sum", "field": "likes", "filters": {"is_deleted": False}}
+        {"name": "total_views", "model": BlogView, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "total_likes", "model": BlogLike, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "active_users", "model": User, "type": "count", "filters": {"is_deleted": False, "is_active": True}}
     ]
 )
+router.include_router(blog_category_crud.router)
 router.include_router(blog_stats.router)
 
 # Generic Blogs CRUD handles listing, detail, creation, update, deletion
@@ -105,7 +107,7 @@ async def like_blog(
     blog_collection = Blog.get_pymongo_collection()
     
     if existing_like:
-        # Unlike: Remove from BlogLike and decrement count
+        # Unlike: Remove from BlogLike
         await like_repo.delete({"id": existing_like["id"]}, soft=False)
         await blog_collection.update_one(
             {"_id": ObjectId(blog_id)},
@@ -114,7 +116,7 @@ async def like_blog(
         status = "unliked"
         likes_diff = -1
     else:
-        # Like: Create BlogLike and increment count
+        # Like: Create BlogLike
         await like_repo.create({
             "user": str(current_user.id),
             "blog": str(blog_id)
@@ -165,10 +167,22 @@ async def handle_blog_view(instance: dict, **kwargs):
         # Same user as author, do not increment views
         return
         
-    # Increment view count in MongoDB
+    # Create a BlogView document in MongoDB and increment Blog counter
     try:
+        from schemas.blogs import BlogView
         from bson import ObjectId
-        await Blog.get_motor_collection().update_one(
+        
+        request = kwargs.get("request")
+        ip_address = request.client.host if request and hasattr(request, "client") and request.client else None
+        
+        view_repo = get_repo(BlogView, request)
+        await view_repo.create({
+            "user": str(current_user_id) if current_user_id else None,
+            "blog": str(blog_id),
+            "ip_address": ip_address
+        })
+        
+        await Blog.get_pymongo_collection().update_one(
             {"_id": ObjectId(blog_id)},
             {"$inc": {"views": 1}}
         )

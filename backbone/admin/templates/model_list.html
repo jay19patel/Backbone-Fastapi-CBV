@@ -42,7 +42,7 @@
                     <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-16">#</th>
                     {% if model_fields %}
                     {% for key in model_fields.keys() %}
-                    {% if key not in ['hashed_password', 'password'] %}
+                    {% if key not in ['hashed_password', 'password'] and key not in internal_fields %}
                     <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{{
                         key|nice_title }}</th>
                     {% endif %}
@@ -60,7 +60,7 @@
                         {{ ((current_page - 1) * page_size) + loop.index }}
                     </td>
                     {% for key in model_fields.keys() %}
-                    {% if key not in ['hashed_password', 'password'] %}
+                    {% if key not in ['hashed_password', 'password'] and key not in internal_fields %}
                     {% set value = item.get(key) %}
                     {% set link_model = field_links.get(key) %}
                     <td class="px-6 py-4 text-sm text-slate-600">

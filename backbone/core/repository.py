@@ -173,35 +173,23 @@ class BeanieRepository(Generic[T]):
         """
         pipeline = []
 
-        # 1. Match (Filtering)
-        # Beanie's find(query) handles some magic, but for aggregation we need raw query
-        query = self._prepare_query(query)
+        # 1. Split query into local and joined
+        local_query = {}
+        joined_query = {}
+        
+        # Prepare the query first to handle ObjectIds
+        full_query = self._prepare_query(query)
+        
+        for k, v in full_query.items():
+            if "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")):
+                # Likely a joined field (except for DBRef/id fields)
+                joined_query[k] = v
+            else:
+                local_query[k] = v
             
-        pipeline.append({"$match": query})
+        pipeline.append({"$match": local_query})
 
-        # 2. Sort
-        if sort:
-            # Sort format from beanie/pymongo: [("field", 1), ("other", -1)] or similar
-            # If it's a list of tuples, convert to dict for $sort if needed, or just use it if pymongo supports list
-            # $sort in aggregation expects a dict like {"field": 1} usually, or strictly ordered dict
-            sort_stage = {}
-            if isinstance(sort, list):
-                for field, direction in sort:
-                    sort_stage[field] = direction
-            elif isinstance(sort, dict):
-                sort_stage = sort
-            
-            if sort_stage:
-                pipeline.append({"$sort": sort_stage})
-
-        # 3. Skip & Limit
-        pipeline.append({"$skip": skip})
-        pipeline.append({"$limit": limit})
-
-        # 4. Lookup (Population)
-        # populate_fields expected format: 
-        #   {"local_field": "target_collection"}  -> Simple, alias = local_field
-        #   {"local_field": {"collection": "target_collection", "field": "alias_name"}} -> Advanced
+        # 2. Lookup (Population)
         if populate_fields:
             for local_field, config in populate_fields.items():
                 target_collection = config
@@ -272,7 +260,28 @@ class BeanieRepository(Generic[T]):
                         }
                     })
 
-        # 5. Project
+        # 3. Joined Match (Filtering after population)
+        if joined_query:
+            pipeline.append({"$match": joined_query})
+
+        # 4. Sort
+        if sort:
+            sort_stage = {}
+            if isinstance(sort, list):
+                for field, direction in sort:
+                    sort_stage[field] = direction
+            elif isinstance(sort, dict):
+                sort_stage = sort
+            
+            if sort_stage:
+                pipeline.append({"$sort": sort_stage})
+
+        # 5. Skip & Limit
+        # Moving skip/limit after sorting and potential joined filter for accuracy
+        pipeline.append({"$skip": skip})
+        pipeline.append({"$limit": limit})
+
+        # 6. Project
         if projection:
             pipeline.append({"$project": projection})
 
@@ -421,6 +430,89 @@ class BeanieRepository(Generic[T]):
             await item.delete()
         return True
 
-    async def count(self, query: Dict[str, Any]) -> int:
-        query = self._prepare_query(query)
-        return await self.document_class.find(query).count()
+    async def count(self, query: Dict[str, Any], populate_fields: Optional[Dict[str, Any]] = None) -> int:
+        full_query = self._prepare_query(query)
+        
+        # Check if we need aggregation for joined fields
+        has_joined = any("." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")) for k in full_query.keys())
+        
+        if not has_joined:
+            return await self.document_class.find(full_query).count()
+            
+        # Use aggregation to get count for joined filters
+        pipeline = []
+        local_query = {}
+        joined_query = {}
+        
+        for k, v in full_query.items():
+            if "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")):
+                joined_query[k] = v
+            else:
+                local_query[k] = v
+                
+        pipeline.append({"$match": local_query})
+        
+        # We need to perform lookups even for counting if we filter by joined fields
+        if populate_fields:
+            for local_field, config in populate_fields.items():
+                target_collection = config
+                alias = local_field
+                is_link = False
+                is_string_id = False
+                is_list = False
+                
+                if isinstance(config, dict):
+                    target_collection = config.get("collection")
+                    alias = config.get("field", local_field)
+                    is_link = config.get("is_link", False)
+                    is_string_id = config.get("is_string_id", False)
+                    is_list = config.get("is_list", False)
+                
+                # Check if this populated field is actually needed for joined_query
+                # If no field in joined_query starts with 'alias.', we can skip this lookup for speed (optional optimization)
+                
+                if is_list:
+                    if is_link:
+                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
+                    else:
+                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
+                else:
+                    if is_link:
+                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
+                    else:
+                        local_val_expr = f"${local_field}"
+                    
+                inner_match = {}
+                if is_string_id and is_list:
+                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
+                elif is_string_id:
+                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
+                elif is_list:
+                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
+                else:
+                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
+                    
+                pipeline.append({
+                    "$lookup": {
+                        "from": target_collection,
+                        "let": {"local_val": local_val_expr},
+                        "pipeline": [{"$match": inner_match}],
+                        "as": alias
+                    }
+                })
+
+                if not is_list:
+                    pipeline.append({
+                        "$unwind": {
+                            "path": f"${alias}",
+                            "preserveNullAndEmptyArrays": True
+                        }
+                    })
+
+        if joined_query:
+            pipeline.append({"$match": joined_query})
+            
+        pipeline.append({"$count": "total"})
+        
+        results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=1)
+        return results[0]["total"] if results else 0
