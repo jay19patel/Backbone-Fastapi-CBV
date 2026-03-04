@@ -380,3 +380,87 @@ class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, Ge
         self._register_retrieve_route()
         self._register_update_route()
         self._register_delete_route()
+
+class GenericStats(BaseGenericView):
+    """
+    Generic view to fetch counts, sums, etc. for multiple models in one endpoint.
+    Example stats_config:
+    [
+        {"name": "total_posts", "model": Blog, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "total_views", "model": Blog, "type": "sum", "field": "views", "filters": {"is_deleted": False}}
+    ]
+    """
+    def __init__(self, stats_config: List[Dict[str, Any]], *args, **kwargs):
+        # Ensure we don't accidentally enforce object owner auth for stats
+        kwargs.setdefault("use_auth", False)
+        kwargs.setdefault("permission_classes", [AllowAny])
+        super().__init__(*args, **kwargs)
+        self.stats_config = stats_config
+        self._register_stats_route()
+
+    def _register_stats_route(self):
+        @self.router.get("/", tags=self.router.tags)
+        async def get_stats(request: Request):
+            await self._resolve_context(request)
+            results = {}
+            for config in self.stats_config:
+                model = config["model"]
+                stat_type = config.get("type", "count")
+                filters = config.get("filters", {})
+                name = config["name"]
+                
+                repo = BeanieRepository(self.repository.db)
+                repo.initialize(model)
+                
+                if stat_type == "count":
+                    count = await repo.count(filters)
+                    results[name] = count
+                elif stat_type == "sum":
+                    field = config.get("field")
+                    cursor = model.find(filters).aggregate([{"$group": {"_id": None, "total": {"$sum": f"${field}"}}}])
+                    agg_results = await cursor.to_list(length=1)
+                    results[name] = agg_results[0]["total"] if agg_results else 0
+            return results
+
+
+class GenericSubResource(BaseGenericView):
+    """
+    Generic view for adding or removing items from an array field (Like playlists -> blogs).
+    """
+    def __init__(self, array_field: str, target_id_param: str = "id", *args, **kwargs):
+        kwargs.setdefault("use_auth", True)
+        super().__init__(*args, **kwargs)
+        self.array_field = array_field
+        self.target_id_param = target_id_param
+        self._register_array_routes()
+
+    def _register_array_routes(self):
+        from fastapi import Body
+        from beanie import PydanticObjectId
+        
+        @self.router.post("/{pk}/" + self.array_field + "/", status_code=200)
+        async def add_item(request: Request, pk: str, data: Dict[str, Any] = Body(...), user: Optional[UserOut] = Depends(self.perm_dep)):
+            item = await self._get_object_internal(pk, request, user, use_cache=False)
+            
+            target_id = data.get(self.target_id_param)
+            if not target_id:
+                raise HTTPException(status_code=400, detail=f"Missing {self.target_id_param}")
+                
+            query = {"_id": item.id}
+            await self.repository.update(query, {
+                "$addToSet": {self.array_field: PydanticObjectId(target_id)}
+            })
+            await self._invalidate_cache()
+            return {"status": "success", "message": f"Added to {self.array_field}"}
+
+        @self.router.delete("/{pk}/" + self.array_field + "/{target_id}/", status_code=200)
+        async def remove_item(request: Request, pk: str, target_id: str, user: Optional[UserOut] = Depends(self.perm_dep)):
+            item = await self._get_object_internal(pk, request, user, use_cache=False)
+            
+            query = {"_id": item.id}
+            await self.repository.update(query, {
+                "$pull": {self.array_field: PydanticObjectId(target_id)}
+            })
+            await self._invalidate_cache()
+            return {"status": "success", "message": f"Removed from {self.array_field}"}
+

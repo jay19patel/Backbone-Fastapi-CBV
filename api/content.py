@@ -1,12 +1,12 @@
-from backbone.generic.views import GenericCrud
+from backbone.generic.views import GenericList, GenericCreate
 from backbone.core.permissions import AllowAny
 from schemas.content import FAQ, Testimonial, ContactMessage
 from fastapi import APIRouter
 
 router = APIRouter(tags=["Content"])
 
-# Register FAQ CRUD - Publicly visible
-faq_router = GenericCrud(
+# Register FAQ List - Publicly visible
+faq_router = GenericList(
     schema=FAQ,
     prefix="/faqs",
     tags=["FAQ"],
@@ -15,8 +15,8 @@ faq_router = GenericCrud(
 )
 router.include_router(faq_router.router)
 
-# Register Testimonial CRUD - Publicly visible
-testimonial_router = GenericCrud(
+# Register Testimonial List - Publicly visible
+testimonial_router = GenericList(
     schema=Testimonial,
     prefix="/testimonials",
     tags=["Testimonial"],
@@ -25,8 +25,8 @@ testimonial_router = GenericCrud(
 )
 router.include_router(testimonial_router.router)
 
-# Register ContactMessage CRUD - Public can send messages
-contact_router = GenericCrud(
+# Register ContactMessage Create - Public can send messages
+contact_router = GenericCreate(
     schema=ContactMessage,
     prefix="/contact",
     tags=["Contact"],

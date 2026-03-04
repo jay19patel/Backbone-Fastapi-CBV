@@ -31,163 +31,23 @@ blog_crud = GenericCrud(
 
 router = APIRouter()
 
-# --- Custom Routes FIRST (to avoid being shadowed by generic slug route) ---
+from backbone.generic.views import GenericStats
 
-@router.get("/blogs/stats/", tags=["Blogs"])
-async def get_blog_stats(request: Request):
-    try:
-        blog_repo = get_repo(Blog, request)
-        total_blogs = await blog_repo.count({"is_deleted": False})
-        
-        cat_repo = get_repo(BlogCategory, request)
-        total_categories = await cat_repo.count({"is_deleted": False})
-        
-        # Aggregate total views and likes using Beanie find()
-        pipeline = [
-            {"$group": {
-                "_id": None,
-                "total_views": {"$sum": "$views"},
-                "total_likes": {"$sum": "$likes"}
-            }}
-        ]
-        
-        # Beanie's aggregate returns a cursor
-        cursor = Blog.find({"is_deleted": False}).aggregate(pipeline)
-        agg_results = await cursor.to_list(length=1)
-        
-        stats = agg_results[0] if agg_results else {"total_views": 0, "total_likes": 0}
+blog_stats = GenericStats(
+    schema=Blog,
+    prefix="/blogs/stats",
+    tags=["Blogs"],
+    stats_config=[
+        {"name": "total_posts", "model": Blog, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "total_categories", "model": BlogCategory, "type": "count", "filters": {"is_deleted": False}},
+        {"name": "total_views", "model": Blog, "type": "sum", "field": "views", "filters": {"is_deleted": False}},
+        {"name": "total_likes", "model": Blog, "type": "sum", "field": "likes", "filters": {"is_deleted": False}}
+    ]
+)
+router.include_router(blog_stats.router)
 
-        return {
-            "total_posts": total_blogs,
-            "total_categories": total_categories,
-            "total_views": stats.get("total_views", 0),
-            "total_likes": stats.get("total_likes", 0)
-        }
-    except Exception as e:
-        print(f"DEBUG ERROR in get_blog_stats: {str(e)}")
-        # Fallback to simple counts if aggregation fails
-        return {
-            "total_posts": 0,
-            "total_categories": 0,
-            "total_views": 0,
-            "total_likes": 0
-        }
-
-@router.get("/blogs/featured/", tags=["Blogs"])
-async def get_featured_blogs(request: Request):
-    """Get all featured blogs."""
-    repo = get_repo(Blog, request)
-    # Filter for featured blogs that are not deleted
-    query = {"featured": True, "is_deleted": False}
-    results = await repo.get_all(
-        query, 
-        populate_fields=repo.detect_populate_fields(Blog),
-        limit=10,
-        sort=[("created_at", -1)]
-    )
-    return {"results": results, "total": len(results)}
-
-@router.get("/blogs/my-blogs/", tags=["Blogs"])
-async def get_my_blogs(
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    skip: int = 0,
-    limit: int = 10,
-    search: Optional[str] = None,
-    category: Optional[str] = None
-):
-    """Get blogs for the currently authenticated user."""
-    repo = get_repo(Blog, request)
-    query = {"author.$id": PydanticObjectId(current_user.id), "is_deleted": False}
-    
-    if search:
-        query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"subtitle": {"$regex": search, "$options": "i"}}
-        ]
-        
-    if category and category != "All":
-        query["category.name"] = category
-
-    results = await repo.get_all(
-        query,
-        skip=skip,
-        limit=limit,
-        sort=[("created_at", -1)],
-        populate_fields=repo.detect_populate_fields(Blog)
-    )
-    total = await repo.count(query)
-    
-    return {"results": results, "total": total}
-
-# Include generic routes 
-router.include_router(blog_category_crud.router)
-
-# Custom Detail Route (Catch-all slug)
-@router.get("/blogs/{id_or_slug}/", tags=["Blogs"])
-async def get_blog_detail(
-    request: Request,
-    id_or_slug: str,
-    current_user: Optional[User] = Depends(get_optional_user)
-):
-    """Get blog detail with like status for current user."""
-    repo = get_repo(Blog, request)
-    blog = await repo.get_one(
-        {"$or": [{"slug": id_or_slug}, {"id": id_or_slug}], "is_deleted": False},
-        populate_fields=repo.detect_populate_fields(Blog)
-    )
-    
-    if not blog:
-        raise HTTPException(status_code=404, detail="Blog not found")
-        
-    # Check like status
-    is_liked = False
-    if current_user:
-        like_repo = get_repo(BlogLike, request)
-        from beanie import PydanticObjectId
-        like = await like_repo.get_one({
-            "user.$id": PydanticObjectId(current_user.id),
-            "blog.$id": PydanticObjectId(blog["id"])
-        })
-        is_liked = True if like else False
-        
-    blog["is_liked"] = is_liked
-    
-    # Trigger view signal for analytics
-    from backbone.core.signals import signals
-    try:
-        await signals.on_view.emit(blog, model_class=Blog, request=request, user=current_user)
-    except:
-        pass
-        
-    return blog
-
-@router.post("/blogs/{id}/toggle-featured/", tags=["Blogs"])
-async def toggle_featured_blog(
-    request: Request,
-    id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Toggle featured status (Staff/Admin only)."""
-    if not (current_user.is_staff or current_user.is_superuser):
-        raise HTTPException(status_code=403, detail="Staff access required")
-        
-    repo = get_repo(Blog, request)
-    blog = await repo.get_one({"$or": [{"id": id}, {"slug": id}], "is_deleted": False})
-    if not blog:
-        raise HTTPException(status_code=404, detail="Blog not found")
-        
-    new_status = not blog.get("featured", False)
-    # Update directly in DB to avoid validation issues if any
-    from bson import ObjectId
-    await Blog.get_pymongo_collection().update_one(
-        {"_id": ObjectId(blog["id"])},
-        {"$set": {"featured": new_status}}
-    )
-    
-    return {"status": "success", "featured": new_status}
-
-# Generic Blogs CRUD (detail will be shadowed by the custom one above)
+# Generic Blogs CRUD handles listing, detail, creation, update, deletion
+# This includes /blogs/ (GET, POST), /blogs/{slug} (GET, PATCH, DELETE)
 router.include_router(blog_crud.router)
 
 class BlogRepository(BeanieRepository[Blog]):
