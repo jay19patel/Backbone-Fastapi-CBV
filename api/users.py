@@ -22,10 +22,11 @@ class BlogLikeRepository(BeanieRepository[BlogLike]):
 
 user_crud = GenericCrud(
     schema=User,
-    prefix="/user",
+    prefix="/users",
     tags=["Users"],
     search_fields=["full_name", "email", "headline", "bio"],
     list_fields=["id", "full_name", "email", "headline", "profile_image"],
+    fetch_links=True,
     permission_classes=[AllowAny]
 )
 
@@ -35,8 +36,41 @@ router = APIRouter()
 
 @router.get("/user/top-authors/", tags=["Users"])
 async def get_top_authors():
+    from beanie import PydanticObjectId
+    from backbone.core.models import Attachment
+    
     user_repo = get_repo(User)
     users = await user_repo.get_all({"is_active": True}, limit=5)
+    
+    # Process stringification for Profile Images and fetch manually to avoid Beanie Cursor crash
+    for user in users:
+        if "id" in user and isinstance(user["id"], PydanticObjectId):
+            user["id"] = str(user["id"])
+        if "_id" in user:
+            user["_id"] = str(user["_id"])
+            
+        profile_image = user.get("profile_image")
+        if profile_image:
+            image_id = None
+            if isinstance(profile_image, dict) and "$id" in profile_image:
+                image_id = str(profile_image["$id"])
+            elif isinstance(profile_image, dict) and "id" in profile_image:
+                image_id = str(profile_image["id"])
+            else:
+                image_id = str(profile_image)
+                
+            if image_id:
+                try:
+                    attachment = await Attachment.get(PydanticObjectId(image_id))
+                    if attachment:
+                        user["profile_image"] = attachment.model_dump(by_alias=True)
+                        if "id" in user["profile_image"] and isinstance(user["profile_image"]["id"], PydanticObjectId):
+                            user["profile_image"]["id"] = str(user["profile_image"]["id"])
+                        if "_id" in user["profile_image"]:
+                            user["profile_image"]["_id"] = str(user["profile_image"]["_id"])
+                except Exception:
+                    pass
+
     return {"results": users}
 
 # Include generic routes AFTER
@@ -84,6 +118,20 @@ async def get_user_profile(email: str):
     total_views = await blog_view_repo.count({"blog.$id": {"$in": blog_ids}})
     total_likes = await blog_like_repo.count({"blog.$id": {"$in": blog_ids}})
     
+    # Ensure user IDs are stringified properly to prevent serialization errors
+    user_id = str(user_id) if hasattr(user_id, 'binary') or isinstance(user_id, PydanticObjectId) else user_id
+    if "id" in user:
+        user["id"] = user_id
+    if "_id" in user:
+        user["_id"] = str(user["_id"])
+        
+    # Serialize profile image if present and contains nested ObjectId
+    if "profile_image" in user and isinstance(user["profile_image"], dict):
+        if "id" in user["profile_image"]:
+            user["profile_image"]["id"] = str(user["profile_image"]["id"])
+        if "_id" in user["profile_image"]:
+            user["profile_image"]["_id"] = str(user["profile_image"]["_id"])
+
     return {
         **user,
         "blog_count": blog_count,

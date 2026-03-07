@@ -41,8 +41,8 @@ class Blog(AuditDocument):
     views: int = 0
     likes: int = 0
 
-    # Store embeddings as vector/list
-    embedding: Optional[List[float]] = Field(default=None, description="Mistral embeddings (1024 dim)")
+    # Store embeddings in any flexible format
+    embedding: Optional[Any] = Field(default=None, description="Embeddings (Any format)")
 
     @field_serializer('thumbnail')
     def serialize_thumbnail(self, thumbnail: Any):

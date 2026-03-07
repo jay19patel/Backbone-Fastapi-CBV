@@ -20,27 +20,40 @@ IMAGE_PATH = os.path.join(BASE_DIR, "blog.png") # Required for blogs
 PROFILE_IMAGE_PATH = os.path.join(BASE_DIR, "profile.png") # Required for users
 PLAYLIST_IMAGE_PATH = os.path.join(BASE_DIR, "playlist.png") # Required for playlists
 
-async def upload_image(client: httpx.AsyncClient, token: str, file_path: str, collection: str = None, doc_id: str = None, field: str = None) -> Optional[str]:
+async def upload_image(client: httpx.AsyncClient, token: str, file_path: str = None, url: str = None, collection: str = None, doc_id: str = None, field: str = None) -> Optional[str]:
+    f = None
     try:
-        filename = os.path.basename(file_path)
-        with open(file_path, "rb") as f:
+        files = None
+        data = {}
+        if collection: data["collection_name"] = collection
+        if doc_id: data["document_id"] = doc_id
+        if field: data["field_name"] = field
+        
+        if file_path:
+            filename = os.path.basename(file_path)
+            f = open(file_path, "rb")
             files = {"file": (filename, f, "image/jpeg")}
-            data = {}
-            if collection: data["collection_name"] = collection
-            if doc_id: data["document_id"] = doc_id
-            if field: data["field_name"] = field
+            method_desc = f"file {filename}"
+        elif url:
+            data["url"] = url
+            method_desc = f"url {url}"
+        else:
+            return None
             
-            headers = {"Authorization": f"Bearer {token}"}
-            resp = await client.post(f"{BASE_URL}/media/upload/image", files=files, data=data, headers=headers)
-            if resp.status_code == 200:
-                resp_data = resp.json()
-                attachment_id = resp_data.get("id")
-                print(f"Upload initiated for {filename}. Attachment ID: {attachment_id}")
-                return attachment_id
-            else:
-                print(f"Failed to upload {filename}: {resp.status_code} - {resp.text}")
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = await client.post(f"{BASE_URL}/api/media/upload", files=files, data=data, headers=headers)
+        
+        if resp.status_code == 200:
+            resp_data = resp.json()
+            attachment_id = resp_data.get("id")
+            print(f"Upload initiated for {method_desc}. Attachment ID: {attachment_id}")
+            return attachment_id
+        else:
+            print(f"Failed to upload {method_desc}: {resp.status_code} - {resp.text}")
     except Exception as e:
-        print(f"Error uploading {file_path}: {e}")
+        print(f"Error uploading: {e}")
+    finally:
+        if f: f.close()
     return None
 
 async def update_user_profile(client: httpx.AsyncClient, token: str, user_id: str, attachment_id: str):
@@ -104,7 +117,7 @@ async def create_category(client: httpx.AsyncClient, token: str, i: int) -> str:
         print(f"Error creating category: {e}")
     return None 
 
-async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, image_url: str, user_name: str) -> List[str]:
+async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, image_url: str, url_image_id: str, user_name: str) -> List[str]:
     headers = {"Authorization": f"Bearer {token}"}
     
     sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
@@ -143,6 +156,18 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
                         "type": "code",
                         "language": "python",
                         "content": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get('/')\nasync def root():\n    return {'message': 'Welcome to API'}"
+                    },
+                    {
+                        "title": "Architecture Diagram (From File)",
+                        "type": "image",
+                        "imageId": image_url,
+                        "content": ""
+                    },
+                    {
+                        "title": "Extra Diagram (From URL)",
+                        "type": "image",
+                        "imageId": url_image_id,
+                        "content": ""
                     },
                     {
                         "title": "Important Note",
@@ -238,11 +263,16 @@ async def user_worker(i: int):
             
         # 4. Upload Playlist Image
         print(f"User {i} uploading playlist image...")
-        playlist_att_id = await upload_image(client, token, PLAYLIST_IMAGE_PATH, collection="playlists", field="thumbnail")
+        playlist_att_id = await upload_image(client, token, file_path=PLAYLIST_IMAGE_PATH, collection="playlists", field="thumbnail")
+        
+        # 4.5. Upload URL Image for blog content
+        print(f"User {i} uploading URL image for blog content...")
+        random_url = f"https://picsum.photos/seed/{random.randint(1, 100000)}/800/600"
+        url_att_id = await upload_image(client, token, url=random_url, collection="blogs", field="content")
         
         # 5. Content Creation
         cat_id = await create_category(client, token, i)
-        blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id, user_name)
+        blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id, url_att_id, user_name)
         if blog_ids:
              await create_playlists(client, token, real_user_id, TOTAL_PLAYLISTS_PER_USER, blog_ids, playlist_att_id)
 

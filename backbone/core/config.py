@@ -86,9 +86,6 @@ class BackboneConfig:
         # Include Auth Router
         self.app.include_router(self.auth_router.router)
         
-        # Include Media Router
-        from .media_router import router as core_media_router
-        self.app.include_router(core_media_router)
         
         # ----------------------------------------------------------------------
         # Media & Static Files Setup

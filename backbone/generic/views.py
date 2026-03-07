@@ -139,6 +139,43 @@ class BaseGenericView:
         item_data = await fetch_item()
         return self.schema(**item_data)
 
+    def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Converts string IDs provided in the payload into valid MongoDB DBRef objects
+        for Beanie Link fields, allowing clients to send simple string IDs.
+        """
+        from bson import ObjectId
+        from bson.dbref import DBRef
+        
+        for field_name, config in self.populate_fields.items():
+            if field_name not in payload or not payload[field_name]:
+                continue
+                
+            val = payload[field_name]
+            collection_name = config.get("collection")
+            if not collection_name:
+                continue
+                
+            try:
+                if isinstance(val, str) and len(val) == 24:
+                    payload[field_name] = DBRef(collection=collection_name, id=ObjectId(val))
+                elif isinstance(val, list):
+                    new_val = []
+                    for item in val:
+                        if isinstance(item, str) and len(item) == 24:
+                            new_val.append(DBRef(collection=collection_name, id=ObjectId(item)))
+                        elif isinstance(item, dict) and "id" in item:
+                            new_val.append(DBRef(collection=collection_name, id=ObjectId(item["id"])))
+                        else:
+                            new_val.append(item)
+                    payload[field_name] = new_val
+                elif isinstance(val, dict) and "id" in val:
+                    payload[field_name] = DBRef(collection=collection_name, id=ObjectId(val["id"]))
+            except Exception:
+                pass
+                
+        return payload
+
 class GenericList(BaseGenericView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -290,7 +327,25 @@ class GenericCreate(BaseGenericView):
         @cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create") # Idempotency
         async def create(request: Request, data: self.schema, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
+            
+            # Step 1: Extract string IDs from Pydantic model before model_dump() destroys them
+            # via field_serializer rules
+            extracted_links = {}
+            for field_name in self.populate_fields.keys():
+                if hasattr(data, field_name):
+                    val = getattr(data, field_name)
+                    if val is not None:
+                        extracted_links[field_name] = val
+            
+            # Step 2: Dump the model 
             validated_data = data.model_dump(by_alias=True, exclude={"id"})
+            
+            # Step 3: Restore the extracted link strings into the payload
+            for k, v in extracted_links.items():
+                validated_data[k] = v
+                
+            # Step 4: Convert string IDs into DBRefs for Link fields
+            validated_data = self._process_link_fields(validated_data)
             
             # Prepare audit fields
             audit_data = {
@@ -354,6 +409,10 @@ class GenericUpdate(BaseGenericView):
             # Force validation by creating a partial model if needed, but for now simple Dict
             item = await self._get_object_internal(pk, request, user, use_cache=False)
             update_data = {k: v for k, v in data.items() if v is not None}
+            
+            # Auto-convert string IDs to DBRefs for Link fields
+            update_data = self._process_link_fields(update_data)
+            
             from datetime import datetime, timezone
             update_data["updated_at"] = datetime.now(timezone.utc)
             update_data["updated_by"] = str(user.id)
@@ -439,7 +498,6 @@ class GenericStats(BaseGenericView):
                     results[name] = (agg_results[0].get("total") or 0) if agg_results else 0
             return results
 
-
 class GenericSubResource(BaseGenericView):
     """
     Generic view for adding or removing items from an array field (Like playlists -> blogs).
@@ -480,7 +538,6 @@ class GenericSubResource(BaseGenericView):
             })
             await self._invalidate_cache()
             return {"status": "success", "message": f"Removed from {self.array_field}"}
-
 
 class GenericCustomApi(BaseGenericView):
     """

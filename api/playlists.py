@@ -14,18 +14,17 @@ class PlaylistRepository(BeanieRepository[Playlist]):
         for res in results:
             blogs = res.get("blogs", [])
             res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
-            res["total_views"] = sum(b.get("views", 0) for b in blogs) if isinstance(blogs, list) else 0
-            res["total_likes"] = sum(b.get("likes", 0) for b in blogs) if isinstance(blogs, list) else 0
+            res["total_views"] = sum(b.get("views", 0) for b in blogs if isinstance(b, dict))
+            res["total_likes"] = sum(b.get("likes", 0) for b in blogs if isinstance(b, dict))
         return results
 
     async def get_one(self, *args, **kwargs):
         res = await super().get_one(*args, **kwargs)
         if res:
-            # When fetching one, blogs are usually fetched as links if fetch_links=True
             blogs = res.get("blogs", [])
             res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
-            res["total_views"] = sum(b.get("views", 0) for b in blogs) if isinstance(blogs, list) else 0
-            res["total_likes"] = sum(b.get("likes", 0) for b in blogs) if isinstance(blogs, list) else 0
+            res["total_views"] = sum(b.get("views", 0) for b in blogs if isinstance(b, dict))
+            res["total_likes"] = sum(b.get("likes", 0) for b in blogs if isinstance(b, dict))
         return res
 
 # Repository Instance
@@ -37,7 +36,7 @@ playlist_crud = GenericCrud(
     prefix="/playlists",
     tags=["Playlists"],
     search_fields=["name", "description"],
-    list_fields=["id", "name", "slug", "owner", "is_public", "blogs", "blog_count", "total_views", "total_likes"],
+    list_fields=["id", "name", "slug", "owner", "thumbnail", "is_public", "blogs", "blog_count", "total_views", "total_likes"],
     fetch_links=True,
     permission_classes=[AllowAny],
     filter_fields=["owner.$id", "is_public", "slug", "blogs.$id"],

@@ -148,44 +148,25 @@ class AuthRouter:
         @self.router.patch("/me", response_model=UserOut)
         async def update_me(
             request: Request,
-            full_name: Optional[str] = Form(None),
-            headline: Optional[str] = Form(None),
-            bio: Optional[str] = Form(None),
-            profile_image: Optional[UploadFile] = File(None),
+            user_data: UserUpdate,
             user: User = Depends(get_current_user)
         ):
             try:
-                if full_name is not None:
-                    user.full_name = full_name
-                if headline is not None:
-                    user.headline = headline
-                if bio is not None:
-                    user.bio = bio
+                if user_data.full_name is not None:
+                    user.full_name = user_data.full_name
+                if user_data.headline is not None:
+                    user.headline = user_data.headline
+                if user_data.bio is not None:
+                    user.bio = user_data.bio
                 
-                if profile_image:
+                if user_data.profile_image:
                     from ..core.models import Attachment
-                    from ..utils.media import process_attachment_upload
-                    from beanie import Link
-                    
-                    # Create Attachment record
-                    attachment = Attachment(
-                        filename=profile_image.filename,
-                        content_type=profile_image.content_type,
-                        collection_name="users",
-                        document_id=str(user.id),
-                        field_name="profile_image",
-                        created_by=str(user.id)
-                    )
-                    await attachment.insert()
-                    
-                    # Read file data
-                    file_data = await profile_image.read()
-                    
-                    # Process upload
-                    await process_attachment_upload(str(attachment.id), file_data)
-                    
-                    # Link to user
-                    user.profile_image = attachment
+                    try:
+                        attachment = await Attachment.get(user_data.profile_image)
+                        if attachment:
+                            user.profile_image = attachment
+                    except Exception as e:
+                        print(f"Failed to fetch profile image attachment: {e}")
                 
                 await user.save()
                 # await user.fetch_all_links() # Environment-specific bug with Motor/Python 3.13

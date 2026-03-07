@@ -83,6 +83,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     headline: Optional[str] = None
     bio: Optional[str] = None
+    profile_image: Optional[str] = None
 
 class PaginatedResponse(BaseModel, Generic[T]):
     total: int
