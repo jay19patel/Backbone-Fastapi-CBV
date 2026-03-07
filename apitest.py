@@ -10,10 +10,10 @@ import os
 BASE_URL = "http://127.0.0.1:8000"
 
 # Configuration
-NUM_USERS = 5
-TOTAL_BLOGS_PER_USER = 10  # 5 users * 10 blogs = 50 total blogs
-TOTAL_PLAYLISTS_PER_USER = 2 # 5 users * 2 playlists = 10 total playlists
-CONCURRENT_REQUESTS = 5
+NUM_USERS = 10
+TOTAL_BLOGS_PER_USER = 50  # 5 users * 10 blogs = 50 total blogs
+TOTAL_PLAYLISTS_PER_USER = 10 # 5 users * 2 playlists = 10 total playlists
+CONCURRENT_REQUESTS = 2
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGE_PATH = os.path.join(BASE_DIR, "blog.png") # Required for blogs

@@ -40,14 +40,39 @@ async def get_top_authors():
     from backbone.core.models import Attachment
     
     user_repo = get_repo(User)
+    # Get top 5 active users
     users = await user_repo.get_all({"is_active": True}, limit=5)
     
-    # Process stringification for Profile Images and fetch manually to avoid Beanie Cursor crash
+    blog_repo = get_repo(Blog)
+    blog_view_repo = get_repo(BlogView)
+    blog_like_repo = get_repo(BlogLike)
+
+    enhanced_users = []
     for user in users:
-        if "id" in user and isinstance(user["id"], PydanticObjectId):
-            user["id"] = str(user["id"])
-        if "_id" in user:
-            user["_id"] = str(user["_id"])
+        user_id = user.get("id") or user.get("_id")
+        obj_id = PydanticObjectId(user_id) if isinstance(user_id, str) else user_id
+        
+        # 1. Blog Count
+        blog_count = await blog_repo.count({"author.$id": obj_id, "is_deleted": False})
+        
+        # 2. Total Views & Likes 
+        blogs = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
+        blog_ids = [PydanticObjectId(b["id"]) for b in blogs]
+        
+        total_views = 0
+        total_likes = 0
+        if blog_ids:
+            total_views = await blog_view_repo.count({"blog.$id": {"$in": blog_ids}})
+            total_likes = await blog_like_repo.count({"blog.$id": {"$in": blog_ids}})
+
+        # Process stringification and cleanup
+        user["id"] = str(user_id)
+        if "_id" in user: user["_id"] = str(user["_id"])
+        
+        # Stats
+        user["blog_count"] = blog_count
+        user["total_views"] = total_views
+        user["total_likes"] = total_likes
             
         profile_image = user.get("profile_image")
         if profile_image:
@@ -70,8 +95,83 @@ async def get_top_authors():
                             user["profile_image"]["_id"] = str(user["profile_image"]["_id"])
                 except Exception:
                     pass
+        
+        enhanced_users.append(user)
 
-    return {"results": users}
+    return {"results": enhanced_users}
+
+@router.get("/user/all/", tags=["Users"])
+async def get_all_users_with_stats(
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 10
+):
+    from beanie import PydanticObjectId
+    from backbone.core.models import Attachment
+    
+    user_repo = get_repo(User)
+    
+    # 1. Build Query
+    query = {"is_active": True}
+    if search:
+        query["$or"] = [
+            {"full_name": {"$regex": search, "$options": "i"}},
+            {"email": {"$regex": search, "$options": "i"}},
+            {"headline": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # 2. Get Users
+    users = await user_repo.get_all(query, skip=skip, limit=limit)
+    total = await user_repo.count(query)
+    
+    blog_repo = get_repo(Blog)
+    blog_view_repo = get_repo(BlogView)
+    blog_like_repo = get_repo(BlogLike)
+
+    enhanced_users = []
+    for user in users:
+        user_id = user.get("id") or user.get("_id")
+        obj_id = PydanticObjectId(user_id) if isinstance(user_id, str) else user_id
+        
+        # Blog Count
+        blog_count = await blog_repo.count({"author.$id": obj_id, "is_deleted": False})
+        
+        # Views & Likes 
+        blogs = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
+        blog_ids = [PydanticObjectId(b["id"]) for b in blogs]
+        
+        total_views = 0
+        total_likes = 0
+        if blog_ids:
+            total_views = await blog_view_repo.count({"blog.$id": {"$in": blog_ids}})
+            total_likes = await blog_like_repo.count({"blog.$id": {"$in": blog_ids}})
+
+        user["id"] = str(user_id)
+        if "_id" in user: user["_id"] = str(user["_id"])
+        user["blog_count"] = blog_count
+        user["total_views"] = total_views
+        user["total_likes"] = total_likes
+            
+        profile_image = user.get("profile_image")
+        if profile_image:
+            image_id = None
+            if isinstance(profile_image, dict) and "$id" in profile_image: image_id = str(profile_image["$id"])
+            elif isinstance(profile_image, dict) and "id" in profile_image: image_id = str(profile_image["id"])
+            else: image_id = str(profile_image)
+            if image_id:
+                try:
+                    attachment = await Attachment.get(PydanticObjectId(image_id))
+                    if attachment:
+                        user["profile_image"] = attachment.model_dump(by_alias=True)
+                        if "id" in user["profile_image"] and isinstance(user["profile_image"]["id"], PydanticObjectId):
+                            user["profile_image"]["id"] = str(user["profile_image"]["id"])
+                        if "_id" in user["profile_image"]:
+                            user["profile_image"]["_id"] = str(user["profile_image"]["_id"])
+                except Exception: pass
+        
+        enhanced_users.append(user)
+
+    return {"results": enhanced_users, "total": total}
 
 # Include generic routes AFTER
 router.include_router(user_crud.router)
