@@ -11,7 +11,7 @@ BASE_URL = "http://127.0.0.1:8000"
 
 # Configuration
 NUM_USERS = 10
-TOTAL_BLOGS_PER_USER = 50  # 5 users * 10 blogs = 50 total blogs
+TOTAL_BLOGS_PER_USER = 3  # Reduced for faster seeding
 TOTAL_PLAYLISTS_PER_USER = 10 # 5 users * 2 playlists = 10 total playlists
 CONCURRENT_REQUESTS = 2
 
@@ -60,7 +60,7 @@ async def update_user_profile(client: httpx.AsyncClient, token: str, user_id: st
     headers = {"Authorization": f"Bearer {token}"}
     try:
         # Since field is Link[Attachment], we pass the attachment ID
-        resp = await client.patch(f"{BASE_URL}/api/user/{user_id}", json={"profile_image": attachment_id}, headers=headers)
+        resp = await client.patch(f"{BASE_URL}/api/users/{user_id}", json={"profile_image": attachment_id}, headers=headers)
         if resp.status_code == 200:
             print(f"User {user_id} profile updated with attachment link.")
         else:
@@ -278,30 +278,52 @@ async def user_worker(i: int):
 
 async def create_faqs():
     faqs = [
-        {"question": "How do I create a blog?", "answer": "Simply sign up and click the 'Write' button in the dashboard."},
-        {"question": "Is BlogerMenia free?", "answer": "Yes, it is completely free for all creators."},
-        {"question": "Can I edit my blogs?", "answer": "Yes, you can edit or delete your blogs anytime from your profile."},
-        {"question": "How to make a playlist popular?", "answer": "Share it with your friends and add high-quality blogs to it."},
-        {"question": "What is a featured blog?", "answer": "Featured blogs are hand-picked by our editors for their quality and relevance."}
+        {"question": "How do I create a blog?", "answer": "Simply sign up and click the 'Write' button in the dashboard. You can use our AI assistant to help you draft your thoughts!"},
+        {"question": "Is BlogerMenia free to use?", "answer": "Yes, BlogerMenia is completely free for all creators and readers. We believe in democratizing knowledge sharing."},
+        {"question": "Can I edit my blogs after publishing?", "answer": "Absolutely! You can edit, update, or delete your blogs anytime from your profile dashboard."},
+        {"question": "How do I make my playlists popular?", "answer": "Add high-quality, relevant blogs to your playlists and share them on social media to reach more readers."},
+        {"question": "What are featured blogs?", "answer": "Featured blogs are high-quality posts hand-picked by our editors for their exceptional content and relevance."},
+        {"question": "How does the AI assistant work?", "answer": "Our AI uses advanced natural language processing to help you generate outlines, suggest titles, and even draft entire sections based on your ideas."},
+        {"question": "Can I follow other creators?", "answer": "Yes! You can visit any creator's profile to see all their published blogs and playlists."},
+        {"question": "Is my data secure on BlogerMenia?", "answer": "We take data privacy and security very seriously. Your personal information is encrypted and never shared with third parties."}
     ]
     async with httpx.AsyncClient() as client:
         for faq in faqs:
-            await client.post(f"{BASE_URL}/api/faqs/", json=faq)
-    print("FAQs created.")
+            resp = await client.post(f"{BASE_URL}/api/faqs/", json=faq)
+            if resp.status_code != 201:
+                print(f"Failed to create FAQ: {resp.text}")
+    print(f"{len(faqs)} FAQs created.")
 
 async def create_testimonials():
     testimonials = [
         {"author": "Sarah Jenkins", "content": "BlogerMenia has completely transformed how I share my thoughts. The platform is intuitive and the community is supportive.", "designation": "Content Creator"},
         {"author": "David Miller", "content": "The best blogging platform I've used. The editor is powerful yet simple, and managing my posts is a breeze.", "designation": "Tech Blogger"},
-        {"author": "Emily Chen", "content": "I love the clean design and how easy it is to connect with readers. Highly recommended for anyone starting clear blog.", "designation": "Travel Writer"},
-        {"author": "Michael Ross", "content": "The playlist feature is a game changer for organizing my tutorial series. My readers love it!", "designation": "Software Engineer"}
+        {"author": "Emily Chen", "content": "I love the clean design and how easy it is to connect with readers. Highly recommended for anyone starting a blog.", "designation": "Travel Writer"},
+        {"author": "Michael Ross", "content": "The playlist feature is a game changer for organizing my tutorial series. My readers love the structured learning paths!", "designation": "Software Engineer"},
+        {"author": "James Wilson", "content": "The AI writing assistant is incredibly helpful. it helps me overcome writer's block and get my ideas down faster than ever.", "designation": "Freelance Writer"},
+        {"author": "Elena Rodriguez", "content": "I've tried many platforms, but BlogerMenia feels like home. The interface is beautiful and everything just works.", "designation": "Lifestyle Blogger"}
     ]
     async with httpx.AsyncClient() as client:
         for test in testimonials:
-            await client.post(f"{BASE_URL}/api/testimonials/", json=test)
-    print("Testimonials created.")
+            resp = await client.post(f"{BASE_URL}/api/testimonials/", json=test)
+            if resp.status_code != 201:
+                print(f"Failed to create testimonial: {resp.text}")
+    print(f"{len(testimonials)} Testimonials created.")
 
-
+async def create_contact_messages():
+    messages = [
+        {"name": "Alice Smith", "email": "alice@example.com", "subject": "General Inquiry", "message": "I'm interested in learning more about your platform's features. Do you have a roadmap for upcoming updates?"},
+        {"name": "Bob Johnson", "email": "bob@testmail.com", "subject": "Feature Request", "message": "I would love to see a dark mode option for the blog editor. It would make writing much easier at night."},
+        {"name": "Charlie Brown", "email": "charlie@company.org", "subject": "Partnership Opportunity", "message": "I represent a group of writers who are interested in a collective partnership with BlogerMenia. Who can we talk to about this?"},
+        {"name": "Diana Prince", "email": "diana@justice.com", "subject": "Bug Report", "message": "I noticed a small layout issue on mobile devices when viewing certain playlists. Just wanted to let you know!"}
+    ]
+    async with httpx.AsyncClient() as client:
+        for msg in messages:
+            # Note: The endpoint in content.py is /content/contact/
+            resp = await client.post(f"{BASE_URL}/api/content/contact/", json=msg)
+            if resp.status_code != 201:
+                print(f"Failed to create contact message: {resp.text}")
+    print(f"{len(messages)} Contact Messages created.")
 
 async def clear_database():
     try:
@@ -330,6 +352,7 @@ async def main():
 
     await create_faqs()
     await create_testimonials()
+    await create_contact_messages()
     
     print(f"\n--- Total Generation Time: {end_time - start_time:.2f}s ---")
 
