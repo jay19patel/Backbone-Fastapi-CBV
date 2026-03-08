@@ -1,20 +1,28 @@
 from typing import List, Optional, Any
 from pydantic import Field, field_serializer
-from beanie import Link
+from beanie import Link, before_event, Insert
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from backbone.core.models import AuditDocument, User
+from backbone.core.models import AuditDocument, User, slugify
 from .blogs import Blog
+import uuid
 
 class Playlist(AuditDocument):
     owner: Link[User]
     name: str = Field(max_length=200)
-    slug: str = Field(max_length=255)
+    slug: Optional[str] = Field(default=None, max_length=255)
     description: Optional[str] = None
     thumbnail: Optional[Link["Attachment"]] = None
     
     blogs: List[Link[Blog]] = Field(default_factory=list)
     
     is_public: bool = True
+
+    @before_event(Insert)
+    async def generate_slug(self):
+        if not self.slug or self.slug == "string": # "string" is default from some UI/Tools
+             base_slug = slugify(self.name)
+             entropy = str(uuid.uuid4())[:8]
+             self.slug = f"{base_slug}-{entropy}" if base_slug else entropy
 
     @field_serializer('thumbnail')
     def serialize_thumbnail(self, thumbnail: Any):

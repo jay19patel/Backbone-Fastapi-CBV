@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Type
 from .signals import signals
 from beanie import Document, PydanticObjectId, Insert, Replace, Save, Delete, Update, before_event, after_event, Link
+from slugify import slugify
 from pydantic import Field, EmailStr, field_serializer
 from pymongo import IndexModel, ASCENDING, DESCENDING
 

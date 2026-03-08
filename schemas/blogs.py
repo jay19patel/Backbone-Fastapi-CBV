@@ -1,14 +1,22 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from beanie import Link
+from beanie import Link, before_event, Insert
 from pydantic import Field, field_serializer
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from backbone.core.models import AuditDocument, User
+from backbone.core.models import AuditDocument, User, slugify
+import uuid
 
 
 class BlogCategory(AuditDocument):
     name: str = Field(max_length=150)
-    slug: str
+    slug: Optional[str] = Field(default=None, max_length=120)
+
+    @before_event(Insert)
+    async def generate_slug(self):
+        if not self.slug or self.slug == "string":
+             self.slug = slugify(self.name)
+             entropy = str(uuid.uuid4())[:4]
+             self.slug = f"{self.slug}-{entropy}" if self.slug else entropy
     
     class Settings:
         name = "blog_categories"
@@ -22,7 +30,14 @@ class BlogCategory(AuditDocument):
 class Blog(AuditDocument):
     title: str = Field(max_length=200)
     subtitle: Optional[str] = Field(default=None, max_length=300)
-    slug: str = Field(max_length=255)
+    slug: Optional[str] = Field(default=None, max_length=255)
+
+    @before_event(Insert)
+    async def generate_slug(self):
+        if not self.slug or self.slug == "string":
+             base_slug = slugify(self.title)
+             entropy = str(uuid.uuid4())[:8]
+             self.slug = f"{base_slug}-{entropy}" if base_slug else entropy
 
     excerpt: Optional[str] = None
     introduction: Optional[str] = None
