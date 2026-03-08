@@ -1,10 +1,69 @@
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union, Literal
 from beanie import Link, before_event, Insert
-from pydantic import Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer
 from pymongo import IndexModel, ASCENDING, DESCENDING
 from backbone.core.models import AuditDocument, User, slugify
 import uuid
+
+
+class BlogSectionBase(BaseModel):
+    title: Optional[str] = None
+    type: str
+
+class BlogSectionText(BlogSectionBase):
+    type: Literal["text"] = "text"
+    content: str
+
+class BlogSectionBullets(BlogSectionBase):
+    type: Literal["bullets"] = "bullets"
+    items: List[str]
+
+class BlogSectionTable(BlogSectionBase):
+    type: Literal["table"] = "table"
+    headers: List[str]
+    rows: List[List[str]]
+
+class BlogSectionNote(BlogSectionBase):
+    type: Literal["note"] = "note"
+    content: str
+
+class BlogSectionLinkItem(BaseModel):
+    url: str
+    text: str
+    description: Optional[str] = None
+
+class BlogSectionLinks(BlogSectionBase):
+    type: Literal["links"] = "links"
+    links: List[BlogSectionLinkItem]
+
+class BlogSectionImage(BlogSectionBase):
+    type: Literal["image"] = "image"
+    attachment: Optional[Any] = None  # Stores attachment ID (str) or resolved attachment dict
+    caption: Optional[str] = None
+    content: Optional[str] = None # Added for compatibility
+
+class BlogSectionCode(BlogSectionBase):
+    type: Literal["code"] = "code"
+    language: str
+    content: str
+
+class BlogSectionYoutube(BlogSectionBase):
+    type: Literal["youtube"] = "youtube"
+    videoId: str
+    videoTitle: Optional[str] = None
+    description: Optional[str] = None
+
+BlogSection = Union[
+    BlogSectionText,
+    BlogSectionBullets,
+    BlogSectionTable,
+    BlogSectionNote,
+    BlogSectionLinks,
+    BlogSectionImage,
+    BlogSectionCode,
+    BlogSectionYoutube
+]
 
 
 class BlogCategory(AuditDocument):
@@ -41,7 +100,7 @@ class Blog(AuditDocument):
 
     excerpt: Optional[str] = None
     introduction: Optional[str] = None
-    sections: List[Dict[str, Any]] = Field(default_factory=list)
+    sections: List[BlogSection] = Field(default_factory=list)
     conclusion: Optional[str] = None
 
     author: Link[User]

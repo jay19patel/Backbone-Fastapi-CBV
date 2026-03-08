@@ -48,8 +48,160 @@ blog_stats = GenericStats(
 router.include_router(blog_category_crud.router)
 router.include_router(blog_stats.router)
 
+# --- Custom Blog Detail with Section Attachment Resolution ---
+@router.get("/blogs/{slug}", tags=["Blogs"])
+async def get_blog_detail(
+    slug: str,
+    request: Request,
+    user = Depends(get_optional_user)
+):
+    """
+    Fetch a blog by slug/id, resolving author, category, thumbnail, and
+    image section attachments.
+    """
+    from bson import ObjectId
+    from backbone.core.settings import settings
+    from backbone.core.models import Attachment
+
+    # --- Step 1: Fetch blog with author/category/thumbnail resolved via aggregation ---
+    collection = Blog.get_pymongo_collection()
+
+    try:
+        slug_as_oid = ObjectId(slug) if len(slug) == 24 else None
+    except Exception:
+        slug_as_oid = None
+
+    match_q = {"slug": slug, "is_deleted": {"$ne": True}}
+    if slug_as_oid:
+        match_q = {"$or": [{"slug": slug}, {"_id": slug_as_oid}], "is_deleted": {"$ne": True}}
+
+    pipeline = [
+        {"$match": match_q},
+        # Resolve author
+        {"$lookup": {
+            "from": "users",
+            "let": {"aid": {"$ifNull": ["$author.$id", "$author.id", "$author"]}},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$_id", "$$aid"]}}},
+                {"$project": {"id": "$_id", "_id": 0, "full_name": 1, "email": 1, "username": 1, "headline": 1}}
+            ],
+            "as": "author"
+        }},
+        {"$unwind": {"path": "$author", "preserveNullAndEmptyArrays": True}},
+        # Resolve category
+        {"$lookup": {
+            "from": "blog_categories",
+            "let": {"cid": {"$ifNull": ["$category.$id", "$category.id", "$category"]}},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$_id", "$$cid"]}}},
+                {"$project": {"id": "$_id", "_id": 0, "name": 1, "slug": 1}}
+            ],
+            "as": "category"
+        }},
+        {"$unwind": {"path": "$category", "preserveNullAndEmptyArrays": True}},
+        # Resolve thumbnail
+        {"$lookup": {
+            "from": "attachments",
+            "let": {"tid": {"$ifNull": ["$thumbnail.$id", "$thumbnail.id", "$thumbnail"]}},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$_id", "$$tid"]}}},
+                {"$project": {"id": "$_id", "_id": 0, "file_path": 1, "filename": 1, "content_type": 1}}
+            ],
+            "as": "thumbnail"
+        }},
+        {"$unwind": {"path": "$thumbnail", "preserveNullAndEmptyArrays": True}},
+        {"$project": {"embedding": 0}},
+    ]
+
+    results = await collection.aggregate(pipeline).to_list(length=1)
+
+    if not results:
+        raise HTTPException(status_code=404, detail="Blog not found")
+
+    doc = results[0]
+    doc["id"] = str(doc.pop("_id"))
+
+    # --- Step 2: Resolve section attachment IDs in Python ---
+    att_id_to_section_idx = {}  # attachment_id_str -> list of section indices
+    for i, section in enumerate(doc.get("sections", [])):
+        if section.get("type") != "image":
+            continue
+        raw = section.get("attachment")
+        if not raw:
+            continue
+
+        # Normalize: could be a plain string ID, a dict with $id (DBRef), or a dict with id
+        if isinstance(raw, str) and len(raw) == 24:
+            att_id_str = raw
+        elif isinstance(raw, dict):
+            oid = raw.get("$id") or raw.get("id")
+            att_id_str = str(oid) if oid else None
+        else:
+            att_id_str = None
+
+        if att_id_str:
+            att_id_to_section_idx.setdefault(att_id_str, []).append(i)
+
+    if att_id_to_section_idx:
+        # Fetch all referenced attachments in one query
+        try:
+            oid_list = [ObjectId(aid) for aid in att_id_to_section_idx.keys()]
+            att_collection = Attachment.get_pymongo_collection()
+            att_docs = await att_collection.find(
+                {"_id": {"$in": oid_list}},
+                {"file_path": 1, "filename": 1, "content_type": 1, "size": 1}
+            ).to_list(length=len(oid_list))
+
+            for att_doc in att_docs:
+                att_id_str = str(att_doc["_id"])
+                att_data = {
+                    "id": att_id_str,
+                    "file_path": att_doc.get("file_path", ""),
+                    "filename": att_doc.get("filename", ""),
+                    "content_type": att_doc.get("content_type", ""),
+                    "size": att_doc.get("size"),
+                }
+                # Prepend BACKEND_URL if needed
+                fp = att_data["file_path"]
+                if fp and fp.startswith("/media/"):
+                    att_data["file_path"] = f"{settings.BACKEND_URL}{fp}"
+
+                # Assign back to each section that references this attachment
+                for idx in att_id_to_section_idx.get(att_id_str, []):
+                    doc["sections"][idx]["attachment"] = att_data
+        except Exception as e:
+            print(f"Warning: could not resolve section attachments: {e}")
+
+    # --- Step 3: Serialize thumbnail file_path ---
+    if isinstance(doc.get("thumbnail"), dict):
+        fp = doc["thumbnail"].get("file_path", "")
+        if fp and fp.startswith("/media/"):
+            doc["thumbnail"]["file_path"] = f"{settings.BACKEND_URL}{fp}"
+
+    # --- Step 4: Sanitize remaining ObjectIds to strings ---
+    def sanitize(obj):
+        if isinstance(obj, dict):
+            return {k: sanitize(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [sanitize(i) for i in obj]
+        elif isinstance(obj, ObjectId):
+            return str(obj)
+        return obj
+
+    doc = sanitize(doc)
+
+    # Emit view signal (non-blocking)
+    from backbone.core.signals import signals
+    try:
+        await signals.on_view.emit(doc, model_class=Blog, request=request, user=user)
+    except Exception:
+        pass
+
+    return doc
+
+
 # Generic Blogs CRUD handles listing, detail, creation, update, deletion
-# This includes /blogs/ (GET, POST), /blogs/{slug} (GET, PATCH, DELETE)
+# This includes /blogs/ (GET, POST), /blogs/{slug} (PATCH, DELETE)
 router.include_router(blog_crud.router)
 
 class BlogRepository(BeanieRepository[Blog]):

@@ -117,7 +117,7 @@ async def create_category(client: httpx.AsyncClient, token: str, i: int) -> str:
         print(f"Error creating category: {e}")
     return None 
 
-async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, image_url: str, url_image_id: str, user_name: str) -> List[str]:
+async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, thumbnail_att_id: str, section_att_id: str, user_name: str) -> List[str]:
     headers = {"Authorization": f"Bearer {token}"}
     
     sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
@@ -158,16 +158,10 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
                         "content": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get('/')\nasync def root():\n    return {'message': 'Welcome to API'}"
                     },
                     {
-                        "title": "Architecture Diagram (From File)",
+                        "title": "Architecture Diagram",
                         "type": "image",
-                        "imageId": image_url,
-                        "content": ""
-                    },
-                    {
-                        "title": "Extra Diagram (From URL)",
-                        "type": "image",
-                        "imageId": url_image_id,
-                        "content": ""
+                        "attachment": section_att_id,  # Attachment ID (string)
+                        "caption": "Architecture overview diagram"
                     },
                     {
                         "title": "Important Note",
@@ -178,7 +172,7 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
                 "conclusion": "It is a powerful and versatile language that opens doors to numerous career opportunities. Start coding today!",
                 "author": str(user_id),
                 "category": category_id if category_id else None,
-                "thumbnail": image_url,
+                "thumbnail": thumbnail_att_id,  # Attachment ID for thumbnail
                 "isPublished": True,
                 "publishedDate": now_iso,
                 "embedding": [random.uniform(0, 1) for _ in range(10)]
@@ -188,8 +182,11 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
                 if resp.status_code == 201:
                     data = resp.json()
                     return data.get("_id") or data.get("id")
+                else:
+                    print(f"Failed to create blog {idx}: {resp.status_code} - {resp.text[:200]}")
                 return None
             except Exception as e:
+                print(f"Error creating blog {idx}: {e}")
                 return None
 
     print(f"User {user_name} starting {num_blogs} blogs creation...")
@@ -197,6 +194,7 @@ async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_
     results = await asyncio.gather(*tasks)
     created_ids = [r for r in results if r]
     return created_ids
+
 
 async def create_playlists(client: httpx.AsyncClient, token: str, user_id: str, num_playlists: int, blog_ids: List[str], image_url: str):
     headers = {"Authorization": f"Bearer {token}"}
@@ -265,13 +263,14 @@ async def user_worker(i: int):
         print(f"User {i} uploading playlist image...")
         playlist_att_id = await upload_image(client, token, file_path=PLAYLIST_IMAGE_PATH, collection="playlists", field="thumbnail")
         
-        # 4.5. Upload URL Image for blog content
-        print(f"User {i} uploading URL image for blog content...")
+        # 4.5. Upload separate image for blog content sections
+        print(f"User {i} uploading section image for blog content...")
         random_url = f"https://picsum.photos/seed/{random.randint(1, 100000)}/800/600"
         url_att_id = await upload_image(client, token, url=random_url, collection="blogs", field="content")
         
         # 5. Content Creation
         cat_id = await create_category(client, token, i)
+        # thumbnail_att_id = main blog thumbnail, section_att_id = image section attachment
         blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id, url_att_id, user_name)
         if blog_ids:
              await create_playlists(client, token, real_user_id, TOTAL_PLAYLISTS_PER_USER, blog_ids, playlist_att_id)
