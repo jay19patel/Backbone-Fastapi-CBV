@@ -113,7 +113,7 @@ class MediaRouter(GenericCustomApi):
                 "status": "processing",
                 "message": "Upload initiated",
                 "filename": filename,
-                "url": f"http://127.0.0.1:8000{relative_path}"
+                "url": f"{request.base_url}{relative_path.lstrip('/')}"
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to process upload: {str(e)}")
