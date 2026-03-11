@@ -176,7 +176,8 @@ async def model_list(
     repo.document_class = model
     populate_fields = BeanieRepository.detect_populate_fields(model)
     
-    items = await repo.get_all(query, skip=skip, limit=limit, populate_fields=populate_fields)
+    sort_query = [("created_at", -1)] if "created_at" in model.model_fields else None
+    items = await repo.get_all(query, skip=skip, limit=limit, sort=sort_query, populate_fields=populate_fields)
     total_pages = math.ceil(total_count / limit) if limit > 0 else 1
     
     field_links = {}

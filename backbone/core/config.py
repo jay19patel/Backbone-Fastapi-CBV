@@ -77,6 +77,11 @@ class BackboneConfig:
         # Attach to app state for access in views
         self.app.state.backbone_config = self
         
+        # ----------------------------------------------------------------------
+        # Middlewares (CORS & Base URL)
+        # ----------------------------------------------------------------------
+        self._setup_middlewares()
+        
         # Attach Lifespan
         self.app.router.lifespan_context = self.lifespan
 
@@ -144,6 +149,27 @@ class BackboneConfig:
             except Exception as log_exc:
                 print(f"Failed to log global exception: {log_exc}")
             return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
+
+    def _setup_middlewares(self):
+        from fastapi.middleware.cors import CORSMiddleware
+        from .url_utils import DynamicBaseURLMiddleware
+        
+        # Extract CORS origins securely from global settings if available
+        cors_origins_list = getattr(self.config, "cors_origins_list", [])
+        if not cors_origins_list:
+            # Fallback if property doesn't exist
+            origins_str = getattr(self.config, "CORS_ALLOWED_ORIGINS", "")
+            cors_origins_list = [origin.strip() for origin in origins_str.split(",") if origin.strip()]
+            
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins_list or ["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        
+        self.app.add_middleware(DynamicBaseURLMiddleware)
 
     @property
     def is_development(self) -> bool:

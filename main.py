@@ -30,19 +30,9 @@ from backbone.core.settings import settings
 
 app = FastAPI(title="Modular Backbone Framework")
 
-# CORS middleware for Nextjs frontend
-# NOTE: allow_credentials=True requires explicit origins (not "*")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Dynamic base URL middleware — captures request host for serializers
-from backbone.core.url_utils import DynamicBaseURLMiddleware
-app.add_middleware(DynamicBaseURLMiddleware)
+# --------------------------------------------------------------------------
+# Backbone Global Configuration
+# --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
 # Backbone Global Configuration

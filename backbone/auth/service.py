@@ -40,18 +40,22 @@ class AuthService:
             return None
         return user
 
-    async def create_session(self, user: User, user_agent: str = None, ip_address: str = None) -> Dict[str, str]:
+    async def create_session(self, user: Any, user_agent: str = None, ip_address: str = None) -> Dict[str, str]:
         """
         Create a new session and Generate tokens.
         """
         # Handle both dict and object
         user_id = str(user.get("_id") or user.get("id")) if isinstance(user, dict) else str(user.id)
+        from bson import ObjectId
+        from bson.dbref import DBRef
+        user_ref = DBRef("users", ObjectId(user_id))
         
         import uuid
+        from datetime import datetime, timedelta
         
         # 1. Create Session Record
         session_data = {
-            "user_id": user_id,
+            "user": user_ref,
             "refresh_token": str(uuid.uuid4()), # Temp unique to avoid index collision
             "expires_at": datetime.utcnow() + timedelta(days=7),
             "user_agent": user_agent,

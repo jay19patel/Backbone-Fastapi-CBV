@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from typing import List, Optional, Any, Type, Dict, Union
+from typing import List, Optional, Any, Type, Dict, Union, Callable, Sequence
 from beanie import Document
 from ..core.repository import BeanieRepository
 from ..core.permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
@@ -17,20 +17,21 @@ class BaseGenericView:
         self,
         schema: Type[BaseModel],
         prefix: str,
-        tags: List[str] = None,
-        repository: BeanieRepository = None,
-        permission_classes: List[Type[BasePermission]] = [IsOwner],
-        list_fields: List[str] = None,
-        search_fields: List[str] = None,
-        filter_fields: List[str] = None,
-        ordering_fields: List[str] = None,
-        database: Any = None,
+        tags: Optional[List[str]] = None,
+        repository: Optional[BeanieRepository] = None,
+        permission_classes: Union[Type[BasePermission], Sequence[Type[BasePermission]]] = IsOwner,
+        list_fields: Optional[List[str]] = None,
+        search_fields: Optional[List[str]] = None,
+        filter_fields: Optional[List[str]] = None,
+        ordering_fields: Optional[List[str]] = None,
+        database: Optional[Any] = None,
         use_auth: bool = False,
         cache_ttl: int = 300,
-        populate_fields: Dict[str, str] = None,
+        populate_fields: Optional[Dict[str, str]] = None,
         fetch_links: bool = False,
         rate_limit: Optional[Any] = None,
-        lookup_field: str = "id"
+        lookup_field: str = "id",
+        **kwargs # Accept other kwargs safely for subclasses
     ):
         
         from ..core.rate_limit import RateLimit
@@ -65,10 +66,10 @@ class BaseGenericView:
         self.filter_fields = filter_fields or []
         self.ordering_fields = ordering_fields or []
         
-        if not isinstance(permission_classes, list):
+        if not isinstance(permission_classes, (list, tuple)):
             self.permission_classes = [permission_classes]
         else:
-            self.permission_classes = permission_classes
+            self.permission_classes = list(permission_classes)
 
         self.list_fields = list_fields
         self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
@@ -104,7 +105,7 @@ class BaseGenericView:
             pattern = f"backbone:*{self.prefix}*"
             await self.cache_service.delete_pattern(pattern)
 
-    def _get_projection(self):
+    def _get_projection(self) -> Optional[Dict[str, int]]:
         if self.list_fields:
             projection = {field: 1 for field in self.list_fields}
             projection["_id"] = 1

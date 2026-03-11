@@ -160,10 +160,10 @@ class AuthRouter:
                 auth_service = AuthService(request)
                 
                 # Check if user already exists
-                user = await self.user_repository.get_one({"email": email})
+                user_doc = await self.user_repository.get_one({"email": email})
                 
                 # Create user if they don't exist
-                if not user:
+                if not user_doc:
                     # Provide a random secure password for OAuth users because it's required by the model
                     import secrets
                     random_password = secrets.token_urlsafe(32)
@@ -177,17 +177,32 @@ class AuthRouter:
                         "is_staff": False,
                         "is_google_account": True,
                     }
-                    user = await self.user_repository.create(new_user_data)
+                    user_doc = await self.user_repository.create(new_user_data)
                     
-                    # BeanieRepository create returns dict or object
-                    if isinstance(user, dict):
-                        user = User(**user)
+                # Ensure the user object is a fully hydrated Beanie Document, not a raw dict.
+                if isinstance(user_doc, dict):
+                    # Re-fetch as a proper Model since raw dict might have un-hydrated string IDs for Links
+                    try:
+                        from bson import ObjectId
+                        doc_id = user_doc.get("_id") or user_doc.get("id")
+                        user = await User.get(ObjectId(doc_id))
+                        if not user:
+                            # Fallback if get fails somehow
+                            if "profile_image" in user_doc and isinstance(user_doc["profile_image"], str):
+                                del user_doc["profile_image"] # Drop the invalid string ref
+                            user = User(**user_doc)
+                    except Exception:
+                        if "profile_image" in user_doc and isinstance(user_doc["profile_image"], str):
+                            del user_doc["profile_image"]
+                        user = User(**user_doc)
+                else:
+                    user = user_doc
 
                 # After creating/fetching user, ensure is_google_account is True and update picture if needed
                 needs_save = False
                 
                 # Ensure is_google_account is True for existing users logging in via Google
-                if not getattr(user, "is_google_account", False):
+                if getattr(user, "is_google_account", False) is False:
                     user.is_google_account = True
                     needs_save = True
 
@@ -205,19 +220,13 @@ class AuthRouter:
                         status="completed"
                     )
                     await attachment.insert()
-                    user.profile_image = attachment.to_ref()
+                    
+                    # Beanie requires Link fields to either be the raw Document or a DBRef
+                    user.profile_image = attachment
                     needs_save = True
                     
                 if needs_save:
-                    await getattr(user, "save", lambda: None)() # handle if it's not a proper document instance, though it should be.
-                    # Safety check since user could be a raw dict from user_repository.get_one if get_one isn't returning Pydantic models.
-                    if isinstance(user, User):
-                        await user.save()
-                    else:
-                        await self.user_repository.update({"email": email}, {
-                            "is_google_account": True,
-                            "profile_image": getattr(user, "profile_image", None)
-                        })
+                    await user.save()
 
                 # Create Session via AuthService
                 session_data = await auth_service.create_session(
@@ -274,16 +283,64 @@ class AuthRouter:
             
             return {"access_token": new_access_token, "token_type": "bearer"}
 
+        @self.router.post("/logout")
+        async def logout(
+            request: Request,
+            response: Response
+        ):
+            await self._resolve_repos(request)
+            refresh_token = request.cookies.get("refresh_token")
+            
+            if refresh_token:
+                try:
+                    payload = TokenManager.verify_token(refresh_token)
+                    if payload:
+                        sid = payload.get("sid")
+                        if sid:
+                            from .service import AuthService
+                            auth_service = AuthService(request)
+                            await auth_service.logout(sid)
+                except Exception:
+                    pass # Ignore verification failures on logout
+                    
+            response.delete_cookie(
+                key="refresh_token",
+                httponly=True,
+                secure=request.app.state.backbone_config.config.cookie_settings.get("secure", False),
+                samesite=request.app.state.backbone_config.config.cookie_settings.get("samesite", "lax")
+            )
+            return {"detail": "Logged out successfully"}
+
         @self.router.get("/me", response_model=UserOut)
         async def get_me(
             user: User = Depends(get_current_user)
         ):
             try:
-                # await user.fetch_all_links() # Environment-specific bug with Motor/Python 3.13
-                if user.profile_image and hasattr(user.profile_image, "ref"):
+                # Manual hydration of Links since fetch_all_links triggers a Motor/Python 3.13 incompatibility
+                if user.profile_image:
                     from ..core.models import Attachment
-                    user.profile_image = await Attachment.get(user.profile_image.ref.id)
-                # Use UserOut to serialize
+                    from bson import ObjectId
+                    
+                    # Link objects have `.ref.id`
+                    if hasattr(user.profile_image, "ref"):
+                        attachment_doc = await Attachment.get(user.profile_image.ref.id)
+                        if attachment_doc:
+                            user.profile_image = attachment_doc
+                    # In case it's already an Attachment or dict
+                    elif isinstance(user.profile_image, dict) and "id" in user.profile_image:
+                        attachment_doc = await Attachment.get(ObjectId(user.profile_image["id"]))
+                        if attachment_doc:
+                            user.profile_image = attachment_doc
+                    # In case Motor returned a raw string ID for the ref
+                    elif isinstance(user.profile_image, str):
+                        try:
+                            attachment_doc = await Attachment.get(ObjectId(user.profile_image))
+                            if attachment_doc:
+                                user.profile_image = attachment_doc
+                            else:
+                                user.profile_image = None
+                        except:
+                            user.profile_image = None
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:
                 import traceback
@@ -315,10 +372,30 @@ class AuthRouter:
                         print(f"Failed to fetch profile image attachment: {e}")
                 
                 await user.save()
-                # await user.fetch_all_links() # Environment-specific bug with Motor/Python 3.13
-                if user.profile_image and hasattr(user.profile_image, "ref"):
+                
+                # Manual hydration of Links since fetch_all_links triggers a Motor/Python 3.13 incompatibility
+                if user.profile_image:
                     from ..core.models import Attachment
-                    user.profile_image = await Attachment.get(user.profile_image.ref.id)
+                    from bson import ObjectId
+                    
+                    if hasattr(user.profile_image, "ref"):
+                        attachment_doc = await Attachment.get(user.profile_image.ref.id)
+                        if attachment_doc:
+                            user.profile_image = attachment_doc
+                    elif isinstance(user.profile_image, dict) and "id" in user.profile_image:
+                        attachment_doc = await Attachment.get(ObjectId(user.profile_image["id"]))
+                        if attachment_doc:
+                            user.profile_image = attachment_doc
+                    elif isinstance(user.profile_image, str):
+                        try:
+                            attachment_doc = await Attachment.get(ObjectId(user.profile_image))
+                            if attachment_doc:
+                                user.profile_image = attachment_doc
+                            else:
+                                user.profile_image = None
+                        except:
+                            user.profile_image = None
+                            
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:
                 import traceback

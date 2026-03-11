@@ -136,10 +136,20 @@
                 class="px-4 py-2 text-sm font-semibold bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-all">Previous</a>
             {% endif %}
 
-            {% if current_page < total_pages %} <a href="?page={{ current_page + 1 }}"
-                class="px-4 py-2 text-sm font-semibold bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-all">
-                Next</a>
+            {% for p in range(current_page - 2, current_page + 3) %}
+                {% if p > 0 and p <= total_pages %}
+                    {% if p == current_page %}
+                    <span class="px-4 py-2 text-sm font-bold bg-indigo-50 border border-indigo-200 rounded-lg text-indigo-700">{{ p }}</span>
+                    {% else %}
+                    <a href="?page={{ p }}" class="px-4 py-2 text-sm font-semibold bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-all">{{ p }}</a>
+                    {% endif %}
                 {% endif %}
+            {% endfor %}
+
+            {% if current_page < total_pages %}
+            <a href="?page={{ current_page + 1 }}"
+                class="px-4 py-2 text-sm font-semibold bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-all">Next</a>
+            {% endif %}
         </div>
     </div>
     {% endif %}
