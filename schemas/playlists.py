@@ -28,11 +28,11 @@ class Playlist(AuditDocument):
     def serialize_thumbnail(self, thumbnail: Any):
         if not thumbnail:
             return None
-        from backbone.core.settings import settings
+        from backbone.core.url_utils import get_media_url
         if hasattr(thumbnail, "to_ref"): return None
         path = thumbnail.get("file_path") if isinstance(thumbnail, dict) else getattr(thumbnail, "file_path", str(thumbnail))
         if path and path.startswith("/media/"):
-            return f"{settings.BACKEND_URL}{path}"
+            return get_media_url(path)
         return path
 
     class Settings:

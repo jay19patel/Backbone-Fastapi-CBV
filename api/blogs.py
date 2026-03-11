@@ -60,7 +60,7 @@ async def get_blog_detail(
     image section attachments.
     """
     from bson import ObjectId
-    from backbone.core.settings import settings
+    from backbone.core.url_utils import get_media_url
     from backbone.core.models import Attachment
 
     # --- Step 1: Fetch blog with author/category/thumbnail resolved via aggregation ---
@@ -161,10 +161,10 @@ async def get_blog_detail(
                     "content_type": att_doc.get("content_type", ""),
                     "size": att_doc.get("size"),
                 }
-                # Prepend BACKEND_URL if needed
+                # Prepend base URL if needed
                 fp = att_data["file_path"]
                 if fp and fp.startswith("/media/"):
-                    att_data["file_path"] = f"{settings.BACKEND_URL}{fp}"
+                    att_data["file_path"] = get_media_url(fp)
 
                 # Assign back to each section that references this attachment
                 for idx in att_id_to_section_idx.get(att_id_str, []):
@@ -176,7 +176,7 @@ async def get_blog_detail(
     if isinstance(doc.get("thumbnail"), dict):
         fp = doc["thumbnail"].get("file_path", "")
         if fp and fp.startswith("/media/"):
-            doc["thumbnail"]["file_path"] = f"{settings.BACKEND_URL}{fp}"
+            doc["thumbnail"]["file_path"] = get_media_url(fp)
 
     # --- Step 4: Sanitize remaining ObjectIds to strings ---
     def sanitize(obj):

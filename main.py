@@ -26,15 +26,7 @@ from backbone.core.media_router import router as media_router
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
 # --------------------------------------------------------------------------
-class AppConfig(Settings):
-    ENVIRONMENT: str = "develop"
-    MONGODB_URL: str = "mongodb://localhost:27017"
-    DATABASE_NAME: str = "backbone_app"
-    REDIS_URL: str = "redis://localhost:6380/0"
-    CACHE_ENABLED: bool = True
-    RATE_LIMIT_ENABLED: bool = True
-
-config = AppConfig()
+from backbone.core.settings import settings
 
 app = FastAPI(title="Modular Backbone Framework")
 
@@ -42,16 +34,15 @@ app = FastAPI(title="Modular Backbone Framework")
 # NOTE: allow_credentials=True requires explicit origins (not "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Dynamic base URL middleware — captures request host for serializers
+from backbone.core.url_utils import DynamicBaseURLMiddleware
+app.add_middleware(DynamicBaseURLMiddleware)
 
 # --------------------------------------------------------------------------
 # Backbone Global Configuration
@@ -65,7 +56,7 @@ models_to_register = [
 
 BackboneConfig(
     app=app, 
-    config=config, 
+    config=settings, 
     document_models=models_to_register
 )
 

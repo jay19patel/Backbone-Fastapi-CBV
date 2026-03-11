@@ -37,13 +37,14 @@ class UserOut(BaseModel):
     description: Optional[str] = None # For frontend compatibility (aliased to bio)
     profile_image: Optional[Any] = None
     created_at: Optional[datetime] = None
+    is_google_account: bool = False
 
     @field_serializer('profile_image')
     def serialize_profile_image(self, profile_image: Any):
         if not profile_image:
             return None
         
-        from ..core.settings import settings
+        from ..core.url_utils import get_media_url
         
         # If it's a Beanie Link (not fetched)
         if hasattr(profile_image, "to_ref"):
@@ -59,7 +60,7 @@ class UserOut(BaseModel):
             path = str(profile_image)
 
         if path and path.startswith("/media/"):
-            return f"{settings.BACKEND_URL}{path}"
+            return get_media_url(path)
         return path
 
     from pydantic import model_validator
@@ -100,6 +101,9 @@ class PaginatedResponse(BaseModel, Generic[T]):
 class LoginSchema(BaseModel):
     email: EmailStr
     password: str
+
+class GoogleLoginSchema(BaseModel):
+    code: str
 
 class TokenResponse(BaseModel):
     access_token: str

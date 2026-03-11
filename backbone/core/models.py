@@ -82,15 +82,16 @@ class User(AuditDocument):
     profile_image: Optional[Link["Attachment"]] = None
     headline: Optional[str] = Field(default=None, max_length=255, description="A short professional headline")
     bio: Optional[str] = Field(default=None, description="Bio or about section")
+    is_google_account: bool = False
 
     @field_serializer('profile_image', when_used='json')
     def serialize_profile_image(self, profile_image: Any):
         if not profile_image: return None
-        from .settings import settings
+        from .url_utils import get_media_url
         if hasattr(profile_image, "to_ref"): return None
         path = profile_image.get("file_path") if isinstance(profile_image, dict) else getattr(profile_image, "file_path", str(profile_image))
         if path and path.startswith("/media/"):
-            return f"{settings.BACKEND_URL}{path}"
+            return get_media_url(path)
         return path
 
     class Settings:
@@ -170,8 +171,8 @@ class Attachment(Document):
     def serialize_file_path(self, file_path: Optional[str]):
         if not file_path: return None
         if file_path.startswith("/media/"):
-            from .settings import settings
-            return f"{settings.BACKEND_URL}{file_path}"
+            from .url_utils import get_media_url
+            return get_media_url(file_path)
         return file_path
     
     class Settings:
