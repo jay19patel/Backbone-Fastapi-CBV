@@ -63,15 +63,18 @@ def setup_logger(name: str, log_file: str = "app.log", level=logging.INFO):
     ))
     logger.addHandler(console_handler)
 
-    # File
+    # File (skip on read-only filesystems like Vercel)
     if log_file:
-        os.makedirs("logs", exist_ok=True)
-        file_path = os.path.join("logs", log_file)
-        file_handler = logging.FileHandler(file_path)
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-        ))
-        logger.addHandler(file_handler)
+        try:
+            os.makedirs("logs", exist_ok=True)
+            file_path = os.path.join("logs", log_file)
+            file_handler = logging.FileHandler(file_path)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+            ))
+            logger.addHandler(file_handler)
+        except OSError:
+            pass  # Read-only filesystem, skip file logging
 
     # MongoDB
     db_handler = DatabaseLoggingHandler()

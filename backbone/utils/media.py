@@ -10,8 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MEDIA_DIR = BASE_DIR / "media"
 IMAGES_DIR = MEDIA_DIR / "images"
 
-# Ensure directories exist
-os.makedirs(IMAGES_DIR, exist_ok=True)
+# Ensure directories exist (skip on read-only filesystems)
+try:
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+except OSError:
+    pass
 
 async def process_attachment_upload(attachment_id: str, file_data: bytes, subfolder: str = "images"):
     """
