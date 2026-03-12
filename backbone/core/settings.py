@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
 
+    # Cloudinary Settings
+    CLOUDINARY_URL: str = ""
+
     @property
     def cors_origins_list(self) -> list:
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]

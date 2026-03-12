@@ -71,6 +71,13 @@ class BackboneConfig:
         # Auth Router
         self.auth_router = AuthRouter(config=self.config, prefix="/api/auth")
 
+        # Cloudinary Setup — SDK reads CLOUDINARY_URL from os.environ
+        cloudinary_url = getattr(self.config, "CLOUDINARY_URL", "")
+        if cloudinary_url:
+            os.environ["CLOUDINARY_URL"] = cloudinary_url
+            import cloudinary
+            cloudinary.config()  # Auto-reads from os.environ
+
         # Store Class Instance
         BackboneConfig._instance = self
 
@@ -93,11 +100,12 @@ class BackboneConfig:
         
         
         # ----------------------------------------------------------------------
-        # Media & Static Files Setup
+        # Media & Static Files Setup (only in development — serverless is read-only)
         # ----------------------------------------------------------------------
-        self.media_path = Path("media")
-        self.media_path.mkdir(parents=True, exist_ok=True)
-        self.app.mount("/media", StaticFiles(directory=str(self.media_path)), name="media")
+        if self.config.ENVIRONMENT != "production":
+            self.media_path = Path("media")
+            self.media_path.mkdir(parents=True, exist_ok=True)
+            self.app.mount("/media", StaticFiles(directory=str(self.media_path)), name="media")
         
         self._register_exception_handlers()
 
@@ -179,7 +187,7 @@ class BackboneConfig:
     def cookie_settings(self) -> dict:
         if self.is_development:
             return {"secure": False, "httponly": True, "samesite": "lax"}
-        return {"secure": True, "httponly": True, "samesite": "strict"}
+        return {"secure": True, "httponly": True, "samesite": "none"}
 
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):

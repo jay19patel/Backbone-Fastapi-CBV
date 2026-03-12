@@ -18,6 +18,277 @@
     </a>
 </div>
 
+{% if model_name == 'Attachment' %}
+<!-- ============================================================ -->
+<!-- Special Attachment Upload Form                                -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-slate-800">Upload Attachment</h2>
+            <p class="text-slate-500 text-sm mt-1">Select a file or provide a URL. All fields will be filled
+                automatically.</p>
+        </div>
+        <div class="h-12 w-12 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center">
+            <i class="fas fa-cloud-upload-alt text-xl"></i>
+        </div>
+    </div>
+
+    <div class="p-8">
+        <!-- Upload Mode Tabs -->
+        <div class="flex space-x-2 mb-8">
+            <button type="button" id="tabFile"
+                class="px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-500/30"
+                onclick="switchTab('file')">
+                <i class="fas fa-file-image mr-2"></i>Upload File
+            </button>
+            <button type="button" id="tabUrl"
+                class="px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-slate-100 text-slate-600 hover:bg-slate-200"
+                onclick="switchTab('url')">
+                <i class="fas fa-link mr-2"></i>From URL
+            </button>
+        </div>
+
+        <!-- File Upload Section -->
+        <div id="fileSection">
+            <div id="dropZone"
+                class="border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center cursor-pointer transition-all hover:border-indigo-400 hover:bg-indigo-50/30"
+                onclick="document.getElementById('fileInput').click()">
+                <div id="dropZoneContent">
+                    <div
+                        class="h-16 w-16 bg-indigo-100 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-cloud-upload-alt text-2xl"></i>
+                    </div>
+                    <p class="text-slate-700 font-bold text-lg mb-1">Drop your file here or click to browse</p>
+                    <p class="text-slate-400 text-sm">Supports images (JPG, PNG, GIF, WebP)</p>
+                </div>
+                <div id="previewContainer" class="hidden">
+                    <img id="filePreview" class="max-h-48 rounded-xl mx-auto mb-4 shadow-lg" />
+                    <p id="fileNameDisplay" class="text-slate-700 font-bold"></p>
+                    <p id="fileSizeDisplay" class="text-slate-400 text-sm mt-1"></p>
+                </div>
+            </div>
+            <input type="file" id="fileInput" class="hidden" accept="image/*" onchange="handleFileSelect(event)" />
+        </div>
+
+        <!-- URL Section (hidden by default) -->
+        <div id="urlSection" class="hidden">
+            <label class="block text-sm font-semibold text-slate-700 mb-2">Image URL</label>
+            <div class="flex space-x-3">
+                <input type="url" id="urlInput" placeholder="https://example.com/image.jpg"
+                    class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" />
+            </div>
+        </div>
+
+        <!-- Optional Fields -->
+        <div class="mt-8 pt-8 border-t border-slate-100">
+            <h3 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">
+                <i class="fas fa-link mr-2"></i>Optional: Link to a Document
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Collection Name</label>
+                    <input type="text" id="collectionName" placeholder="e.g. blogs, users"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm" />
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Document ID</label>
+                    <input type="text" id="documentId" placeholder="MongoDB ObjectId"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm" />
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Field Name</label>
+                    <input type="text" id="fieldName" placeholder="e.g. profile_image, cover_image"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Button & Status -->
+    <div class="p-8 bg-slate-50 border-t border-slate-100">
+        <!-- Status Message -->
+        <div id="statusMessage" class="hidden mb-4 p-4 rounded-xl text-sm font-medium"></div>
+
+        <!-- Progress Bar -->
+        <div id="progressBar" class="hidden mb-4">
+            <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div id="progressFill" class="bg-indigo-600 h-2 rounded-full transition-all duration-500"
+                    style="width: 0%"></div>
+            </div>
+            <p id="progressText" class="text-xs text-slate-400 mt-2 text-center">Uploading...</p>
+        </div>
+
+        <div class="flex justify-end">
+            <button type="button" id="uploadBtn" onclick="uploadAttachment()"
+                class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                <i class="fas fa-cloud-upload-alt mr-2"></i>Upload & Save
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedFile = null;
+
+    function switchTab(tab) {
+        const tabFile = document.getElementById('tabFile');
+        const tabUrl = document.getElementById('tabUrl');
+        const fileSection = document.getElementById('fileSection');
+        const urlSection = document.getElementById('urlSection');
+
+        if (tab === 'file') {
+            tabFile.className = 'px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-500/30';
+            tabUrl.className = 'px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-slate-100 text-slate-600 hover:bg-slate-200';
+            fileSection.classList.remove('hidden');
+            urlSection.classList.add('hidden');
+        } else {
+            tabUrl.className = 'px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-500/30';
+            tabFile.className = 'px-5 py-2.5 rounded-xl text-sm font-bold transition-all bg-slate-100 text-slate-600 hover:bg-slate-200';
+            urlSection.classList.remove('hidden');
+            fileSection.classList.add('hidden');
+        }
+    }
+
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        selectedFile = file;
+
+        // Show preview
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            document.getElementById('filePreview').src = e.target.result;
+            document.getElementById('fileNameDisplay').textContent = file.name;
+            document.getElementById('fileSizeDisplay').textContent = formatSize(file.size);
+            document.getElementById('dropZoneContent').classList.add('hidden');
+            document.getElementById('previewContainer').classList.remove('hidden');
+            document.getElementById('dropZone').classList.add('border-indigo-400', 'bg-indigo-50/30');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // Drag & Drop
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        dropZone.classList.add('border-indigo-500', 'bg-indigo-50');
+    });
+    dropZone.addEventListener('dragleave', function (e) {
+        e.preventDefault();
+        dropZone.classList.remove('border-indigo-500', 'bg-indigo-50');
+    });
+    dropZone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropZone.classList.remove('border-indigo-500', 'bg-indigo-50');
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            document.getElementById('fileInput').files = e.dataTransfer.files;
+            handleFileSelect({ target: { files: [file] } });
+        }
+    });
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(2) + ' MB';
+    }
+
+    function showStatus(message, type) {
+        const el = document.getElementById('statusMessage');
+        el.classList.remove('hidden', 'bg-green-50', 'text-green-700', 'bg-red-50', 'text-red-700', 'bg-blue-50', 'text-blue-700');
+        if (type === 'success') {
+            el.classList.add('bg-green-50', 'text-green-700');
+            el.innerHTML = '<i class="fas fa-check-circle mr-2"></i>' + message;
+        } else if (type === 'error') {
+            el.classList.add('bg-red-50', 'text-red-700');
+            el.innerHTML = '<i class="fas fa-exclamation-circle mr-2"></i>' + message;
+        } else {
+            el.classList.add('bg-blue-50', 'text-blue-700');
+            el.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>' + message;
+        }
+    }
+
+    async function uploadAttachment() {
+        const urlInput = document.getElementById('urlInput');
+        const urlSection = document.getElementById('urlSection');
+        const isUrlMode = !urlSection.classList.contains('hidden');
+
+        if (!isUrlMode && !selectedFile) {
+            showStatus('Please select a file first.', 'error');
+            return;
+        }
+        if (isUrlMode && !urlInput.value.trim()) {
+            showStatus('Please enter an image URL.', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('uploadBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading...';
+
+        // Show progress
+        document.getElementById('progressBar').classList.remove('hidden');
+        document.getElementById('progressFill').style.width = '30%';
+        document.getElementById('progressText').textContent = 'Uploading file...';
+        showStatus('Uploading attachment...', 'info');
+
+        const formData = new FormData();
+
+        if (isUrlMode) {
+            formData.append('url', urlInput.value.trim());
+        } else {
+            formData.append('file', selectedFile);
+        }
+
+        // Optional linking fields
+        const collectionName = document.getElementById('collectionName').value.trim();
+        const documentId = document.getElementById('documentId').value.trim();
+        const fieldName = document.getElementById('fieldName').value.trim();
+        if (collectionName) formData.append('collection_name', collectionName);
+        if (documentId) formData.append('document_id', documentId);
+        if (fieldName) formData.append('field_name', fieldName);
+
+        try {
+            document.getElementById('progressFill').style.width = '60%';
+
+            const response = await fetch('/api/media/upload', {
+                method: 'POST',
+                body: formData,
+                credentials: 'include'
+            });
+
+            document.getElementById('progressFill').style.width = '90%';
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Upload failed');
+            }
+
+            const result = await response.json();
+
+            document.getElementById('progressFill').style.width = '100%';
+            document.getElementById('progressText').textContent = 'Upload complete!';
+            showStatus('Attachment uploaded successfully! Redirecting...', 'success');
+
+            // Redirect to attachment list after short delay
+            setTimeout(() => {
+                window.location.href = '/admin/Attachment';
+            }, 1000);
+
+        } catch (error) {
+            document.getElementById('progressBar').classList.add('hidden');
+            showStatus('Upload failed: ' + error.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-cloud-upload-alt mr-2"></i>Upload & Save';
+        }
+    }
+</script>
+
+{% else %}
+<!-- ============================================================ -->
+<!-- Generic Create Form (for all other models)                    -->
+<!-- ============================================================ -->
 <form action="/admin/{{ model_name }}/create" method="POST"
     class="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
     <div class="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
@@ -65,4 +336,5 @@
         </button>
     </div>
 </form>
+{% endif %}
 {% endblock %}

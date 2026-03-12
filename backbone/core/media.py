@@ -6,14 +6,62 @@ from backbone.core.models import Attachment
 from backbone.core.config import BackboneConfig
 from beanie import Document, Link
 
-# Define the base media directory relative to the project root
+# Define the base media directory relative to the project root (for local dev)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MEDIA_DIR = BASE_DIR / "media"
+
+
+def _is_cloudinary_configured() -> bool:
+    """Check if Cloudinary is configured."""
+    try:
+        import cloudinary
+        config = cloudinary.config()
+        return bool(config.cloud_name and config.api_key and config.api_secret)
+    except Exception:
+        return False
+
+
+async def _upload_to_cloudinary(file_bytes: bytes, subfolder: str, public_id: str, content_type: str) -> str:
+    """
+    Upload file bytes to Cloudinary and return the secure URL.
+    """
+    import cloudinary.uploader
+
+    # Determine resource type from content_type
+    resource_type = "image"
+    if content_type.startswith("video/"):
+        resource_type = "video"
+    elif not content_type.startswith("image/"):
+        resource_type = "raw"
+
+    result = cloudinary.uploader.upload(
+        file_bytes,
+        folder=f"blogermenia/{subfolder}",
+        public_id=public_id,
+        resource_type=resource_type,
+        overwrite=True,
+    )
+    return result["secure_url"]
+
+
+async def _save_to_local(file_bytes: bytes, subfolder: str, filename: str) -> str:
+    """
+    Save file bytes to local media directory and return the relative path.
+    """
+    target_dir = MEDIA_DIR / subfolder
+    os.makedirs(target_dir, exist_ok=True)
+
+    file_path = target_dir / filename
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    return f"/media/{subfolder}/{filename}"
+
 
 async def process_attachment_upload(attachment_id: str, base64_data: str):
     """
     Background task to process and save attachment file.
-    Decodes Base64 data and saves it to a collection-specific subfolder.
+    Uploads to Cloudinary in production, saves locally in development.
     Automatically links the attachment to the target document's field.
     """
     try:
@@ -24,23 +72,24 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
 
         # Determine subfolder based on collection name
         subfolder = attachment.collection_name or "general"
-        target_dir = MEDIA_DIR / subfolder
-        os.makedirs(target_dir, exist_ok=True)
 
-        # Extract extension and save file
+        # Extract extension
         ext = os.path.splitext(attachment.filename)[1]
         filename = f"{attachment_id}{ext}"
-        file_path = target_dir / filename
 
         # Decode Base64 data
         file_bytes = base64.b64decode(base64_data)
-        
-        with open(file_path, "wb") as f:
-            f.write(file_bytes)
+
+        # Upload to Cloudinary or save locally
+        if _is_cloudinary_configured():
+            file_url = await _upload_to_cloudinary(
+                file_bytes, subfolder, attachment_id, attachment.content_type
+            )
+        else:
+            file_url = await _save_to_local(file_bytes, subfolder, filename)
 
         # Update attachment status
-        relative_path = f"/media/{subfolder}/{filename}"
-        attachment.file_path = relative_path
+        attachment.file_path = file_url
         attachment.status = "completed"
         # Convert size to MB and round to 2 decimal places
         size_mb = round(len(file_bytes) / (1024 * 1024), 2)

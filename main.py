@@ -30,13 +30,7 @@ from backbone.core.settings import settings
 
 app = FastAPI(title="Modular Backbone Framework")
 
-# --------------------------------------------------------------------------
-# Backbone Global Configuration
-# --------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------
-# Backbone Global Configuration
-# --------------------------------------------------------------------------
 models_to_register = [
     User, Session, Attachment, LogEntry, TaskLog,
     Blog, BlogCategory, BlogLike, BlogView,
