@@ -28,12 +28,25 @@ def IntField(label: str, default: int = 0, **kwargs) -> Any:
 def serialize_attachment(value: Any) -> Any:
     if not value: return None
     from backbone.core.url_utils import get_media_url
-    if hasattr(value, "to_ref"): return value # Don't resolve unpopulated links
     
-    path = value.get("file_path") if isinstance(value, dict) else getattr(value, "file_path", None)
-    if not path and not isinstance(value, dict):
-         path = str(value)
-         
+    path = None
+    # 1. Unpack Beanie Links
+    if hasattr(value, "ref"):
+        if hasattr(value, "doc") and getattr(value, "doc", None):
+            value = value.doc
+        else:
+            return str(value.ref.id)
+
+    # 2. Extract path
+    if isinstance(value, dict):
+        path = value.get("file_path")
+        if not path:
+            return str(value.get("id", value.get("$id", value)))
+    else:
+        path = getattr(value, "file_path", None)
+        if not path:
+            return str(getattr(value, "id", value))
+            
     if path and isinstance(path, str) and path.startswith("/media/"):
         return get_media_url(path)
     return path

@@ -326,9 +326,10 @@ async def create_contact_messages():
 
 async def clear_database():
     try:
-        client = AsyncIOMotorClient("mongodb://localhost:27017")
-        await client.drop_database("backbone_app")
-        print("Database 'backbone_app' cleared successfully.")
+        from backbone.core.settings import settings
+        client = AsyncIOMotorClient(settings.MONGODB_URL)
+        await client.drop_database(settings.DATABASE_NAME)
+        print(f"Database '{settings.DATABASE_NAME}' cleared successfully.")
     except Exception as e:
         print(f"Error clearing database: {e}")
 
