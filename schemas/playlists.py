@@ -1,39 +1,21 @@
 from typing import List, Optional, Any
-from pydantic import Field, field_serializer
-from beanie import Link, before_event, Insert
+from beanie import Link
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from backbone.core.models import AuditDocument, User, slugify
+from backbone.core.models import BackboneDocument, User, Attachment
+from pydantic import Field
+from pydantic import Field
+from backbone.core.fields import Name, Slug, Text, Thumbnail, Owner, Bool, Connect
 from .blogs import Blog
-import uuid
 
-class Playlist(AuditDocument):
-    owner: Link[User]
-    name: str = Field(max_length=200)
-    slug: Optional[str] = Field(default=None, max_length=255)
-    description: Optional[str] = None
-    thumbnail: Optional[Link["Attachment"]] = None
+class Playlist(BackboneDocument):
+    owner: Owner = Field(description="The user who created and owns this playlist")
+    name: Name = Field(description="The display name of the playlist")
+    slug: Slug(depend="name") = Field(default=None, description="URL-friendly identifier for the playlist")
+    description: Text = Field(description="A detailed description of the playlist's contents")
+    thumbnail: Thumbnail = Field(default=None, description="Cover image for the playlist")
     
-    blogs: List[Link[Blog]] = Field(default_factory=list)
-    
-    is_public: bool = True
-
-    @before_event(Insert)
-    async def generate_slug(self):
-        if not self.slug or self.slug == "string": # "string" is default from some UI/Tools
-             base_slug = slugify(self.name)
-             entropy = str(uuid.uuid4())[:8]
-             self.slug = f"{base_slug}-{entropy}" if base_slug else entropy
-
-    @field_serializer('thumbnail')
-    def serialize_thumbnail(self, thumbnail: Any):
-        if not thumbnail:
-            return None
-        from backbone.core.url_utils import get_media_url
-        if hasattr(thumbnail, "to_ref"): return None
-        path = thumbnail.get("file_path") if isinstance(thumbnail, dict) else getattr(thumbnail, "file_path", str(thumbnail))
-        if path and path.startswith("/media/"):
-            return get_media_url(path)
-        return path
+    blogs: List[Connect(Blog, label="Blog")] = Field(default_factory=list, description="List of connected blogs included in this playlist")
+    is_public: Bool = Field(default=True, description="Indicates if this playlist is visible to the public")
 
     class Settings:
         name = "playlists"
@@ -44,5 +26,4 @@ class Playlist(AuditDocument):
         ]
 
 # Resolve forward references
-from backbone.core.models import Attachment
 Playlist.model_rebuild()

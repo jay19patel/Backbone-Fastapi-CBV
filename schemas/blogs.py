@@ -1,11 +1,10 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union, Literal
-from beanie import Link, before_event, Insert
-from pydantic import BaseModel, Field, field_serializer
+from beanie import Link
+from pydantic import BaseModel, Field
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from backbone.core.models import AuditDocument, User, slugify
-import uuid
-
+from backbone.core.models import BackboneDocument, User, Attachment
+from backbone.core.fields import Name, Slug, Text, Thumbnail, Owner, Connect
 
 class BlogSectionBase(BaseModel):
     title: Optional[str] = None
@@ -41,7 +40,7 @@ class BlogSectionImage(BlogSectionBase):
     type: Literal["image"] = "image"
     attachment: Optional[Any] = None  # Stores attachment ID (str) or resolved attachment dict
     caption: Optional[str] = None
-    content: Optional[str] = None # Added for compatibility
+    content: Optional[str] = None
 
 class BlogSectionCode(BlogSectionBase):
     type: Literal["code"] = "code"
@@ -65,17 +64,11 @@ BlogSection = Union[
     BlogSectionYoutube
 ]
 
+from backbone.core.fields import Bool
 
-class BlogCategory(AuditDocument):
-    name: str = Field(max_length=150)
-    slug: Optional[str] = Field(default=None, max_length=120)
-
-    @before_event(Insert)
-    async def generate_slug(self):
-        if not self.slug or self.slug == "string":
-             self.slug = slugify(self.name)
-             entropy = str(uuid.uuid4())[:4]
-             self.slug = f"{self.slug}-{entropy}" if self.slug else entropy
+class BlogCategory(BackboneDocument):
+    name: Name = Field(description="The unique name of the blog category")
+    slug: Slug(depend="name") = Field(default=None, description="URL-friendly identifier for the category")
     
     class Settings:
         name = "blog_categories"
@@ -85,49 +78,29 @@ class BlogCategory(AuditDocument):
             IndexModel([("slug", ASCENDING)], unique=True)
         ]
 
+class Blog(BackboneDocument):
+    title: Name = Field(description="The main title of the blog post")
+    subtitle: Text = Field(default=None, description="A shorter subtitle or catchphrase")
+    slug: Slug(depend="title") = Field(default=None, description="URL-friendly identifier for the blog")
 
-class Blog(AuditDocument):
-    title: str = Field(max_length=200)
-    subtitle: Optional[str] = Field(default=None, max_length=300)
-    slug: Optional[str] = Field(default=None, max_length=255)
+    excerpt: Text = Field(description="A short summary or snippet of the blog")
+    introduction: Text = Field(default=None, description="The opening paragraph or introduction text")
+    sections: List[BlogSection] = Field(default_factory=list, description="Array of rich media sections making up the body of the blog")
+    conclusion: Text = Field(default=None, description="The closing paragraph or final summary")
 
-    @before_event(Insert)
-    async def generate_slug(self):
-        if not self.slug or self.slug == "string":
-             base_slug = slugify(self.title)
-             entropy = str(uuid.uuid4())[:8]
-             self.slug = f"{base_slug}-{entropy}" if base_slug else entropy
+    author: Owner = Field(description="User ID of the blog's author")
+    category: Optional[Link[BlogCategory]] = Field(default=None, description="The category this blog belongs to")
 
-    excerpt: Optional[str] = None
-    introduction: Optional[str] = None
-    sections: List[BlogSection] = Field(default_factory=list)
-    conclusion: Optional[str] = None
-
-    author: Link[User]
-    category: Optional[Link[BlogCategory]] = None
-
-    thumbnail: Optional[Link["Attachment"]] = None
+    thumbnail: Thumbnail = Field(default=None, description="Cover image or thumbnail for the blog")
     
-    isPublished: bool = False
-    publishedDate: Optional[datetime] = None
+    isPublished: Bool = Field(default=False, description="Flag indicating if the blog is definitively live and public")
+    publishedDate: Optional[datetime] = Field(default=None, description="Timestamp when the blog was formally published")
 
     # Analytics
-    views: int = 0
-    likes: int = 0
+    views: int = Field(default=0, description="Cumulative total number of views")
+    likes: int = Field(default=0, description="Cumulative total number of likes")
 
-    # Store embeddings in any flexible format
-    embedding: Optional[Any] = Field(default=None, description="Embeddings (Any format)")
-
-    @field_serializer('thumbnail')
-    def serialize_thumbnail(self, thumbnail: Any):
-        if not thumbnail:
-            return None
-        from backbone.core.url_utils import get_media_url
-        if hasattr(thumbnail, "to_ref"): return None
-        path = thumbnail.get("file_path") if isinstance(thumbnail, dict) else getattr(thumbnail, "file_path", str(thumbnail))
-        if path and path.startswith("/media/"):
-            return get_media_url(path)
-        return path
+    embedding: Optional[Any] = Field(default=None, description="Vector embeddings array for automated AI search")
 
     class Settings:
         name = "blogs"
@@ -139,10 +112,9 @@ class Blog(AuditDocument):
             IndexModel([("created_at", DESCENDING)], unique=False)
         ]
 
-
-class BlogLike(AuditDocument):
-    user: Link[User]
-    blog: Link[Blog]
+class BlogLike(BackboneDocument):
+    user: Owner = Field(description="The user who liked the blog")
+    blog: Connect(Blog) = Field(description="The specific blog that was liked")
 
     class Settings:
         name = "blog_likes"
@@ -151,11 +123,10 @@ class BlogLike(AuditDocument):
             IndexModel([("created_at", DESCENDING)], unique=False)
         ]
 
-
-class BlogView(AuditDocument):
-    user: Optional[Link[User]] = None
-    blog: Link[Blog]
-    ip_address: Optional[str] = None
+class BlogView(BackboneDocument):
+    user: Optional[Owner] = Field(default=None, description="The authenticated user who viewed the blog (if applicable)")
+    blog: Connect(Blog) = Field(description="The specific blog that was viewed")
+    ip_address: Optional[str] = Field(default=None, description="IP address of the anonymous or authenticated viewer")
 
     class Settings:
         name = "blog_views"
@@ -164,7 +135,6 @@ class BlogView(AuditDocument):
         ]
 
 # Resolve forward references
-from backbone.core.models import Attachment
 Blog.model_rebuild()
 BlogLike.model_rebuild()
 BlogView.model_rebuild()

@@ -55,11 +55,52 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
         return RedirectResponse(url="/admin/login")
     
     models = admin_site.get_registered_models()
+    
+    # Calculate Database Stats
+    db_stats = {
+        "total_models": len(models),
+        "total_documents": 0,
+        "total_size_mb": 0.0
+    }
+    
+    model_stats = {}
+    for m in models:
+        try:
+            model = m["model"]
+            
+            # Safely get Count
+            try:
+                count = await model.find_all().count()
+            except Exception:
+                count = 0
+            
+            # Safely get Size
+            size_mb = 0.0
+            try:
+                db = model.get_settings().pymongo_db
+                stats = await db.command("collStats", model.get_collection_name())
+                size_bytes = stats.get("totalSize") or stats.get("storageSize") or stats.get("size") or 0
+                size_mb = size_bytes / (1024 * 1024)
+            except Exception:
+                pass # E.g. Atlas Serverless permission denied
+            
+            model_stats[m["name"]] = {"count": count, "size_mb": round(size_mb, 2)}
+            db_stats["total_documents"] += count
+            db_stats["total_size_mb"] += size_mb
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            model_stats[m["name"]] = {"count": 0, "size_mb": 0.0}
+            
+    db_stats["total_size_mb"] = round(db_stats["total_size_mb"], 2)
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "models": models,
         "user": user,
-        "now": datetime.now(timezone.utc)
+        "now": datetime.now(timezone.utc),
+        "db_stats": db_stats,
+        "model_stats": model_stats
     })
 
 @router.get("/login", response_class=HTMLResponse)
@@ -220,14 +261,32 @@ async def model_create_page(
         raise HTTPException(status_code=404, detail="Model not found")
     
     model = config["model"]
+    
+    from ..core.repository import BeanieRepository
+    populate_fields = BeanieRepository.detect_populate_fields(model)
+    
+    link_options = {}
+    field_links = {}
+    if populate_fields:
+        for fname, fconfig in populate_fields.items():
+            if isinstance(fconfig, dict) and "collection" in fconfig:
+                coll = fconfig["collection"]
+                for m_config in admin_site.get_registered_models():
+                    if hasattr(m_config["model"], "Settings") and getattr(m_config["model"].Settings, "name", None) == coll:
+                        target_model_name = m_config["name"]
+                        target_model = m_config["model"]
+                        field_links[fname] = target_model_name
+                        break
+                        
     return templates.TemplateResponse("model_create.html", {
         "request": request,
         "model_name": model_name,
         "model_fields": model.model_fields,
-        "internal_fields": INTERNAL_FIELDS, # Added internal_fields
+        "internal_fields": INTERNAL_FIELDS, 
         "models": admin_site.get_registered_models(),
         "user": user,
-        "now": datetime.now(timezone.utc)
+        "now": datetime.now(timezone.utc),
+        "field_links": field_links
     })
 
 @router.post("/{model_name}/create")
@@ -250,23 +309,56 @@ async def model_create_handle(
     data = {}
     
     for key, field in model.model_fields.items():
-        if key in INTERNAL_FIELDS: # Used INTERNAL_FIELDS
+        if key in INTERNAL_FIELDS:
             continue
             
-        if key in form_data and form_data[key]:
-            val = form_data[key]
+        is_list = "list" in str(field.annotation).lower()
+        is_link = "link" in str(field.annotation).lower()
+        
+        if key in form_data:
+            val = form_data.getlist(key) if is_list else form_data[key]
+            
+            if is_list:
+                if not val or (len(val) == 1 and not val[0]):
+                    val = []
+            elif not val and field.annotation != bool:
+                continue
+                
             # Simple type casting
             if field.annotation == bool:
-                val = val.lower() == "true"
-            elif field.annotation == int:
-                val = int(val)
-            elif field.annotation == float:
-                val = float(val)
+                val = val.lower() == "true" if isinstance(val, str) else bool(val)
+            elif field.annotation == int and not is_list:
+                try: val = int(val)
+                except: pass
+            elif field.annotation == float and not is_list:
+                try: val = float(val)
+                except: pass
                 
-            if model_name == "User" and key == "hashed_password":
+            if model_name == "User" and key == "hashed_password" and val:
                 from ..utils import PasswordManager
-                if not val.startswith("$argon2"):
+                if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
+                    
+            if is_link and val:
+                from ..core.repository import BeanieRepository
+                from bson import ObjectId
+                from bson.dbref import DBRef
+                populate_fields = BeanieRepository.detect_populate_fields(model)
+                if key in populate_fields:
+                    collection_name = populate_fields[key].get("collection")
+                    if collection_name:
+                        if is_list and isinstance(val, list):
+                            new_val = []
+                            for item_id in val:
+                                try:
+                                    if len(str(item_id)) == 24:
+                                        new_val.append(DBRef(collection=collection_name, id=ObjectId(item_id)))
+                                except: pass
+                            val = new_val
+                        elif isinstance(val, str) and len(val) == 24:
+                            try:
+                                val = DBRef(collection=collection_name, id=ObjectId(val))
+                            except: pass
                     
             data[key] = val
             
@@ -336,13 +428,52 @@ async def model_detail(
         raise HTTPException(status_code=404, detail="Record not found")
 
     field_links = {}
+    link_options = {}
     if populate_fields:
         for fname, fconfig in populate_fields.items():
             if isinstance(fconfig, dict) and "collection" in fconfig:
                 coll = fconfig["collection"]
                 for m_config in admin_site.get_registered_models():
                     if hasattr(m_config["model"], "Settings") and getattr(m_config["model"].Settings, "name", None) == coll:
-                        field_links[fname] = m_config["name"]
+                        target_model_name = m_config["name"]
+                        target_model = m_config["model"]
+                        field_links[fname] = target_model_name
+                        
+                        # Fetch ONLY the selected items to pre-populate the dropdown
+                        try:
+                            val = item_dict.get(fname)
+                            if not val:
+                                break
+                                
+                            val_list = val if isinstance(val, list) else [val]
+                            val_list = [v for v in val_list if v]
+                            
+                            if not val_list:
+                                break
+                                
+                            from bson import ObjectId
+                            ids_to_fetch = []
+                            for v in val_list:
+                                vid = v.id if hasattr(v, "id") else v.get("id") if isinstance(v, dict) else v
+                                try:
+                                    if isinstance(vid, (str, ObjectId)):
+                                        ids_to_fetch.append(ObjectId(str(vid)))
+                                except: pass
+                                
+                            items = await target_model.find({"_id": {"$in": ids_to_fetch}}).to_list()
+                            
+                            options = []
+                            for it in items:
+                                label = str(it.id)
+                                for display_field in ["name", "title", "full_name", "username", "email", "filename", "question"]:
+                                    test_val = getattr(it, display_field, None)
+                                    if test_val:
+                                        label = f"{test_val} ({it.id})"
+                                        break
+                                options.append({"id": str(it.id), "label": label})
+                            link_options[fname] = options
+                        except:
+                            pass
                         break
 
     return templates.TemplateResponse("model_detail.html", {
@@ -354,7 +485,8 @@ async def model_detail(
         "user": user,
         "now": datetime.now(timezone.utc),
         "field_links": field_links,
-        "internal_fields": INTERNAL_FIELDS # Added internal_fields
+        "link_options": link_options,
+        "internal_fields": INTERNAL_FIELDS
     })
 
 @router.post("/{model_name}/{pk}")
@@ -386,46 +518,55 @@ async def model_update_handle(
     update_data = {}
     
     for key, field in model.model_fields.items():
-        if key in INTERNAL_FIELDS: # Used INTERNAL_FIELDS
+        if key in INTERNAL_FIELDS:
             continue
             
+        is_list = "list" in str(field.annotation).lower()
+        is_link = "link" in str(field.annotation).lower()
+
         if key in form_data:
-            val = form_data[key]
-            if field.annotation == bool:
-                val = val.lower() == "true"
-            elif field.annotation == int:
-                val = int(val)
-            elif field.annotation == float:
-                val = float(val)
+            val = form_data.getlist(key) if is_list else form_data[key]
             
-            # If the user submitted a JSON string for a Link field, extract ID
-            if "Link" in str(field.annotation) and isinstance(val, str) and val.startswith("{"):
-                import json
-                try:
-                    parsed = json.loads(val)
-                    if isinstance(parsed, dict) and "id" in parsed:
-                        val = parsed["id"]
-                except:
-                    pass
-            elif "Link" in str(field.annotation) and isinstance(val, str) and val.startswith("["):
-                import json
-                try:
-                    parsed = json.loads(val)
-                    if isinstance(parsed, list):
-                        new_val = []
-                        for el in parsed:
-                            if isinstance(el, dict) and "id" in el:
-                                new_val.append(el["id"])
-                            else:
-                                new_val.append(el)
-                        val = new_val
-                except:
-                    pass
+            if is_list:
+                if not val or (len(val) == 1 and not val[0]):
+                    val = []
+            elif not val and field.annotation != bool:
+                continue
+
+            if field.annotation == bool:
+                val = val.lower() == "true" if isinstance(val, str) else bool(val)
+            elif field.annotation == int and not is_list:
+                try: val = int(val)
+                except: pass
+            elif field.annotation == float and not is_list:
+                try: val = float(val)
+                except: pass
 
             if model_name == "User" and key == "hashed_password" and val:
                 from ..utils import PasswordManager
-                if not val.startswith("$argon2"):
+                if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
+
+            if is_link and val:
+                from ..core.repository import BeanieRepository
+                from bson import ObjectId
+                from bson.dbref import DBRef
+                populate_fields = BeanieRepository.detect_populate_fields(model)
+                if key in populate_fields:
+                    collection_name = populate_fields[key].get("collection")
+                    if collection_name:
+                        if is_list and isinstance(val, list):
+                            new_val = []
+                            for item_id in val:
+                                try:
+                                    if len(str(item_id)) == 24:
+                                        new_val.append(DBRef(collection=collection_name, id=ObjectId(item_id)))
+                                except: pass
+                            val = new_val
+                        elif isinstance(val, str) and len(val) == 24:
+                            try:
+                                val = DBRef(collection=collection_name, id=ObjectId(val))
+                            except: pass
 
             update_data[key] = val
 
@@ -473,5 +614,61 @@ async def model_delete_handle(
             await item.delete()
             
     return RedirectResponse(url=f"/admin/{model_name}", status_code=status.HTTP_303_SEE_OTHER)
+
+@router.get("/api/search/{target_model}")
+async def admin_api_search(
+    request: Request,
+    target_model: str,
+    q: Optional[str] = "",
+    page: int = 1,
+    user: Optional[User] = Depends(get_admin_user)
+):
+    """
+    Generic AJAX endpoint that returns Select2 formatted options manually paginated.
+    """
+    if not user:
+         raise HTTPException(status_code=401)
+         
+    config = admin_site.get_model_config(target_model)
+    if not config: return {"results": [], "pagination": {"more": False}}
+    
+    model = config["model"]
+    limit = 10
+    skip = (page - 1) * limit
+    
+    query = {}
+    if "is_deleted" in model.model_fields:
+        query["is_deleted"] = {"$ne": True}
+        
+    if q:
+        search_params = []
+        for field_name in ["name", "title", "full_name", "username", "email", "filename", "question", "subject"]:
+            if field_name in model.model_fields:
+                search_params.append({field_name: {"$regex": q, "$options": "i"}})
+        if search_params:
+            if "is_deleted" in query:
+                query = {"$and": [{"is_deleted": {"$ne": True}}, {"$or": search_params}]}
+            else:
+                query = {"$or": search_params}
+            
+    items = await model.find(query).skip(skip).limit(limit).to_list()
+    total = await model.find(query).count()
+    
+    results = []
+    for it in items:
+        label = str(it.id)
+        for display_field in ["name", "title", "full_name", "username", "email", "filename", "question"]:
+            val = getattr(it, display_field, None)
+            if val:
+                label = f"{val} ({it.id})"
+                break
+        results.append({"id": str(it.id), "text": label})
+        
+    return {
+        "results": results,
+        "pagination": {
+            "more": (skip + limit) < total
+        }
+    }
 
 
