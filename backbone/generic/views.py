@@ -15,8 +15,8 @@ class BaseGenericView:
     """
     def __init__(
         self,
-        schema: Type[BaseModel],
-        prefix: str,
+        schema: Optional[Type[BaseModel]] = None,
+        prefix: str = "",
         tags: Optional[List[str]] = None,
         repository: Optional[BeanieRepository] = None,
         permission_classes: Union[Type[BasePermission], Sequence[Type[BasePermission]]] = IsOwner,
@@ -31,12 +31,16 @@ class BaseGenericView:
         fetch_links: bool = False,
         rate_limit: Optional[Any] = None,
         lookup_field: str = "id",
+        create_schema: Optional[Type[BaseModel]] = None,
+        update_schema: Optional[Type[BaseModel]] = None,
+        response_schema: Optional[Type[BaseModel]] = None,
         **kwargs # Accept other kwargs safely for subclasses
     ):
         
         from ..core.rate_limit import RateLimit
         
-        router_kwargs = {"prefix": prefix, "tags": tags or [prefix.strip("/")]}
+        self.prefix = prefix or getattr(self, "prefix", "")
+        router_kwargs = {"prefix": self.prefix, "tags": tags or [self.prefix.strip("/") if self.prefix else "default"]}
         
         if rate_limit is True:
             router_kwargs["dependencies"] = [Depends(RateLimit())]
@@ -48,8 +52,13 @@ class BaseGenericView:
 
         self.router = APIRouter(**router_kwargs)
         
-        self.schema = schema
-        self.prefix = prefix
+        self.schema = schema or getattr(self, "schema", None)
+        if not self.schema:
+            raise ValueError("A schema must be provided or set as a class attribute.")
+            
+        self.create_schema = create_schema or getattr(self, "create_schema", self.schema)
+        self.update_schema = update_schema or getattr(self, "update_schema", Dict[str, Any])
+        self.response_schema = response_schema or getattr(self, "response_schema", self.schema)
         self.cache_ttl = cache_ttl
         self.lookup_field = lookup_field
         
@@ -79,6 +88,34 @@ class BaseGenericView:
 
         if self.fetch_links:
             self.populate_fields.update(self._detect_populate_fields())
+            
+        self._register_actions()
+        
+    def _register_actions(self):
+        """
+        Scans the view instance for methods decorated with @action and registers them.
+        """
+        import inspect
+        for name, method in inspect.getmembers(self, inspect.ismethod):
+            config = getattr(method, "__action_config__", None)
+            if config:
+                detail = config.get("detail", False)
+                methods = config.get("methods", ["GET"])
+                kwargs = config.get("kwargs", {})
+                
+                # Default path is method name
+                path = f"/{{pk}}/{name}/" if detail else f"/{name}/"
+                
+                # If path overridden in kwargs, use it
+                if "path" in kwargs:
+                    path = kwargs.pop("path")
+                
+                self.router.add_api_route(
+                    path=path,
+                    endpoint=method,
+                    methods=[m.upper() for m in methods],
+                    **kwargs
+                )
             
     def _detect_populate_fields(self) -> Dict[str, Any]:
         """
@@ -195,7 +232,11 @@ class GenericList(BaseGenericView):
                     "description": f"Filter by {field}"
                 })
         
-        @self.router.get("/", response_model=PaginatedResponse[Any], openapi_extra={"parameters": parameters})
+        # If list_fields is set, result dicts are partial — don't validate against the full schema.
+        # Use response_schema only when returning full objects (no projection).
+        list_response_model = PaginatedResponse[Any] if self.list_fields else PaginatedResponse[self.response_schema]
+        
+        @self.router.get("/", response_model=list_response_model, openapi_extra={"parameters": parameters})
         # @cache(key_prefix=f"backbone:{self.prefix}:list")
         async def list(
             request: Request,
@@ -324,9 +365,9 @@ class GenericCreate(BaseGenericView):
 
     def _register_create_route(self):
         from datetime import datetime, timezone
-        @self.router.post("/", response_model=self.schema, status_code=201)
+        @self.router.post("/", response_model=self.response_schema, status_code=201)
         @cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create") # Idempotency
-        async def create(request: Request, data: self.schema, user: Optional[UserOut] = Depends(self.perm_dep)):
+        async def create(request: Request, data: self.create_schema, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
             
             # Step 1: Extract string IDs from Pydantic model before model_dump() destroys them
@@ -339,7 +380,7 @@ class GenericCreate(BaseGenericView):
                         extracted_links[field_name] = val
             
             # Step 2: Dump the model 
-            validated_data = data.model_dump(by_alias=True, exclude={"id"})
+            validated_data = data.model_dump(by_alias=True, exclude={"id"}) if hasattr(data, "model_dump") else data
             
             # Step 3: Restore the extracted link strings into the payload
             for k, v in extracted_links.items():
@@ -367,7 +408,7 @@ class GenericRetrieve(BaseGenericView):
         self._register_retrieve_route()
 
     def _register_retrieve_route(self):
-        @self.router.get("/{pk}", response_model=Any)
+        @self.router.get("/{pk}", response_model=self.response_schema)
         @cache(key_prefix=f"backbone:cache:{self.prefix}:detail")
         async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
             await self._resolve_context(request)
@@ -405,11 +446,11 @@ class GenericUpdate(BaseGenericView):
         self._register_update_route()
 
     def _register_update_route(self):
-        @self.router.patch("/{pk}", response_model=self.schema)
-        async def update(request: Request, pk: str, data: Dict[str, Any], user: UserOut = Depends(self.perm_dep)):
+        @self.router.patch("/{pk}", response_model=self.response_schema)
+        async def update(request: Request, pk: str, data: self.update_schema, user: UserOut = Depends(self.perm_dep)):
             # Force validation by creating a partial model if needed, but for now simple Dict
             item = await self._get_object_internal(pk, request, user, use_cache=False)
-            update_data = {k: v for k, v in data.items() if v is not None}
+            update_data = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else {k: v for k, v in data.items() if v is not None}
             
             # Auto-convert string IDs to DBRefs for Link fields
             update_data = self._process_link_fields(update_data)

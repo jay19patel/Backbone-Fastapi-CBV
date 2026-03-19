@@ -13,6 +13,18 @@ from .site import admin_site
 # Define INTERNAL_FIELDS globally
 INTERNAL_FIELDS = ["id", "_id", "revision_id", "created_at", "created_by", "updated_at", "updated_by", "is_deleted", "deleted_at", "deleted_by"]
 
+def get_model_fields(model):
+    """
+    Returns all Pydantic model_fields including those inherited from parent classes.
+    model.model_fields only returns fields declared directly on the class.
+    """
+    all_fields = {}
+    # Walk MRO in reverse so subclass fields override parent fields
+    for cls in reversed(model.__mro__):
+        if hasattr(cls, "model_fields") and isinstance(cls.model_fields, dict):
+            all_fields.update(cls.model_fields)
+    return all_fields
+
 router = APIRouter(prefix="/admin")
 
 # Get absolute path to templates
@@ -207,7 +219,7 @@ async def model_list(
     skip = (page - 1) * limit
     
     query = {}
-    if "is_deleted" in model.model_fields:
+    if "is_deleted" in get_model_fields(model):
         query["is_deleted"] = {"$ne": True}
         
     total_count = await model.find(query).count()
@@ -217,7 +229,7 @@ async def model_list(
     repo.document_class = model
     populate_fields = BeanieRepository.detect_populate_fields(model)
     
-    sort_query = [("created_at", -1)] if "created_at" in model.model_fields else None
+    sort_query = [("created_at", -1)] if "created_at" in get_model_fields(model) else None
     items = await repo.get_all(query, skip=skip, limit=limit, sort=sort_query, populate_fields=populate_fields)
     total_pages = math.ceil(total_count / limit) if limit > 0 else 1
     
@@ -243,7 +255,7 @@ async def model_list(
         "user": user,
         "now": datetime.now(timezone.utc),
         "field_links": field_links,
-        "model_fields": model.model_fields,
+        "model_fields": get_model_fields(model),
         "internal_fields": INTERNAL_FIELDS
     })
 
@@ -281,7 +293,7 @@ async def model_create_page(
     return templates.TemplateResponse("model_create.html", {
         "request": request,
         "model_name": model_name,
-        "model_fields": model.model_fields,
+        "model_fields": get_model_fields(model),
         "internal_fields": INTERNAL_FIELDS, 
         "models": admin_site.get_registered_models(),
         "user": user,
@@ -308,7 +320,7 @@ async def model_create_handle(
     # Filter and cast form data
     data = {}
     
-    for key, field in model.model_fields.items():
+    for key, field in get_model_fields(model).items():
         if key in INTERNAL_FIELDS:
             continue
             
@@ -480,7 +492,7 @@ async def model_detail(
         "request": request,
         "model_name": model_name,
         "item": item_dict,
-        "model_fields": model.model_fields,
+        "model_fields": get_model_fields(model),
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc),
@@ -517,7 +529,7 @@ async def model_update_handle(
     form_data = await request.form()
     update_data = {}
     
-    for key, field in model.model_fields.items():
+    for key, field in get_model_fields(model).items():
         if key in INTERNAL_FIELDS:
             continue
             
@@ -637,13 +649,13 @@ async def admin_api_search(
     skip = (page - 1) * limit
     
     query = {}
-    if "is_deleted" in model.model_fields:
+    if "is_deleted" in get_model_fields(model):
         query["is_deleted"] = {"$ne": True}
         
     if q:
         search_params = []
         for field_name in ["name", "title", "full_name", "username", "email", "filename", "question", "subject"]:
-            if field_name in model.model_fields:
+            if field_name in get_model_fields(model):
                 search_params.append({field_name: {"$regex": q, "$options": "i"}})
         if search_params:
             if "is_deleted" in query:

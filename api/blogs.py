@@ -16,8 +16,76 @@ blog_category_crud = GenericCrud(
     permission_classes=[AllowAny]
 )
 
+from backbone.generic.action import action
+
+class BlogViewSet(GenericCrud):
+    @action(detail=True, methods=["post"], tags=["Blogs"])
+    async def like(
+        self,
+        request: Request,
+        pk: str,
+        current_user: Optional[User] = Depends(get_optional_user)
+    ):
+        """Toggle like for a blog. Supports both ID and Slug."""
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required to like a blog")
+
+        blog_repo = get_repo(Blog, request)
+        blog = await blog_repo.get_one({
+            "$or": [{"slug": pk}, {"id": pk}],
+            "is_deleted": False
+        })
+        
+        if not blog:
+            raise HTTPException(status_code=404, detail="Blog not found")
+            
+        blog_id = str(blog.id) if hasattr(blog, "id") else blog.get("id")
+        from beanie import PydanticObjectId
+        from bson import ObjectId
+        
+        # Check if user already liked this blog
+        like_repo = get_repo(BlogLike, request)
+        existing_like = await like_repo.get_one({
+            "user.$id": PydanticObjectId(current_user.id),
+            "blog.$id": PydanticObjectId(blog_id)
+        })
+        
+        blog_collection = Blog.get_pymongo_collection()
+        
+        if existing_like:
+            # Unlike: Remove from BlogLike
+            await like_repo.delete({"id": existing_like["id"]}, soft=False)
+            await blog_collection.update_one(
+                {"_id": ObjectId(blog_id)},
+                {"$inc": {"likes": -1}}
+            )
+            status = "unliked"
+            likes_diff = -1
+        else:
+            # Like: Create BlogLike
+            await like_repo.create({
+                "user": str(current_user.id),
+                "blog": str(blog_id)
+            })
+            await blog_collection.update_one(
+                {"_id": ObjectId(blog_id)},
+                {"$inc": {"likes": 1}}
+            )
+            status = "liked"
+            likes_diff = 1
+        
+        # Get updated count
+        current_likes = blog.get('likes', 0) if isinstance(blog, dict) else getattr(blog, 'likes', 0)
+        total_likes = max(0, (current_likes or 0) + likes_diff)
+        
+        return {
+            "message": "Toggle success", 
+            "status": status,
+            "total_likes": total_likes
+        }
+
 # Router for Blogs
-blog_crud = GenericCrud(
+blog_crud = BlogViewSet(
     schema=Blog,
     prefix="/blogs",
     tags=["Blogs"],
@@ -226,69 +294,7 @@ def get_repo(model, request: Request = None) -> BeanieRepository:
     return repo
 
 
-@router.post("/blogs/{blog_id_or_slug}/like/", tags=["Blogs"])
-async def like_blog(
-    request: Request,
-    blog_id_or_slug: str,
-    current_user: Optional[User] = Depends(get_optional_user)
-):
-    """Toggle like for a blog. Supports both ID and Slug."""
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to like a blog")
 
-    blog_repo = get_repo(Blog, request)
-    blog = await blog_repo.get_one({
-        "$or": [{"slug": blog_id_or_slug}, {"id": blog_id_or_slug}],
-        "is_deleted": False
-    })
-    
-    if not blog:
-        raise HTTPException(status_code=404, detail="Blog not found")
-        
-    blog_id = blog.get("id")
-    from beanie import PydanticObjectId
-    from bson import ObjectId
-    
-    # Check if user already liked this blog
-    like_repo = get_repo(BlogLike, request)
-    existing_like = await like_repo.get_one({
-        "user.$id": PydanticObjectId(current_user.id),
-        "blog.$id": PydanticObjectId(blog_id)
-    })
-    
-    blog_collection = Blog.get_pymongo_collection()
-    
-    if existing_like:
-        # Unlike: Remove from BlogLike
-        await like_repo.delete({"id": existing_like["id"]}, soft=False)
-        await blog_collection.update_one(
-            {"_id": ObjectId(blog_id)},
-            {"$inc": {"likes": -1}}
-        )
-        status = "unliked"
-        likes_diff = -1
-    else:
-        # Like: Create BlogLike
-        await like_repo.create({
-            "user": str(current_user.id),
-            "blog": str(blog_id)
-        })
-        await blog_collection.update_one(
-            {"_id": ObjectId(blog_id)},
-            {"$inc": {"likes": 1}}
-        )
-        status = "liked"
-        likes_diff = 1
-    
-    # Get updated count
-    current_likes = blog.get('likes', 0) if isinstance(blog, dict) else getattr(blog, 'likes', 0)
-    total_likes = max(0, (current_likes or 0) + likes_diff)
-    
-    return {
-        "message": "Toggle success", 
-        "status": status,
-        "total_likes": total_likes
-    }
 
 # --- Signal Listeners for Analytics ---
 

@@ -2,359 +2,272 @@ import asyncio
 import httpx
 import random
 import time
+import os
 from typing import List, Optional
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
 
 BASE_URL = "http://127.0.0.1:8000"
 
-# Configuration
-NUM_USERS = 10
-TOTAL_BLOGS_PER_USER = 3  # Reduced for faster seeding
-TOTAL_PLAYLISTS_PER_USER = 10 # 5 users * 2 playlists = 10 total playlists
+NUM_USERS = 5
+BLOGS_PER_USER = 3
 CONCURRENT_REQUESTS = 2
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGE_PATH = os.path.join(BASE_DIR, "blog.png") # Required for blogs
-PROFILE_IMAGE_PATH = os.path.join(BASE_DIR, "profile.png") # Required for users
-PLAYLIST_IMAGE_PATH = os.path.join(BASE_DIR, "playlist.png") # Required for playlists
+IMAGE_PATH = os.path.join(BASE_DIR, "blog.png")
+PROFILE_IMAGE_PATH = os.path.join(BASE_DIR, "profile.png")
 
-async def upload_image(client: httpx.AsyncClient, token: str, file_path: str = None, url: str = None, collection: str = None, doc_id: str = None, field: str = None) -> Optional[str]:
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def upload_image(
+    client: httpx.AsyncClient,
+    token: str,
+    file_path: str = None,
+    url: str = None,
+    collection: str = None,
+    doc_id: str = None,
+    field: str = None,
+) -> Optional[str]:
     f = None
     try:
-        files = None
         data = {}
-        if collection: data["collection_name"] = collection
-        if doc_id: data["document_id"] = doc_id
-        if field: data["field_name"] = field
-        
+        if collection:
+            data["collection_name"] = collection
+        if doc_id:
+            data["document_id"] = doc_id
+        if field:
+            data["field_name"] = field
+
+        headers = {"Authorization": f"Bearer {token}"}
+
         if file_path:
-            filename = os.path.basename(file_path)
             f = open(file_path, "rb")
-            files = {"file": (filename, f, "image/jpeg")}
-            method_desc = f"file {filename}"
+            files = {"file": (os.path.basename(file_path), f, "image/jpeg")}
+            resp = await client.post(f"{BASE_URL}/api/media/upload", files=files, data=data, headers=headers)
         elif url:
             data["url"] = url
-            method_desc = f"url {url}"
+            resp = await client.post(f"{BASE_URL}/api/media/upload", data=data, headers=headers)
         else:
             return None
-            
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = await client.post(f"{BASE_URL}/api/media/upload", files=files, data=data, headers=headers)
-        
+
         if resp.status_code == 200:
-            resp_data = resp.json()
-            attachment_id = resp_data.get("id")
-            print(f"Upload initiated for {method_desc}. Attachment ID: {attachment_id}")
-            return attachment_id
+            att_id = resp.json().get("id")
+            print(f"  ✔ Uploaded → attachment id: {att_id}")
+            return att_id
         else:
-            print(f"Failed to upload {method_desc}: {resp.status_code} - {resp.text}")
+            print(f"  ✘ Upload failed {resp.status_code}: {resp.text[:120]}")
     except Exception as e:
-        print(f"Error uploading: {e}")
+        print(f"  ✘ Upload error: {e}")
     finally:
-        if f: f.close()
+        if f:
+            f.close()
     return None
 
-async def update_user_profile(client: httpx.AsyncClient, token: str, user_id: str, attachment_id: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        # Since field is Link[Attachment], we pass the attachment ID
-        resp = await client.patch(f"{BASE_URL}/api/users/{user_id}", json={"profile_image": attachment_id}, headers=headers)
-        if resp.status_code == 200:
-            print(f"User {user_id} profile updated with attachment link.")
-        else:
-            print(f"Failed to update user profile: {resp.text}")
-    except Exception as e:
-        print(f"Error updating user: {e}")
 
-async def register_user(client: httpx.AsyncClient, i: int) -> dict:
+async def register_and_login(client: httpx.AsyncClient, i: int) -> Optional[dict]:
     ts = int(time.time())
-    user_data = {
-        "email": f"user{i}_{ts}@test.com",
-        "password": "password123",
-        "full_name": f"Test User {i}",
-        "headline": f"Top Author Level {i}",
-        "bio": f"I am a passionate writer testing this out."
-    }
-    try:
-        print(f"Registering User {i}...")
-        resp = await client.post(f"{BASE_URL}/api/auth/register", json=user_data)
-        if resp.status_code == 201:
-            login_resp = await client.post(f"{BASE_URL}/api/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
-            return login_resp.json()
-        elif resp.status_code == 400:
-             login_resp = await client.post(f"{BASE_URL}/api/auth/login", json={"email": user_data["email"], "password": user_data["password"]})
-             if login_resp.status_code == 200:
-                 return login_resp.json()
-        print(f"Failed to register user {i}: {resp.text}")
-    except Exception as e:
-        print(f"Error user {i}: {e}")
+    email = f"user{i}_{ts}@test.com"
+    payload = {"email": email, "password": "password123", "full_name": f"Test User {i}"}
+
+    print(f"\n[User {i}] Registering {email}...")
+    resp = await client.post(f"{BASE_URL}/api/auth/register", json=payload)
+
+    if resp.status_code not in (201, 400):
+        print(f"  ✘ Register failed: {resp.text}")
+        return None
+
+    login = await client.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": "password123"})
+    if login.status_code != 200:
+        print(f"  ✘ Login failed: {login.text}")
+        return None
+
+    auth = login.json()
+    print(f"  ✔ Logged in. Token: {auth['access_token'][:20]}...")
+    return auth
+
+
+async def get_me(client: httpx.AsyncClient, token: str) -> Optional[dict]:
+    resp = await client.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code == 200:
+        return resp.json()
+    print(f"  ✘ /me failed: {resp.text}")
     return None
 
-async def create_category(client: httpx.AsyncClient, token: str, i: int) -> str:
-    headers = {"Authorization": f"Bearer {token}"}
+
+async def create_category(client: httpx.AsyncClient, token: str, idx: int) -> Optional[str]:
     ts = int(time.time() * 1000)
-    # 1. Create Parent Category
-    parent_data = {"name": f"Programming {i}", "slug": f"programming-cat-{i}-{ts}"}
-    try:
-        resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=parent_data, headers=headers)
-        if resp.status_code == 201:
-             data = resp.json()
-             parent_id = data.get("id") or data.get("_id")
-             # 2. Create Sub Category
-             sub_data = {"name": f"Python {i}", "slug": f"python-cat-{ts+1}"}
-             sub_resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=sub_data, headers=headers)
-             if sub_resp.status_code == 201:
-                 sub_data_resp = sub_resp.json()
-                 cat_id = sub_data_resp.get("id") or sub_data_resp.get("_id")
-                 print(f"Sub-category created: {cat_id}")
-                 return cat_id
-             return parent_id
-        else:
-            print(f"Failed to create category: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"Error creating category: {e}")
-    return None 
-
-async def create_blogs(client: httpx.AsyncClient, token: str, user_id: str, num_blogs: int, category_id: str, thumbnail_att_id: str, section_att_id: str, user_name: str) -> List[str]:
     headers = {"Authorization": f"Bearer {token}"}
-    
-    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    data = {"name": f"Category {idx} ({ts})", "slug": f"cat-{idx}-{ts}"}
 
-    async def _create_one(idx):
+    resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=data, headers=headers)
+    if resp.status_code == 201:
+        cat = resp.json()
+        cat_id = cat.get("id") or cat.get("_id")
+        print(f"  ✔ Category created: {data['name']} → {cat_id}")
+        return cat_id
+    print(f"  ✘ Category failed {resp.status_code}: {resp.text[:120]}")
+    return None
+
+
+async def create_blogs(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    user_name: str,
+    cat_id: Optional[str],
+    thumb_id: Optional[str],
+    section_img_id: Optional[str],
+) -> List[str]:
+    headers = {"Authorization": f"Bearer {token}"}
+    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    topics = ["Python Patterns", "FastAPI Deep Dive", "AsyncIO Guide", "MongoDB with Beanie", "REST API Design"]
+
+    async def _one(idx: int) -> Optional[str]:
         async with sem:
-            now_iso = datetime.now(timezone.utc).isoformat()
-            
-            topics = ["Python Pattern", "FastAPI Guide", "AsyncIO Mastery", "Data Science Base", "Machine Learning 101"]
             topic = random.choice(topics)
-            
-            blog_data = {
-                "title": f"Master {topic} {idx}: Complete Guide - {user_name}",
-                "subtitle": "From beginner to advanced - learn fast with real-world examples",
-                "slug": f"blog-post-{user_id}-{idx}-{int(time.time())}-{random.randint(1000, 9999)}",
-                "excerpt": f"Discover the power of {topic}. Learn syntax, best practices, and advanced concepts to build robust applications.",
-                "introduction": "Programming has become one of the most popular skills in the world, powering everything from web applications to data science. This comprehensive guide will take you through advanced concepts.",
+            ts = int(time.time() * 1000) + idx
+            slug = f"blog-{user_id[:8]}-{idx}-{ts}"
+            body = {
+                "title": f"Mastering {topic} — Part {idx + 1} by {user_name}",
+                "subtitle": "A practical, hands-on guide with real-world examples",
+                "slug": slug,
+                "excerpt": f"Deep-dive into {topic}. Learn best practices and build production-ready code.",
+                "introduction": "This guide covers everything from first principles to advanced patterns.",
                 "sections": [
-                    {
-                        "title": "Why Learn This in 2025?",
-                        "type": "text",
-                        "content": "Its simplicity and versatility make it an ideal language for beginners and professionals alike. Clean syntax, extensive libraries, and strong community support."
-                    },
-                    {
-                        "title": "Essential Concepts",
-                        "type": "bullets",
-                        "items": [
-                            "Variables, data types, and operators",
-                            "Control flow (if/else, loops)",
-                            "Functions and lambda expressions",
-                            "Object-oriented programming (OOP)"
-                        ]
-                    },
-                    {
-                        "title": "Example: Building a REST API",
-                        "type": "code",
-                        "language": "python",
-                        "content": "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get('/')\nasync def root():\n    return {'message': 'Welcome to API'}"
-                    },
-                    {
-                        "title": "Architecture Diagram",
-                        "type": "image",
-                        "attachment": section_att_id,  # Attachment ID (string)
-                        "caption": "Architecture overview diagram"
-                    },
-                    {
-                        "title": "Important Note",
-                        "type": "note",
-                        "content": "Practice is key to mastering programming. Write code daily, work on projects, and contribute to open-source."
-                    }
+                    {"type": "text", "title": "Why This Matters", "content": f"Understanding {topic} is essential for modern backend development."},
+                    {"type": "bullets", "title": "Key Concepts", "items": ["Type hints", "Async/await", "Dependency injection", "Pydantic models"]},
+                    {"type": "code", "title": "Quick Example", "language": "python",
+                     "content": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get('/')\nasync def root():\n    return {'message': 'Hello World'}"},
+                    {"type": "image", "title": "Architecture", "attachment": section_img_id, "caption": "System overview"},
+                    {"type": "note", "title": "Pro Tip", "content": "Always write tests alongside your code."},
                 ],
-                "conclusion": "It is a powerful and versatile language that opens doors to numerous career opportunities. Start coding today!",
-                "author": str(user_id),
-                "category": category_id if category_id else None,
-                "thumbnail": thumbnail_att_id,  # Attachment ID for thumbnail
+                "conclusion": "Apply these concepts in your next project and level up your engineering skills.",
+                "author": user_id,
+                "category": cat_id,
+                "thumbnail": thumb_id,
                 "isPublished": True,
-                "publishedDate": now_iso,
-                "embedding": [random.uniform(0, 1) for _ in range(10)]
+                "publishedDate": datetime.now(timezone.utc).isoformat(),
             }
-            try:
-                resp = await client.post(f"{BASE_URL}/api/blogs/", json=blog_data, headers=headers)
-                if resp.status_code == 201:
-                    data = resp.json()
-                    return data.get("_id") or data.get("id")
-                else:
-                    print(f"Failed to create blog {idx}: {resp.status_code} - {resp.text[:200]}")
-                return None
-            except Exception as e:
-                print(f"Error creating blog {idx}: {e}")
-                return None
+            resp = await client.post(f"{BASE_URL}/api/blogs/", json=body, headers=headers)
+            if resp.status_code == 201:
+                d = resp.json()
+                bid = d.get("id") or d.get("_id")
+                print(f"  ✔ Blog created: {body['title'][:60]}… → {bid}")
+                return bid
+            print(f"  ✘ Blog {idx} failed {resp.status_code}: {resp.text[:120]}")
+            return None
 
-    print(f"User {user_name} starting {num_blogs} blogs creation...")
-    tasks = [_create_one(i) for i in range(num_blogs)]
-    results = await asyncio.gather(*tasks)
-    created_ids = [r for r in results if r]
-    return created_ids
+    results = await asyncio.gather(*[_one(i) for i in range(BLOGS_PER_USER)])
+    return [r for r in results if r]
 
 
-async def create_playlists(client: httpx.AsyncClient, token: str, user_id: str, num_playlists: int, blog_ids: List[str], image_url: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
+async def test_blog_list(client: httpx.AsyncClient):
+    """Verify list endpoint and basic pagination."""
+    resp = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=5")
+    assert resp.status_code == 200, f"Blog list failed: {resp.text}"
+    data = resp.json()
+    assert "results" in data, "Missing 'results' key in paginated response"
+    assert "total" in data, "Missing 'total' key in paginated response"
+    print(f"\n[Test] Blog list OK — total: {data['total']}, returned: {len(data['results'])}")
 
-    async def _create_one(idx):
-        async with sem:
-            playlist_blogs = random.sample(blog_ids, min(len(blog_ids), 3))
-            
-            playlist_data = {
-                "name": f"Playlist {idx} by User {user_id}",
-                "slug": f"playlist-{user_id}-{idx}-{random.randint(1000, 9999)}",
-                "description": "My awesome playlist of blogs.",
-                "thumbnail": image_url,
-                "blogs": playlist_blogs,
-                "owner": str(user_id)
-            }
-            try:
-                resp = await client.post(f"{BASE_URL}/api/playlists/", json=playlist_data, headers=headers)
-                if resp.status_code == 201:
-                    data = resp.json()
-                    return data.get("_id") or data.get("id")
-                return None
-            except Exception as e:
-                return None
 
-    print(f"User {user_id} starting {num_playlists} playlists creation...")
-    tasks = [_create_one(i) for i in range(num_playlists)]
-    results = await asyncio.gather(*tasks)
-    created_ids = [r for r in results if r]
-    return created_ids
+async def test_blog_detail(client: httpx.AsyncClient, slug: str):
+    """Verify detail endpoint returns correct fields."""
+    resp = await client.get(f"{BASE_URL}/api/blogs/{slug}")
+    assert resp.status_code == 200, f"Blog detail failed for slug={slug}: {resp.text}"
+    data = resp.json()
+    for key in ["id", "title", "slug", "author", "sections"]:
+        assert key in data, f"Missing key '{key}' in blog detail"
+    print(f"[Test] Blog detail OK — slug: {data['slug']}, sections: {len(data.get('sections', []))}")
 
-async def user_worker(i: int):
+
+async def test_category_list(client: httpx.AsyncClient):
+    resp = await client.get(f"{BASE_URL}/api/blogs/categories/?page=1&page_size=5")
+    assert resp.status_code == 200, f"Category list failed: {resp.text}"
+    data = resp.json()
+    print(f"[Test] Category list OK — total: {data.get('total')}")
+
+
+async def user_worker(i: int) -> List[str]:
+    """One full user flow: register → upload → create category → create blogs."""
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # 1. Auth & Register
-        auth_data = await register_user(client, i)
-        if not auth_data:
-            return
-        
-        token = auth_data["access_token"]
-        user_name = f"Test User {i}"
-        
-        # Get User ID
-        headers = {"Authorization": f"Bearer {token}"}
-        me_resp = await client.get(f"{BASE_URL}/api/auth/me", headers=headers)
-        if me_resp.status_code != 200:
-            print(f"Failed to get me: {me_resp.text}")
-            return
-        me_data = me_resp.json()
-        real_user_id = me_data.get("id") or me_data.get("_id")
-        
-        # 2. Upload Profile Image
-        print(f"User {i} uploading profile image...")
-        prof_att_id = await upload_image(client, token, PROFILE_IMAGE_PATH, collection="users", doc_id=real_user_id, field="profile_image")
-        if prof_att_id:
-            await update_user_profile(client, token, real_user_id, prof_att_id)
-            
-        # 3. Upload Blog Image
-        print(f"User {i} uploading blog background image...")
-        image_att_id = await upload_image(client, token, IMAGE_PATH, collection="blogs", field="thumbnail")
-        if not image_att_id:
-            print(f"User {i} missing blog image attachment id. Proceeding anyway but image might fail.")
-            
-        # 4. Upload Playlist Image
-        print(f"User {i} uploading playlist image...")
-        playlist_att_id = await upload_image(client, token, file_path=PLAYLIST_IMAGE_PATH, collection="playlists", field="thumbnail")
-        
-        # 4.5. Upload separate image for blog content sections
-        print(f"User {i} uploading section image for blog content...")
-        random_url = f"https://picsum.photos/seed/{random.randint(1, 100000)}/800/600"
-        url_att_id = await upload_image(client, token, url=random_url, collection="blogs", field="content")
-        
-        # 5. Content Creation
+        auth = await register_and_login(client, i)
+        if not auth:
+            return []
+
+        token = auth["access_token"]
+        me = await get_me(client, token)
+        if not me:
+            return []
+
+        uid = me.get("id") or me.get("_id")
+        uname = me.get("full_name", f"User {i}")
+
+        # Upload profile image
+        prof_id = await upload_image(client, token, PROFILE_IMAGE_PATH, collection="users", doc_id=uid, field="profile_image")
+
+        # Upload blog thumbnail
+        thumb_id = await upload_image(client, token, IMAGE_PATH, collection="blogs", field="thumbnail")
+
+        # Upload section image (via picsum URL)
+        section_url = f"https://picsum.photos/seed/{random.randint(1, 99999)}/800/600"
+        section_img_id = await upload_image(client, token, url=section_url, collection="blogs", field="content")
+
+        # Create category + blogs
         cat_id = await create_category(client, token, i)
-        # thumbnail_att_id = main blog thumbnail, section_att_id = image section attachment
-        blog_ids = await create_blogs(client, token, real_user_id, TOTAL_BLOGS_PER_USER, cat_id, image_att_id, url_att_id, user_name)
-        if blog_ids:
-             await create_playlists(client, token, real_user_id, TOTAL_PLAYLISTS_PER_USER, blog_ids, playlist_att_id)
+        slugs_raw = await create_blogs(client, token, uid, uname, cat_id, thumb_id, section_img_id)
+        return slugs_raw
 
-async def create_faqs():
-    faqs = [
-        {"question": "How do I create a blog?", "answer": "Simply sign up and click the 'Write' button in the dashboard. You can use our AI assistant to help you draft your thoughts!"},
-        {"question": "Is BlogerMenia free to use?", "answer": "Yes, BlogerMenia is completely free for all creators and readers. We believe in democratizing knowledge sharing."},
-        {"question": "Can I edit my blogs after publishing?", "answer": "Absolutely! You can edit, update, or delete your blogs anytime from your profile dashboard."},
-        {"question": "How do I make my playlists popular?", "answer": "Add high-quality, relevant blogs to your playlists and share them on social media to reach more readers."},
-        {"question": "What are featured blogs?", "answer": "Featured blogs are high-quality posts hand-picked by our editors for their exceptional content and relevance."},
-        {"question": "How does the AI assistant work?", "answer": "Our AI uses advanced natural language processing to help you generate outlines, suggest titles, and even draft entire sections based on your ideas."},
-        {"question": "Can I follow other creators?", "answer": "Yes! You can visit any creator's profile to see all their published blogs and playlists."},
-        {"question": "Is my data secure on BlogerMenia?", "answer": "We take data privacy and security very seriously. Your personal information is encrypted and never shared with third parties."}
-    ]
-    async with httpx.AsyncClient() as client:
-        for faq in faqs:
-            resp = await client.post(f"{BASE_URL}/api/faqs/", json=faq)
-            if resp.status_code != 201:
-                print(f"Failed to create FAQ: {resp.text}")
-    print(f"{len(faqs)} FAQs created.")
-
-async def create_testimonials():
-    testimonials = [
-        {"author": "Sarah Jenkins", "content": "BlogerMenia has completely transformed how I share my thoughts. The platform is intuitive and the community is supportive.", "designation": "Content Creator"},
-        {"author": "David Miller", "content": "The best blogging platform I've used. The editor is powerful yet simple, and managing my posts is a breeze.", "designation": "Tech Blogger"},
-        {"author": "Emily Chen", "content": "I love the clean design and how easy it is to connect with readers. Highly recommended for anyone starting a blog.", "designation": "Travel Writer"},
-        {"author": "Michael Ross", "content": "The playlist feature is a game changer for organizing my tutorial series. My readers love the structured learning paths!", "designation": "Software Engineer"},
-        {"author": "James Wilson", "content": "The AI writing assistant is incredibly helpful. it helps me overcome writer's block and get my ideas down faster than ever.", "designation": "Freelance Writer"},
-        {"author": "Elena Rodriguez", "content": "I've tried many platforms, but BlogerMenia feels like home. The interface is beautiful and everything just works.", "designation": "Lifestyle Blogger"}
-    ]
-    async with httpx.AsyncClient() as client:
-        for test in testimonials:
-            resp = await client.post(f"{BASE_URL}/api/testimonials/", json=test)
-            if resp.status_code != 201:
-                print(f"Failed to create testimonial: {resp.text}")
-    print(f"{len(testimonials)} Testimonials created.")
-
-async def create_contact_messages():
-    messages = [
-        {"name": "Alice Smith", "email": "alice@example.com", "subject": "General Inquiry", "message": "I'm interested in learning more about your platform's features. Do you have a roadmap for upcoming updates?"},
-        {"name": "Bob Johnson", "email": "bob@testmail.com", "subject": "Feature Request", "message": "I would love to see a dark mode option for the blog editor. It would make writing much easier at night."},
-        {"name": "Charlie Brown", "email": "charlie@company.org", "subject": "Partnership Opportunity", "message": "I represent a group of writers who are interested in a collective partnership with BlogerMenia. Who can we talk to about this?"},
-        {"name": "Diana Prince", "email": "diana@justice.com", "subject": "Bug Report", "message": "I noticed a small layout issue on mobile devices when viewing certain playlists. Just wanted to let you know!"}
-    ]
-    async with httpx.AsyncClient() as client:
-        for msg in messages:
-            # Note: The endpoint in content.py is /content/contact/
-            resp = await client.post(f"{BASE_URL}/api/content/contact/", json=msg)
-            if resp.status_code != 201:
-                print(f"Failed to create contact message: {resp.text}")
-    print(f"{len(messages)} Contact Messages created.")
 
 async def clear_database():
-    try:
-        from backbone.core.settings import settings
-        client = AsyncIOMotorClient(settings.MONGODB_URL)
-        await client.drop_database(settings.DATABASE_NAME)
-        print(f"Database '{settings.DATABASE_NAME}' cleared successfully.")
-    except Exception as e:
-        print(f"Error clearing database: {e}")
+    from backbone.core.settings import settings
+    client = AsyncIOMotorClient(settings.MONGODB_URL)
+    await client.drop_database(settings.DATABASE_NAME)
+    print(f"[DB] Dropped database '{settings.DATABASE_NAME}'")
+
 
 async def main():
-    print(f"Starting Content Generation:")
-    missing_files = []
-    for fp in [IMAGE_PATH, PROFILE_IMAGE_PATH, PLAYLIST_IMAGE_PATH]:
-        if not os.path.exists(fp):
-            missing_files.append(fp)
-    if missing_files:
-        print(f"Error: following files not found: {missing_files}")
+    print("=" * 60)
+    print("  Backbone FastAPI — Blog Seed & Test Runner")
+    print("=" * 60)
+
+    # Check required files
+    missing = [p for p in [IMAGE_PATH, PROFILE_IMAGE_PATH] if not os.path.exists(p)]
+    if missing:
+        print(f"[ERROR] Missing image files: {missing}")
         return
 
     await clear_database()
-    tasks = [user_worker(i) for i in range(NUM_USERS)]
-    
-    start_time = time.time()
-    await asyncio.gather(*tasks)
-    end_time = time.time()
 
-    await create_faqs()
-    await create_testimonials()
-    await create_contact_messages()
-    
-    print(f"\n--- Total Generation Time: {end_time - start_time:.2f}s ---")
+    # Run all user workers concurrently
+    all_slugs: List[str] = []
+    results = await asyncio.gather(*[user_worker(i) for i in range(NUM_USERS)])
+    for slugs in results:
+        all_slugs.extend(slugs)
+
+    print(f"\n[Seed] Done. Created {len(all_slugs)} blogs across {NUM_USERS} users.")
+
+    # --- API Tests ---
+    print("\n--- Running API Tests ---")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await test_blog_list(client)
+        await test_category_list(client)
+        if all_slugs:
+            # Test detail using one of the created blog slugs
+            slug = all_slugs[0]
+            resp = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=1")
+            if resp.status_code == 200:
+                results_list = resp.json().get("results", [])
+                if results_list:
+                    real_slug = results_list[0].get("slug") or results_list[0].get("id")
+                    if real_slug:
+                        await test_blog_detail(client, real_slug)
+
+    print("\n✅ All tests passed!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
