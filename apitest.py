@@ -9,9 +9,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 BASE_URL = "http://127.0.0.1:8000"
 
-NUM_USERS = 5
-BLOGS_PER_USER = 3
-CONCURRENT_REQUESTS = 2
+NUM_USERS = 50
+BLOGS_PER_USER = 50
+CONCURRENT_REQUESTS = 3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGE_PATH = os.path.join(BASE_DIR, "blog.png")

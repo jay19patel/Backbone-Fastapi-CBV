@@ -23,29 +23,33 @@
 
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
         <div class="flex items-center justify-between mb-4">
-            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">Database Size</h3>
+            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">Storage Used</h3>
             <span class="bg-purple-50 text-purple-600 p-2 rounded-lg"><i class="fas fa-database"></i></span>
         </div>
         <p class="text-3xl font-bold text-slate-800">{{ (db_stats.total_size_mb * 1048576) | filesize }}</p>
+        <p class="text-xs text-slate-400 mt-2">Physical footprint on disk</p>
     </div>
 
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
         <div class="flex items-center justify-between mb-4">
-            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">System Status</h3>
-            <span class="bg-green-50 text-green-600 p-2 rounded-lg"><i class="fas fa-check-circle"></i></span>
+            <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">Logical Data</h3>
+            <span class="bg-orange-50 text-orange-600 p-2 rounded-lg"><i class="fas fa-hdd"></i></span>
         </div>
-        <p class="text-3xl font-bold text-slate-800">Online</p>
+        <p class="text-3xl font-bold text-slate-800">{{ (db_stats.data_size_mb * 1048576) | filesize }}</p>
+        <p class="text-xs text-slate-400 mt-2">Raw uncompressed data</p>
     </div>
 </div>
 
 <h2 class="text-xl font-bold text-slate-800 mb-6">Core System</h2>
 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
-    <table class="w-full text-left">
+    <table class="w-full text-left font-sans">
         <thead class="bg-slate-50 border-b border-slate-100">
             <tr>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Model Name</th>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Documents</th>
-                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Size</th>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Data Size (Raw)</th>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Disk Size (Comp)
+                </th>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Actions
                 </th>
             </tr>
@@ -58,8 +62,7 @@
                     <div class="flex items-center">
                         <div
                             class="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-500 flex items-center justify-center mr-3 font-bold text-xs">
-                            {{ model.name[0] }}
-                        </div>
+                            {{ model.name[0] }}</div>
                         <span class="font-medium text-slate-700">{{ model.name }}</span>
                     </div>
                 </td>
@@ -69,7 +72,11 @@
                         {{ model_stats[model.name].count if model_stats[model.name] else 0 }} items
                     </span>
                 </td>
-                <td class="px-6 py-4 text-sm text-slate-500">
+                <td class="px-6 py-4 text-sm text-slate-600">
+                    {{ ((model_stats[model.name].data_size_mb if model_stats[model.name] else 0) * 1048576) | filesize
+                    }}
+                </td>
+                <td class="px-6 py-4 text-sm text-slate-400 font-medium">
                     {{ ((model_stats[model.name].size_mb if model_stats[model.name] else 0) * 1048576) | filesize }}
                 </td>
                 <td class="px-6 py-4 text-right">
@@ -87,12 +94,14 @@
 
 <h2 class="text-xl font-bold text-slate-800 mb-6">Application Models</h2>
 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-    <table class="w-full text-left">
+    <table class="w-full text-left font-sans">
         <thead class="bg-slate-50 border-b border-slate-100">
             <tr>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Model Name</th>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Documents</th>
-                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Size</th>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Data Size (Raw)</th>
+                <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Disk Size (Comp)
+                </th>
                 <th class="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Actions
                 </th>
             </tr>
@@ -105,8 +114,7 @@
                     <div class="flex items-center">
                         <div
                             class="h-8 w-8 rounded-lg bg-indigo-100 text-indigo-500 flex items-center justify-center mr-3 font-bold text-xs">
-                            {{ model.name[0] }}
-                        </div>
+                            {{ model.name[0] }}</div>
                         <span class="font-medium text-slate-700">{{ model.name }}</span>
                     </div>
                 </td>
@@ -116,7 +124,11 @@
                         {{ model_stats[model.name].count if model_stats[model.name] else 0 }} items
                     </span>
                 </td>
-                <td class="px-6 py-4 text-sm text-slate-500">
+                <td class="px-6 py-4 text-sm text-slate-600">
+                    {{ ((model_stats[model.name].data_size_mb if model_stats[model.name] else 0) * 1048576) | filesize
+                    }}
+                </td>
+                <td class="px-6 py-4 text-sm text-slate-400 font-medium">
                     {{ ((model_stats[model.name].size_mb if model_stats[model.name] else 0) * 1048576) | filesize }}
                 </td>
                 <td class="px-6 py-4 text-right">

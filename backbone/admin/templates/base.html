@@ -20,6 +20,38 @@
             background: #888;
             border-radius: 10px;
         }
+
+        /* Searchable Select Styles */
+        .search-results-dropdown {
+            position: absolute;
+            z-index: 1000;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            margin-top: 0.5rem;
+            width: 100%;
+            display: none;
+            overflow: hidden;
+        }
+
+        .search-result-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.875rem;
+        }
+
+        .search-result-item:hover {
+            background-color: #f8fafc;
+            color: #4f46e5;
+        }
+
+        .search-result-item.selected {
+            background-color: #eef2ff;
+            color: #4f46e5;
+            font-weight: 600;
+        }
     </style>
 </head>
 
@@ -227,6 +259,97 @@
                 document.getElementById('settingsDropdown').classList.add('hidden');
             }
         });
+
+        // ── Searchable Select Logic ──────────────────────────────────────────
+        window.initSearchableSelect = function (containerId, modelName, fieldName, initialValue = '', initialLabel = '') {
+            const container = document.getElementById(containerId);
+            const input = container.querySelector('input[type="text"]');
+            const hidden = container.querySelector('input[type="hidden"]');
+            const dropdown = container.querySelector('.search-results-dropdown');
+            const resultsList = dropdown.querySelector('.results-list');
+            const prevBtn = dropdown.querySelector('.prev-btn');
+            const nextBtn = dropdown.querySelector('.next-btn');
+            const pageInfo = dropdown.querySelector('.page-info');
+
+            let currentPage = 1;
+            let totalPages = 1;
+            let searchTerm = '';
+            let debounceTimer;
+
+            function updateDropdown() {
+                const url = `/admin/api/search/${modelName}?q=${encodeURIComponent(searchTerm)}&page=${currentPage}`;
+                resultsList.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs"><i class="fas fa-spinner fa-spin mr-2"></i>Searching...</div>';
+                dropdown.style.display = 'block';
+
+                fetch(url)
+                    .then(res => res.json())
+                    .then(data => {
+                        resultsList.innerHTML = '';
+                        if (data.results.length === 0) {
+                            resultsList.innerHTML = '<div class="p-4 text-center text-slate-400 text-xs">No results found</div>';
+                        } else {
+                            data.results.forEach(item => {
+                                const div = document.createElement('div');
+                                div.className = 'search-result-item ' + (hidden.value === item.id ? 'selected' : '');
+                                div.innerHTML = `<i class="fas fa-link mr-2 opacity-50"></i> ${item.text}`;
+                                div.onclick = () => selectItem(item.id, item.text);
+                                resultsList.appendChild(div);
+                            });
+                        }
+
+                        currentPage = data.page;
+                        totalPages = data.total_pages;
+                        pageInfo.innerText = `Page ${currentPage} of ${totalPages}`;
+                        prevBtn.disabled = currentPage <= 1;
+                        nextBtn.disabled = currentPage >= totalPages;
+                    })
+                    .catch(err => {
+                        resultsList.innerHTML = '<div class="p-4 text-center text-red-400 text-xs">Error loading data</div>';
+                    });
+            }
+
+            function selectItem(id, label) {
+                hidden.value = id;
+                input.value = label;
+                dropdown.style.display = 'none';
+            }
+
+            input.addEventListener('focus', () => {
+                if (!dropdown.style.display || dropdown.style.display === 'none') {
+                    updateDropdown();
+                }
+            });
+
+            input.addEventListener('input', (e) => {
+                searchTerm = e.target.value;
+                currentPage = 1;
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(updateDropdown, 300);
+            });
+
+            prevBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (currentPage > 1) {
+                    currentPage--;
+                    updateDropdown();
+                }
+            };
+
+            nextBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    updateDropdown();
+                }
+            };
+
+            // Close on outside click
+            document.addEventListener('click', (e) => {
+                if (!container.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        };
 
         // ── Sidebar search ─────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {

@@ -87,9 +87,26 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
     db_stats = {
         "total_models": len(models),
         "total_documents": 0,
-        "total_size_mb": 0.0
+        "total_size_mb": 0.0,
+        "data_size_mb": 0.0,
+        "storage_size_mb": 0.0,
+        "index_size_mb": 0.0
     }
     
+    # Get Global DB Stats (Official MongoDB metrics)
+    try:
+        if models:
+            db = models[0]["model"].get_settings().pymongo_db
+            db_stats_raw = await db.command("dbStats")
+            db_stats["data_size_mb"] = round(db_stats_raw.get("dataSize", 0) / (1024 * 1024), 2)
+            db_stats["storage_size_mb"] = round(db_stats_raw.get("storageSize", 0) / (1024 * 1024), 2)
+            db_stats["index_size_mb"] = round(db_stats_raw.get("indexSize", 0) / (1024 * 1024), 2)
+            
+            total_db_bytes = db_stats_raw.get("totalSize") or (db_stats_raw.get("storageSize", 0) + db_stats_raw.get("indexSize", 0)) or 0
+            db_stats["total_size_mb"] = round(total_db_bytes / (1024 * 1024), 2)
+    except Exception:
+        pass
+
     model_stats = {}
     for m in models:
         try:
@@ -101,27 +118,35 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
             except Exception:
                 count = 0
             
-            # Safely get Size
+            # Safely get detailed sizes
             size_mb = 0.0
+            data_size_mb = 0.0
             if count > 0:
                 try:
                     db = model.get_settings().pymongo_db
                     stats = await db.command("collStats", model.get_collection_name())
-                    size_bytes = stats.get("totalSize") or stats.get("storageSize") or stats.get("size") or 0
-                    size_mb = size_bytes / (1024 * 1024)
+                    
+                    # Logical/Raw Data Size
+                    raw_bytes = stats.get("size") or 0
+                    data_size_mb = raw_bytes / (1024 * 1024)
+                    
+                    # Total Footprint (Storage + Indexes)
+                    total_bytes = stats.get("totalSize") or (stats.get("storageSize", 0) + stats.get("totalIndexSize", 0)) or 0
+                    size_mb = total_bytes / (1024 * 1024)
                 except Exception:
-                    pass # E.g. Atlas Serverless permission denied
+                    pass
             
-            model_stats[m["name"]] = {"count": count, "size_mb": round(size_mb, 2)}
+            model_stats[m["name"]] = {
+                "count": count, 
+                "size_mb": round(size_mb, 4),      # Real Disk size
+                "data_size_mb": round(data_size_mb, 4) # Uncompressed Data size
+            }
             db_stats["total_documents"] += count
-            db_stats["total_size_mb"] += size_mb
         except Exception as e:
             import traceback
             traceback.print_exc()
-            model_stats[m["name"]] = {"count": 0, "size_mb": 0.0}
+            model_stats[m["name"]] = {"count": 0, "size_mb": 0.0, "data_size_mb": 0.0}
             
-    db_stats["total_size_mb"] = round(db_stats["total_size_mb"], 2)
-
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "models": models,
@@ -486,6 +511,8 @@ async def model_create_page(
     
     link_options = {}
     field_links = {}
+    field_choices = {}
+    
     if populate_fields:
         for fname, fconfig in populate_fields.items():
             if isinstance(fconfig, dict) and "collection" in fconfig:
@@ -495,6 +522,22 @@ async def model_create_page(
                         target_model_name = m_config["name"]
                         target_model = m_config["model"]
                         field_links[fname] = target_model_name
+                        
+                        # Fetch choices (Top 100 for performance)
+                        try:
+                            # Use a simple find to get recent items
+                            items = await target_model.find_all().limit(20).to_list()
+                            choices = []
+                            for item in items:
+                                # Try to find a good label
+                                label = str(getattr(item, "name", getattr(item, "title", getattr(item, "slug", item.id))))
+                                choices.append({
+                                    "id": str(item.id),
+                                    "label": label
+                                })
+                            field_choices[fname] = choices
+                        except:
+                            pass
                         break
                         
     return templates.TemplateResponse("model_create.html", {
@@ -505,7 +548,8 @@ async def model_create_page(
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc),
-        "field_links": field_links
+        "field_links": field_links,
+        "field_choices": field_choices
     })
 
 @router.post("/{model_name}/create")
@@ -885,8 +929,9 @@ async def admin_api_search(
         
     return {
         "results": results,
-        "pagination": {
-            "more": (skip + limit) < total
-        }
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": math.ceil(total / limit)
     }
 
