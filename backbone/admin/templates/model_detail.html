@@ -138,8 +138,18 @@
                 <textarea name="{{ name }}" rows="4"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) if value is defined and value is not none else '' }}</textarea>
                 {% else %}
+                {% if name == 'size' and value %}
+                <div class="flex items-center gap-3">
+                    <span
+                        class="inline-flex items-center px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-bold font-mono">
+                        <i class="fas fa-hdd mr-2 text-indigo-400"></i>{{ value | filesize }}
+                    </span>
+                    <span class="text-xs text-slate-400 font-mono">({{ value }} bytes)</span>
+                </div>
+                {% else %}
                 <input type="text" name="{{ name }}" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                {% endif %}
                 {% endif %}
                 {% endif %}
 

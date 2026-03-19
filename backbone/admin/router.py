@@ -36,7 +36,22 @@ def nice_title(value: str) -> str:
     if not value: return ""
     return value.replace("_", " ").title()
 
+def filesize(value) -> str:
+    """Format raw bytes into human-readable size (B, KB, MB, GB)."""
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        return str(value) if value else "—"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(size) < 1024.0:
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
 templates.env.filters["nice_title"] = nice_title
+templates.env.filters["filesize"] = filesize
 
 # Helper to check if logged in via Cookie
 async def get_admin_user(request: Request) -> Optional[User]:

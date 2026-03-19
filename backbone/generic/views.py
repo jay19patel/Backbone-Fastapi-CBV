@@ -445,12 +445,25 @@ class GenericUpdate(BaseGenericView):
         super().__init__(*args, **kwargs)
         self._register_update_route()
 
+    def _get_update_allowed_fields(self) -> set:
+        """Return the set of field names allowed for update (from update_schema)."""
+        schema = self.update_schema
+        if hasattr(schema, 'model_fields'):
+            return set(schema.model_fields.keys())
+        return set()
+
     def _register_update_route(self):
         @self.router.patch("/{pk}", response_model=self.response_schema)
         async def update(request: Request, pk: str, data: self.update_schema, user: UserOut = Depends(self.perm_dep)):
-            # Force validation by creating a partial model if needed, but for now simple Dict
             item = await self._get_object_internal(pk, request, user, use_cache=False)
-            update_data = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else {k: v for k, v in data.items() if v is not None}
+            
+            # --- Security: allowlist to schema fields ONLY (prevents mass assignment) ---
+            allowed = self._get_update_allowed_fields()
+            raw = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else dict(data)
+            update_data = {k: v for k, v in raw.items() if k in allowed}
+            # Never allow these regardless of schema definition
+            for dangerous in ("is_superuser", "is_staff", "is_active", "hashed_password", "password"):
+                update_data.pop(dangerous, None)
             
             # Auto-convert string IDs to DBRefs for Link fields
             update_data = self._process_link_fields(update_data)
@@ -529,14 +542,14 @@ class GenericStats(BaseGenericView):
                     results[name] = count
                 elif stat_type == "sum":
                     field = config.get("field")
-                    # Use get_pymongo_collection (which is the Motor collection in this setup)
-                    # and handle the Motor 3.x cursor correctly (aggregate() is not awaitable)
                     collection = model.get_pymongo_collection()
                     pipeline = [
                         {"$match": filters},
                         {"$group": {"_id": None, "total": {"$sum": f"${field}"}}}
                     ]
-                    # Ensure we return 0 if total is None or result is empty
+                    # .aggregate() returns a Motor cursor — must call to_list() to materialise
+                    cursor = collection.aggregate(pipeline)
+                    agg_results = await cursor.to_list(length=1)
                     results[name] = (agg_results[0].get("total") or 0) if agg_results else 0
             return results
 

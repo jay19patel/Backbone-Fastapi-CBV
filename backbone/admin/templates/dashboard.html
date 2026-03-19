@@ -26,8 +26,7 @@
             <h3 class="text-slate-500 font-semibold text-sm uppercase tracking-wider">Database Size</h3>
             <span class="bg-purple-50 text-purple-600 p-2 rounded-lg"><i class="fas fa-database"></i></span>
         </div>
-        <p class="text-3xl font-bold text-slate-800">{{ db_stats.total_size_mb }} <span
-                class="text-sm text-slate-500 font-normal">MB</span></p>
+        <p class="text-3xl font-bold text-slate-800">{{ (db_stats.total_size_mb * 1048576) | filesize }}</p>
     </div>
 
     <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -71,7 +70,7 @@
                     </span>
                 </td>
                 <td class="px-6 py-4 text-sm text-slate-500">
-                    {{ model_stats[model.name].size_mb if model_stats[model.name] else 0 }} MB
+                    {{ ((model_stats[model.name].size_mb if model_stats[model.name] else 0) * 1048576) | filesize }}
                 </td>
                 <td class="px-6 py-4 text-right">
                     <a href="/admin/{{ model.name }}"
@@ -118,7 +117,7 @@
                     </span>
                 </td>
                 <td class="px-6 py-4 text-sm text-slate-500">
-                    {{ model_stats[model.name].size_mb if model_stats[model.name] else 0 }} MB
+                    {{ ((model_stats[model.name].size_mb if model_stats[model.name] else 0) * 1048576) | filesize }}
                 </td>
                 <td class="px-6 py-4 text-right">
                     <a href="/admin/{{ model.name }}"

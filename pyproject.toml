@@ -1,7 +1,7 @@
 [project]
-name = "backend"
+name = "backbone-fastapi"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backbone FastAPI — Class-based views, DRF-style permissions, auto-admin for MongoDB."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -23,3 +23,7 @@ dependencies = [
     "redis>=5.0.1",
     "uvicorn>=0.40.0",
 ]
+
+# ── Dev server commands ──────────────────────────────────────────────────────
+# New structure (recommended):  uv run uvicorn app.main:app --reload
+# Legacy (backward compat):     uv run uvicorn main:app --reload
