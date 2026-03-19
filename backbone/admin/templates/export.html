@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Export Data | Backbone Admin{% endblock %}
+{% block header %}Export Data{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <div class="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+        <!-- Header -->
+        <div class="p-8 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-blue-50">
+            <div class="flex items-center space-x-4">
+                <div
+                    class="h-14 w-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center text-2xl shadow-lg shadow-indigo-500/30">
+                    <i class="fas fa-file-export"></i>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-800">Export Database</h2>
+                    <p class="text-slate-500 text-sm mt-0.5">Select models and download as JSON</p>
+                </div>
+            </div>
+        </div>
+
+        <form action="/admin/export" method="POST" class="p-8">
+            <div class="mb-6 flex items-center justify-between">
+                <p class="text-sm font-semibold text-slate-600 uppercase tracking-wider">Select Models to Export</p>
+                <button type="button" onclick="toggleAll(this)"
+                    class="text-xs text-indigo-600 hover:text-indigo-800 font-bold">Select All</button>
+            </div>
+
+            <!-- Core Models -->
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Core</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                {% for model in models %}
+                {% if model.category == 'Core Models' %}
+                <label
+                    class="flex items-center space-x-3 p-4 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl cursor-pointer transition-all group">
+                    <input type="checkbox" name="models" value="{{ model.name }}"
+                        class="h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                    <span class="text-sm font-semibold text-slate-700 group-hover:text-indigo-700">{{ model.name
+                        }}</span>
+                </label>
+                {% endif %}
+                {% endfor %}
+            </div>
+
+            <!-- App Models -->
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Application</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
+                {% for model in models %}
+                {% if model.category != 'Core Models' %}
+                <label
+                    class="flex items-center space-x-3 p-4 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl cursor-pointer transition-all group">
+                    <input type="checkbox" name="models" value="{{ model.name }}"
+                        class="h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500">
+                    <span class="text-sm font-semibold text-slate-700 group-hover:text-indigo-700">{{ model.name
+                        }}</span>
+                </label>
+                {% endif %}
+                {% endfor %}
+            </div>
+
+            <div class="flex items-center justify-between pt-6 border-t border-slate-100">
+                <a href="/admin" class="text-sm text-slate-500 hover:text-slate-700 font-medium">
+                    <i class="fas fa-arrow-left mr-1"></i> Back to Dashboard
+                </a>
+                <button type="submit"
+                    class="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold shadow-lg shadow-indigo-500/30 transition-all inline-flex items-center space-x-2">
+                    <i class="fas fa-download"></i>
+                    <span>Download JSON</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleAll(btn) {
+        const checkboxes = document.querySelectorAll('input[name="models"]');
+        const allChecked = [...checkboxes].every(c => c.checked);
+        checkboxes.forEach(c => c.checked = !allChecked);
+        btn.textContent = allChecked ? 'Select All' : 'Deselect All';
+    }
+</script>
+{% endblock %}

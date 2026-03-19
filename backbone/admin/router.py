@@ -103,13 +103,14 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
             
             # Safely get Size
             size_mb = 0.0
-            try:
-                db = model.get_settings().pymongo_db
-                stats = await db.command("collStats", model.get_collection_name())
-                size_bytes = stats.get("totalSize") or stats.get("storageSize") or stats.get("size") or 0
-                size_mb = size_bytes / (1024 * 1024)
-            except Exception:
-                pass # E.g. Atlas Serverless permission denied
+            if count > 0:
+                try:
+                    db = model.get_settings().pymongo_db
+                    stats = await db.command("collStats", model.get_collection_name())
+                    size_bytes = stats.get("totalSize") or stats.get("storageSize") or stats.get("size") or 0
+                    size_mb = size_bytes / (1024 * 1024)
+                except Exception:
+                    pass # E.g. Atlas Serverless permission denied
             
             model_stats[m["name"]] = {"count": count, "size_mb": round(size_mb, 2)}
             db_stats["total_documents"] += count
@@ -213,7 +214,198 @@ async def logout(request: Request):
                 await auth_service.logout(sid)
          except: pass
          
-    return response
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+@router.get("/export", response_class=HTMLResponse)
+async def export_page(request: Request, user: Optional[User] = Depends(get_admin_user)):
+    if not user:
+        return RedirectResponse(url="/admin/login")
+    models = admin_site.get_registered_models()
+    return templates.TemplateResponse("export.html", {
+        "request": request,
+        "models": models,
+        "user": user,
+        "now": datetime.now(timezone.utc),
+    })
+
+
+@router.post("/export")
+async def export_data(request: Request, user: Optional[User] = Depends(get_admin_user)):
+    """
+    Export selected models as a single JSON file download.
+    Body: application/x-www-form-urlencoded with field `models` (multiple values).
+    """
+    from fastapi.responses import StreamingResponse
+    import json
+
+    if not user:
+        raise HTTPException(status_code=401)
+
+    form = await request.form()
+    selected = form.getlist("models")
+
+    all_models = {m["name"]: m["model"] for m in admin_site.get_registered_models()}
+    export_payload = {}
+
+    for name in selected:
+        if name not in all_models:
+            continue
+        model = all_models[name]
+        try:
+            docs = await model.find_all().to_list()
+            export_payload[name] = [
+                json.loads(doc.model_dump_json()) for doc in docs
+            ]
+        except Exception as e:
+            export_payload[name] = {"error": str(e)}
+
+    json_bytes = json.dumps(export_payload, indent=2, default=str).encode("utf-8")
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"backbone_export_{timestamp}.json"
+
+    return StreamingResponse(
+        iter([json_bytes]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Import ────────────────────────────────────────────────────────────────────
+
+@router.get("/import", response_class=HTMLResponse)
+async def import_page(request: Request, user: Optional[User] = Depends(get_admin_user)):
+    if not user:
+        return RedirectResponse(url="/admin/login")
+    models = admin_site.get_registered_models()
+    return templates.TemplateResponse("import.html", {
+        "request": request,
+        "models": models,
+        "user": user,
+        "now": datetime.now(timezone.utc),
+    })
+
+
+@router.post("/import", response_class=HTMLResponse)
+async def import_data(
+    request: Request,
+    user: Optional[User] = Depends(get_admin_user),
+    file: bytes = None,
+):
+    """
+    Import JSON exported by /admin/export.
+    Accepts multipart/form-data with a `file` field containing the JSON.
+    """
+    import json
+    from fastapi import UploadFile, File
+
+    if not user or not user.is_superuser:
+        return RedirectResponse(url="/admin/login")
+
+    form = await request.form()
+    upload = form.get("file")
+    if not upload:
+        return templates.TemplateResponse("import.html", {
+            "request": request,
+            "models": admin_site.get_registered_models(),
+            "user": user,
+            "now": datetime.now(timezone.utc),
+            "error": "No file uploaded.",
+        })
+
+    try:
+        raw = await upload.read()
+        payload: dict = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        return templates.TemplateResponse("import.html", {
+            "request": request,
+            "models": admin_site.get_registered_models(),
+            "user": user,
+            "now": datetime.now(timezone.utc),
+            "error": f"Invalid JSON: {e}",
+        })
+
+    all_models = {m["name"]: m["model"] for m in admin_site.get_registered_models()}
+    summary = {}
+
+    for model_name, docs in payload.items():
+        if model_name not in all_models:
+            summary[model_name] = {"status": "skipped", "reason": "model not registered"}
+            continue
+
+        model = all_models[model_name]
+        if not isinstance(docs, list):
+            summary[model_name] = {"status": "skipped", "reason": "expected a list of documents"}
+            continue
+
+        inserted = 0
+        skipped = 0
+        for doc_data in docs:
+            try:
+                # Use motor directly to upsert by _id to avoid duplicates
+                collection = model.get_pymongo_collection()
+                from bson import ObjectId
+                doc_id = doc_data.get("id") or doc_data.get("_id")
+                if doc_id:
+                    try:
+                        doc_data["_id"] = ObjectId(str(doc_id))
+                    except Exception:
+                        doc_data["_id"] = doc_id
+                    doc_data.pop("id", None)
+
+                await collection.replace_one(
+                    {"_id": doc_data["_id"]},
+                    doc_data,
+                    upsert=True,
+                )
+                inserted += 1
+            except Exception:
+                skipped += 1
+
+        summary[model_name] = {"inserted": inserted, "skipped": skipped}
+
+    models = admin_site.get_registered_models()
+    return templates.TemplateResponse("import.html", {
+        "request": request,
+        "models": models,
+        "user": user,
+        "now": datetime.now(timezone.utc),
+        "summary": summary,
+    })
+
+
+# ── Clear Database ─────────────────────────────────────────────────────────────
+
+@router.post("/clear-database")
+async def clear_database(request: Request, user: Optional[User] = Depends(get_admin_user)):
+    """
+    Superuser-only: delete ALL documents from every registered model collection.
+    Returns a JSON summary of how many documents were wiped.
+    """
+    if not user or not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Superuser access required")
+
+    all_models = admin_site.get_registered_models()
+    results = {}
+
+    for m in all_models:
+        model = m["model"]
+        name = m["name"]
+        try:
+            collection = model.get_pymongo_collection()
+            result = await collection.delete_many({})
+            results[name] = result.deleted_count
+        except Exception as e:
+            results[name] = f"error: {e}"
+
+    # Invalidate Cache
+    config = BackboneConfig.get_instance()
+    if config.cache_service.enabled:
+        await config.cache_service.flush() # Wipe entire Redis cache for this DB
+
+    return {"cleared": results}
+
 
 @router.get("/{model_name}", response_class=HTMLResponse)
 async def model_list(
@@ -697,5 +889,4 @@ async def admin_api_search(
             "more": (skip + limit) < total
         }
     }
-
 
