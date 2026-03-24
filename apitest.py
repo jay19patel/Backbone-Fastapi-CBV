@@ -223,10 +223,28 @@ async def user_worker(i: int) -> List[str]:
 
 
 async def clear_database():
+    print("[DB] Attempting to wipe database via API...")
+    async with httpx.AsyncClient(timeout=30.0) as http_client:
+        try:
+            resp = await http_client.post(f"{BASE_URL}/admin/api/wipe", json={
+                "email": "admin@test.com",
+                "password": "password123",
+                "create_admin_if_none": True
+            })
+            if resp.status_code == 200:
+                print(f"[DB] Wiped database successfully via API. Preserved Admin: {resp.json().get('preserved_admin')}")
+                return
+            else:
+                print(f"[DB] Wipe API request failed ({resp.status_code}): {resp.text}")
+        except httpx.RequestError as e:
+            print(f"[DB] Could not reach wipe endpoint (is the server running?): {e}")
+
+    # Fallback to direct MongoDB drop if API fails/unreachable
+    print("[DB] Falling back to direct database drop...")
     from backbone.core.settings import settings
     client = AsyncIOMotorClient(settings.MONGODB_URL)
     await client.drop_database(settings.DATABASE_NAME)
-    print(f"[DB] Dropped database '{settings.DATABASE_NAME}'")
+    print(f"[DB] Dropped database '{settings.DATABASE_NAME}' directly.")
 
 
 async def main():
@@ -242,9 +260,15 @@ async def main():
 
     await clear_database()
 
-    # Run all user workers concurrently
+    # Run user workers with a concurrency limit
     all_slugs: List[str] = []
-    results = await asyncio.gather(*[user_worker(i) for i in range(NUM_USERS)])
+    
+    worker_sem = asyncio.Semaphore(5)
+    async def bounded_worker(idx):
+        async with worker_sem:
+            return await user_worker(idx)
+            
+    results = await asyncio.gather(*[bounded_worker(i) for i in range(NUM_USERS)])
     for slugs in results:
         all_slugs.extend(slugs)
 

@@ -174,13 +174,13 @@
                                 <span>Import Data</span>
                             </a>
                             <div class="border-t border-slate-100"></div>
-                            <button onclick="confirmClear()"
-                                class="w-full flex items-center space-x-3 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors">
+                            <a href="/admin/wipe"
+                                class="flex items-center space-x-3 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors">
                                 <span
                                     class="h-7 w-7 bg-red-100 text-red-600 rounded-lg flex items-center justify-center text-xs"><i
                                         class="fas fa-trash-alt"></i></span>
-                                <span>Clear Database</span>
-                            </button>
+                                <span>Wipe Database</span>
+                            </a>
                         </div>
                     </div>
 
@@ -244,13 +244,6 @@
         // ── Settings dropdown ───────────────────────────────────────────────
         function toggleSettings() {
             document.getElementById('settingsDropdown').classList.toggle('hidden');
-        }
-        function confirmClear() {
-            document.getElementById('settingsDropdown').classList.add('hidden');
-            document.getElementById('clearModal').classList.remove('hidden');
-        }
-        function closeClear() {
-            document.getElementById('clearModal').classList.add('hidden');
         }
         // Close dropdown when clicking outside
         document.addEventListener('click', function (e) {

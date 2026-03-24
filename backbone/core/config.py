@@ -44,12 +44,13 @@ class BackboneConfig:
         # Default Core Models
         from .models import User, Session, LogEntry, TaskLog, Attachment
         core_models = [User, Session, LogEntry, TaskLog, Attachment]
-        # Initialize with provided models, or an empty list if None
-        self.document_models = list(document_models) if document_models is not None else []
-        # Add core models, ensuring no duplicates
-        for model in core_models:
-            if model not in self.document_models:
-                self.document_models.append(model)
+        
+        # Ensures core models are loaded first to safely resolve Beanie links
+        self.document_models = core_models.copy()
+        if document_models:
+            for model in document_models:
+                if model not in self.document_models:
+                    self.document_models.append(model)
         
         # Determine Default Repository
         self.repository_class = repository_class
@@ -146,6 +147,10 @@ class BackboneConfig:
 
         @self.app.exception_handler(Exception)
         async def global_exception_handler(request: Request, exc: Exception):
+            import traceback
+            print("--- GLOBAL EXCEPTION ---")
+            traceback.print_exc()
+            print("------------------------")
             try:
                 await LogEntry(
                     level="error",

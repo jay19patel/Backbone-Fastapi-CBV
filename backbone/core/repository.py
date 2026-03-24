@@ -1,70 +1,226 @@
-from typing import List, Optional, Dict, Any, TypeVar, Generic, Type, Union
-from bson import ObjectId
-from pydantic import BaseModel
-from beanie import Document, PydanticObjectId
-from ..schemas import PaginatedResponse
+"""
+backbone.core.repository
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Database abstraction layer for Backbone.
+
+Defines the ``AbstractRepository`` protocol (database-agnostic interface)
+and ``BeanieRepository`` (concrete MongoDB / Beanie implementation).
+
+Design decisions:
+    • ``_build_lookup_pipeline()`` is the **single source of truth** for all
+      ``$lookup`` aggregation stages — called by ``get_all()``, ``get_one()``,
+      and ``count()``.  Never duplicate this logic.
+    • ``get_all()`` uses MongoDB ``$facet`` to return **(results, total)**
+      in a single database round-trip.
+    • ``update()`` accepts an ``allowed_fields`` whitelist to prevent
+      mass-assignment attacks.
+    • ``_prepare_query()`` raises ``HTTPException(400)`` on invalid ObjectId
+      values instead of silently falling back.
+"""
+
+from __future__ import annotations
+
+import logging
 from datetime import datetime, timezone
+from typing import Any, Dict, Generic, List, Optional, Protocol, Type, TypeVar, Union
+
+from beanie import Document, PydanticObjectId
+from bson import ObjectId
+from fastapi import HTTPException
+from pydantic import BaseModel
+
 from .signals import signals
 
-T = TypeVar('T', bound=BaseModel)
+logger = logging.getLogger("backbone.repository")
+
+T = TypeVar("T", bound=BaseModel)
+
+
+# ── Constants ───────────────────────────────────────────────────────────────
+
+# Fields managed internally — never accept from user input
+AUDIT_FIELDS = frozenset({
+    "created_at", "updated_at", "deleted_at",
+    "created_by", "updated_by", "deleted_by",
+    "is_deleted",
+})
+
+# Hardcoded audit field mappings for user references
+AUDIT_USER_FIELDS = ("created_by", "updated_by", "deleted_by")
+
+# Default projection fields returned for user references
+DEFAULT_USER_RETURN_FIELDS = ("id", "email", "full_name")
+
+
+# ── Abstract Repository Protocol ────────────────────────────────────────────
+
+class AbstractRepository(Protocol[T]):
+    """
+    Database-agnostic repository interface.
+
+    Any storage backend (MongoDB, PostgreSQL, etc.) must implement this
+    interface to work with Backbone views.
+
+    Type Parameters:
+        T: The document / model type this repository manages.
+    """
+
+    async def get_all(
+        self,
+        query: Dict[str, Any],
+        *,
+        skip: int = 0,
+        limit: int = 10,
+        sort: Optional[List] = None,
+        projection: Optional[Dict[str, int]] = None,
+        populate_fields: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """
+        Fetch paginated results AND total count in one query.
+
+        Returns:
+            Tuple of (list_of_documents, total_count).
+        """
+        ...
+
+    async def get_one(
+        self,
+        filter_query: Dict[str, Any],
+        *,
+        projection: Optional[Dict[str, int]] = None,
+        populate_fields: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a single document matching the query."""
+        ...
+
+    async def create(self, data: Dict[str, Any]) -> Any:
+        """Create a new document and return it."""
+        ...
+
+    async def update(
+        self,
+        filter_query: Dict[str, Any],
+        data: Dict[str, Any],
+        *,
+        allowed_fields: Optional[List[str]] = None,
+    ) -> Optional[Any]:
+        """
+        Update a document. If ``allowed_fields`` is provided, only those
+        fields will be updated — others are silently ignored.
+        """
+        ...
+
+    async def delete(
+        self,
+        filter_query: Dict[str, Any],
+        *,
+        soft: bool = True,
+    ) -> bool:
+        """Delete (or soft-delete) a document."""
+        ...
+
+    async def count(
+        self,
+        query: Dict[str, Any],
+        *,
+        populate_fields: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Count documents matching the query."""
+        ...
+
+
+# ── Beanie Repository (Concrete MongoDB Implementation) ─────────────────────
 
 class BeanieRepository(Generic[T]):
-    def __init__(self, db: Any = None):
+    """
+    Concrete MongoDB repository backed by Beanie ODM.
+
+    Provides CRUD operations with:
+        • Automatic ObjectId handling
+        • ``$lookup`` population of related collections
+        • ``$facet``-based pagination (single round-trip)
+        • Mass-assignment prevention via ``allowed_fields``
+
+    Args:
+        db: Motor database instance (optional; resolved lazily via
+            ``BackboneConfig``).
+
+    Example::
+
+        repo = BeanieRepository()
+        repo.initialize(Blog)
+        items, total = await repo.get_all({"is_deleted": False}, skip=0, limit=10)
+    """
+
+    def __init__(self, db: Any = None) -> None:
         self.db = db
         self.document_class: Optional[Type[Document]] = None
 
-    def initialize(self, schema: Type[BaseModel]):
+    def initialize(self, schema: Type[BaseModel]) -> None:
+        """
+        Bind this repository to a specific Beanie Document class.
+
+        Args:
+            schema: A Beanie ``Document`` subclass.
+        """
         if issubclass(schema, Document):
             self.document_class = schema
-        else:
-            # Fallback if needed, though GenericCrud expects Document for BeanieRepo
-            pass
+
+    # ── Link Detection ──────────────────────────────────────────────────────
 
     @staticmethod
     def detect_populate_fields(schema: Type[BaseModel]) -> Dict[str, Any]:
         """
-        Detects Beanie Link fields and explicit audit fields and returns populate_fields config.
+        Auto-detect Beanie ``Link`` fields and audit user fields on a schema.
+
+        Scans the model's field annotations for ``Link[TargetModel]`` types
+        and builds a populate-config dict used by ``_build_lookup_pipeline()``.
+
+        Args:
+            schema: A Pydantic / Beanie model class to introspect.
+
+        Returns:
+            Dict mapping field names to their population configuration.
         """
-        detected = {}
+        from typing import get_args, get_origin
+
         from beanie import Link
-        from typing import get_origin, get_args
-        
-        # Hardcode audit fields mapper
-        audit_fields = ["created_by", "updated_by", "deleted_by"]
-        for audit_field in audit_fields:
+
+        detected: Dict[str, Any] = {}
+
+        # 1. Hardcode audit user fields
+        for audit_field in AUDIT_USER_FIELDS:
             if audit_field in schema.model_fields:
                 detected[audit_field] = {
-                    "collection": "users", 
-                    "field": audit_field, 
+                    "collection": "users",
+                    "field": audit_field,
                     "is_string_id": True,
-                    "fields": ["id", "email", "full_name"]
+                    "fields": list(DEFAULT_USER_RETURN_FIELDS),
                 }
-        
+
+        # 2. Detect Link[] annotations
         for field_name, field_info in schema.model_fields.items():
             if field_name in detected:
                 continue
 
-            # Check for Link type
             annotation = field_info.annotation
             origin = get_origin(annotation)
-            
             target_model = None
-            
+            is_list = False
+
             if origin is Link:
                 target_model = get_args(annotation)[0]
             elif origin in (list, List):
-                 args = get_args(annotation)
-                 if args:
-                     inner = args[0]
-                     if get_origin(inner) is Link:
-                         target_model = get_args(inner)[0]
-            elif origin is Union or origin is Any: # Handle Optional[Link]
                 args = get_args(annotation)
-                for arg in args:
+                if args and get_origin(args[0]) is Link:
+                    target_model = get_args(args[0])[0]
+                    is_list = True
+            elif origin is Union:
+                for arg in get_args(annotation):
                     if get_origin(arg) is Link:
                         target_model = get_args(arg)[0]
                         break
-                    # Also handle List[Link] inside Optional
                     if get_origin(arg) in (list, List):
                         inner_args = get_args(arg)
                         if inner_args and get_origin(inner_args[0]) is Link:
@@ -72,447 +228,610 @@ class BeanieRepository(Generic[T]):
                             is_list = True
                             break
 
-            if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
-                return_fields = getattr(target_model.Settings, "return_link_data", None)
-                collection_name = target_model.Settings.name
-                config_dict = {"collection": collection_name, "field": field_name, "is_link": True, "is_list": origin in (list, List)}
-                
-                if return_fields and isinstance(return_fields, list):
-                    config_dict["fields"] = return_fields
-                else:
-                    if collection_name == "users":
-                        config_dict["fields"] = ["id", "email", "full_name"]
-                        
-                detected[field_name] = config_dict
-                
+            if not target_model:
+                continue
+            if not (hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name")):
+                continue
+
+            collection_name = target_model.Settings.name
+            return_fields = getattr(target_model.Settings, "return_link_data", None)
+
+            config_dict: Dict[str, Any] = {
+                "collection": collection_name,
+                "field": field_name,
+                "is_link": True,
+                "is_list": is_list,
+            }
+
+            if return_fields and isinstance(return_fields, list):
+                config_dict["fields"] = return_fields
+            elif collection_name == "users":
+                config_dict["fields"] = list(DEFAULT_USER_RETURN_FIELDS)
+
+            detected[field_name] = config_dict
+
         return detected
+
+    # ── Data Sanitisation ───────────────────────────────────────────────────
 
     @staticmethod
     def _sanitize(data: Any) -> Any:
+        """
+        Recursively convert all ``ObjectId`` and ``Link`` instances in a
+        document tree to plain strings.
+
+        Args:
+            data: A dict, list, or scalar value.
+
+        Returns:
+            The sanitised structure with string IDs.
+        """
         if isinstance(data, dict):
             return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
         if isinstance(data, list):
             return [BeanieRepository._sanitize(v) for v in data]
-        if isinstance(data, ObjectId) or isinstance(data, PydanticObjectId):
+        if isinstance(data, (ObjectId, PydanticObjectId)):
             return str(data)
+
         from beanie import Link
         from bson.dbref import DBRef
+
         if isinstance(data, Link):
-            if hasattr(data, "ref"): return str(data.ref.id)
-            if hasattr(data, "id"): return str(data.id)
+            if hasattr(data, "ref"):
+                return str(data.ref.id)
+            if hasattr(data, "id"):
+                return str(data.id)
             return str(data)
         if isinstance(data, DBRef):
             return str(data.id)
         return data
 
+    # ── Query Preparation ───────────────────────────────────────────────────
+
     @classmethod
     def _prepare_query(cls, query: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Recursively prepares a query dictionary for MongoDB by:
-        1. Replacing "id" keys with "_id"
-        2. Attempting to convert string IDs to PydanticObjectId/ObjectId safely
-        3. Traversing into operators like $or, $and, $in, $ne
+        Recursively prepare a query dict for MongoDB.
+
+        Transformations:
+            • ``"id"`` keys → ``"_id"``
+            • String values on ID-like keys → ``PydanticObjectId``
+            • Traverses ``$or``, ``$and``, ``$nor`` operators
+
+        Raises:
+            HTTPException(400): If a value intended as an ObjectId is not
+                a valid 24-character hex string.
         """
         if not isinstance(query, dict):
             return query
 
-        prepared = {}
-        for k, v in query.items():
-            new_key = "_id" if k == "id" else k
-            
-            if isinstance(v, dict):
-                prepared[new_key] = cls._prepare_query(v)
-            elif isinstance(v, list):
-                if k in ("$or", "$and", "$nor"):
-                    # Process each condition in the list
-                    prepared[new_key] = [cls._prepare_query(item) if isinstance(item, dict) else item for item in v]
-                elif new_key == "_id" or (isinstance(new_key, str) and (new_key.endswith(".id") or new_key.endswith(".$id"))):
-                     # Process $in / $nin lists
-                     prepared_list = []
-                     for item in v:
-                         if isinstance(item, str):
-                             try: prepared_list.append(PydanticObjectId(item))
-                             except: prepared_list.append(item)
-                         else:
-                             prepared_list.append(item)
-                     prepared[new_key] = prepared_list
-                else:
-                    prepared[new_key] = v
-            elif isinstance(v, str):
-                 # Attempt conversion to ObjectId if the key suggests an ID
-                 if new_key == "_id" or new_key.endswith(".id") or new_key.endswith(".$id"):
-                     try: prepared[new_key] = PydanticObjectId(v)
-                     except: prepared[new_key] = v
-                 else:
-                     prepared[new_key] = v
+        prepared: Dict[str, Any] = {}
+
+        for key, value in query.items():
+            new_key = "_id" if key == "id" else key
+
+            if isinstance(value, dict):
+                prepared[new_key] = cls._prepare_query(value)
+            elif isinstance(value, list):
+                prepared[new_key] = cls._prepare_list_value(
+                    key, new_key, value,
+                )
+            elif isinstance(value, str):
+                prepared[new_key] = cls._coerce_id_string(new_key, value)
             else:
-                 prepared[new_key] = v
-                 
+                prepared[new_key] = value
+
         return prepared
 
-    async def get_all(
-        self, 
-        query: Dict[str, Any], 
-        skip: int = 0, 
-        limit: int = 10, 
-        sort: Optional[Any] = None, 
-        projection: Optional[Dict[str, int]] = None,
-        populate_fields: Optional[Dict[str, str]] = None
-    ) -> List[Dict[str, Any]]:
+    @classmethod
+    def _prepare_list_value(
+        cls,
+        original_key: str,
+        new_key: str,
+        value: list,
+    ) -> list:
+        """Prepare a list value inside a query dict."""
+        if original_key in ("$or", "$and", "$nor"):
+            return [
+                cls._prepare_query(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+
+        if cls._is_id_field(new_key):
+            return [cls._coerce_id_string(new_key, v) if isinstance(v, str) else v for v in value]
+
+        return value
+
+    @staticmethod
+    def _is_id_field(key: str) -> bool:
+        """Check whether a query key refers to an ID field."""
+        return key == "_id" or key.endswith(".id") or key.endswith(".$id")
+
+    @classmethod
+    def _coerce_id_string(cls, key: str, value: str) -> Any:
         """
-        Fetches all documents matching the query, with support for:
-        - Pagination (skip, limit)
-        - Sorting
-        - Projection (selecting specific fields)
-        - Population (joining with other collections via $lookup)
-        
+        Attempt to convert a string to ``PydanticObjectId`` if the key
+        is an ID field.
+
+        Raises:
+            HTTPException(400): On invalid ObjectId format with an
+                actionable error message.
+        """
+        if not cls._is_id_field(key):
+            return value
+
+        try:
+            return PydanticObjectId(value)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{value}' is not a valid ID for field "
+                    f"'{key.replace('_id', 'id')}'. "
+                    f"Expected a 24-character hex string."
+                ),
+            ) from exc
+
+    # ── Lookup Pipeline (Single Source of Truth) ────────────────────────────
+
+    @staticmethod
+    def _build_lookup_pipeline(
+        populate_fields: Dict[str, Any],
+    ) -> list[dict]:
+        """
+        Build ``$lookup`` + ``$unwind`` aggregation stages for all fields
+        that need population.
+
+        This is the **single source of truth** for join logic.  Called by
+        ``get_all()``, ``get_one()``, and ``count()`` — never duplicated.
+
+        Args:
+            populate_fields: Dict of field_name → population config.
+
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries representing the documents. 
-            We return dicts because aggregation results are dicts and might contain populated fields 
-            that don't match the strict original schema.
+            List of MongoDB aggregation pipeline stages.
         """
-        pipeline = []
+        stages: list[dict] = []
 
-        # 1. Split query into local and joined
-        local_query = {}
-        joined_query = {}
-        
-        # Prepare the query first to handle ObjectIds
-        full_query = self._prepare_query(query)
-        
-        for k, v in full_query.items():
-            if "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")):
-                # Likely a joined field (except for DBRef/id fields)
-                joined_query[k] = v
-            else:
-                local_query[k] = v
-            
-        pipeline.append({"$match": local_query})
+        for local_field, config in populate_fields.items():
+            target_collection, alias, is_link, is_string_id, is_list, fields_to_return = (
+                BeanieRepository._unpack_populate_config(local_field, config)
+            )
 
-        # 2. Lookup (Population)
-        if populate_fields:
-            for local_field, config in populate_fields.items():
-                target_collection = config
-                alias = local_field
-                is_link = False
-                is_string_id = False
-                is_list = False
-                fields_to_return = None
-                
-                if isinstance(config, dict):
-                    target_collection = config.get("collection")
-                    alias = config.get("field", local_field)
-                    is_link = config.get("is_link", False)
-                    is_string_id = config.get("is_string_id", False)
-                    is_list = config.get("is_list", False)
-                    fields_to_return = config.get("fields")
-                
-                # Extract the local value: it could be a string, ObjectId, dict with id, or dict with $id (DBRef)
-                if is_list:
-                    # For lists (like categories), we need to extract the ID from each element
-                    if is_link:
-                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
-                    else:
-                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
-                else:
-                    if is_link:
-                        # In MongoDB aggregations, $id is an operator if used at top level, but safe in path.
-                        # DBRefs store the id in a field called `$id`
-                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
-                    else:
-                        local_val_expr = f"${local_field}"
-                    
-                inner_match = {}
-                if is_string_id and is_list:
-                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
-                elif is_string_id:
-                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
-                elif is_list:
-                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
-                else:
-                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
-                    
-                inner_pipeline = [{"$match": inner_match}]
-                
-                if fields_to_return and isinstance(fields_to_return, list):
-                    project_stage = {f: 1 for f in fields_to_return}
-                    project_stage["id"] = "$_id"
-                    project_stage["_id"] = 0
-                    inner_pipeline.append({"$project": project_stage})
-                else:
-                    inner_pipeline.append({"$addFields": {"id": "$_id"}})
-                    inner_pipeline.append({"$project": {"_id": 0}})
+            local_val_expr = BeanieRepository._build_local_val_expr(
+                local_field, is_link, is_list,
+            )
+            inner_match = BeanieRepository._build_inner_match(
+                is_string_id, is_list,
+            )
+            inner_pipeline = BeanieRepository._build_inner_pipeline(
+                inner_match, fields_to_return,
+            )
 
-                pipeline.append({
-                    "$lookup": {
-                        "from": target_collection,
-                        "let": {"local_val": local_val_expr},
-                        "pipeline": inner_pipeline,
-                        "as": alias
-                    }
+            stages.append({
+                "$lookup": {
+                    "from": target_collection,
+                    "let": {"local_val": local_val_expr},
+                    "pipeline": inner_pipeline,
+                    "as": alias,
+                },
+            })
+
+            if not is_list:
+                stages.append({
+                    "$unwind": {
+                        "path": f"${alias}",
+                        "preserveNullAndEmptyArrays": True,
+                    },
                 })
 
-                if not is_list:
-                    pipeline.append({
-                        "$unwind": {
-                            "path": f"${alias}",
-                            "preserveNullAndEmptyArrays": True
-                        }
-                    })
+        return stages
 
-        # 3. Joined Match (Filtering after population)
+    @staticmethod
+    def _unpack_populate_config(
+        local_field: str,
+        config: Any,
+    ) -> tuple[str, str, bool, bool, bool, Optional[list]]:
+        """Extract population parameters from a config value."""
+        if isinstance(config, dict):
+            return (
+                config.get("collection", ""),
+                config.get("field", local_field),
+                config.get("is_link", False),
+                config.get("is_string_id", False),
+                config.get("is_list", False),
+                config.get("fields"),
+            )
+        # Simple string config — just the collection name
+        return (config, local_field, False, False, False, None)
+
+    @staticmethod
+    def _build_local_val_expr(
+        local_field: str,
+        is_link: bool,
+        is_list: bool,
+    ) -> Any:
+        """Build the ``let`` expression for ``$lookup``."""
+        if is_list:
+            if is_link:
+                return {
+                    "$map": {
+                        "input": {"$ifNull": [f"${local_field}", []]},
+                        "as": "item",
+                        "in": {
+                            "$ifNull": [
+                                "$$item.id",
+                                {"$ifNull": ["$$item.$id", "$$item"]},
+                            ],
+                        },
+                    },
+                }
+            return {"$ifNull": [f"${local_field}", []]}
+
+        if is_link:
+            return {
+                "$ifNull": [
+                    f"${local_field}.id",
+                    {"$ifNull": [f"${local_field}.$id", f"${local_field}"]},
+                ],
+            }
+        return f"${local_field}"
+
+    @staticmethod
+    def _build_inner_match(is_string_id: bool, is_list: bool) -> dict:
+        """Build the ``$match`` expression inside a ``$lookup`` pipeline."""
+        if is_string_id and is_list:
+            return {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
+        if is_string_id:
+            return {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
+        if is_list:
+            return {"$expr": {"$in": ["$_id", "$$local_val"]}}
+        return {"$expr": {"$eq": ["$_id", "$$local_val"]}}
+
+    @staticmethod
+    def _build_inner_pipeline(
+        inner_match: dict,
+        fields_to_return: Optional[list],
+    ) -> list[dict]:
+        """Build the inner pipeline stages for a ``$lookup``."""
+        pipeline: list[dict] = [{"$match": inner_match}]
+
+        if fields_to_return and isinstance(fields_to_return, list):
+            project_stage = {f: 1 for f in fields_to_return}
+            project_stage["id"] = "$_id"
+            project_stage["_id"] = 0
+            pipeline.append({"$project": project_stage})
+        else:
+            pipeline.append({"$addFields": {"id": "$_id"}})
+            pipeline.append({"$project": {"_id": 0}})
+
+        return pipeline
+
+    # ── Core CRUD Operations ────────────────────────────────────────────────
+
+    async def get_all(
+        self,
+        query: Dict[str, Any],
+        *,
+        skip: int = 0,
+        limit: int = 10,
+        sort: Optional[Any] = None,
+        projection: Optional[Dict[str, int]] = None,
+        populate_fields: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """
+        Fetch paginated results AND total count in **one** database
+        round-trip using ``$facet``.
+
+        Args:
+            query: MongoDB filter dict.
+            skip: Number of documents to skip.
+            limit: Maximum number of documents to return.
+            sort: Sort specification (list of tuples or dict).
+            projection: Field projection dict.
+            populate_fields: Fields to populate via ``$lookup``.
+
+        Returns:
+            Tuple of ``(list_of_documents, total_count)``.
+
+        Example::
+
+            items, total = await repo.get_all(
+                {"is_deleted": False},
+                skip=0,
+                limit=10,
+            )
+        """
+        full_query = self._prepare_query(query)
+
+        # Split into local vs joined-field queries
+        local_query, joined_query = self._split_query(full_query)
+
+        # Build pipeline
+        pipeline: list[dict] = [{"$match": local_query}]
+
+        # Add lookups (single source of truth)
+        if populate_fields:
+            pipeline += self._build_lookup_pipeline(populate_fields)
+
+        # Filter by joined fields after population
         if joined_query:
             pipeline.append({"$match": joined_query})
 
-        # 4. Sort
+        # Build $facet for single-round-trip results + count
+        pipeline += self._build_facet_stage(skip, limit, sort, projection)
+
+        # Execute
+        raw = await self.document_class.get_pymongo_collection().aggregate(
+            pipeline,
+        ).to_list(length=1)
+
+        if not raw:
+            return [], 0
+
+        facet_result = raw[0]
+        total = facet_result.get("total_count", [{}])[0].get("count", 0) if facet_result.get("total_count") else 0
+        results = self._clean_results(facet_result.get("results", []))
+
+        return results, total
+
+    @staticmethod
+    def _build_facet_stage(
+        skip: int,
+        limit: int,
+        sort: Optional[Any],
+        projection: Optional[Dict[str, int]],
+    ) -> list[dict]:
+        """
+        Build a ``$facet`` stage that returns both paginated results and
+        total count from a single pipeline execution.
+
+        Returns:
+            A list containing the ``$facet`` stage dict.
+        """
+        results_pipeline: list[dict] = []
+
+        # Sort
         if sort:
-            sort_stage = {}
+            sort_stage: dict = {}
             if isinstance(sort, list):
                 for field, direction in sort:
                     sort_stage[field] = direction
             elif isinstance(sort, dict):
                 sort_stage = sort
-            
             if sort_stage:
-                pipeline.append({"$sort": sort_stage})
+                results_pipeline.append({"$sort": sort_stage})
 
-        # 5. Skip & Limit
-        # Moving skip/limit after sorting and potential joined filter for accuracy
-        pipeline.append({"$skip": skip})
-        pipeline.append({"$limit": limit})
+        # Skip & Limit
+        results_pipeline.append({"$skip": skip})
+        results_pipeline.append({"$limit": limit})
 
-        # 6. Project
+        # Projection
         if projection:
-            pipeline.append({"$project": projection})
+            results_pipeline.append({"$project": projection})
 
-        # Execute Aggregation
-        results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=None)
-        
-        cleaned_results = []
-        for doc in results:
-            # First move root _id to id
-            if "_id" in doc:
-                doc["id"] = str(doc.pop("_id"))
-                
-            # Then sanitize remaining ObjectIds recursively
-            doc = self._sanitize(doc)
-            
-            cleaned_results.append(doc)
-        
-        return cleaned_results
+        return [{
+            "$facet": {
+                "results": results_pipeline,
+                "total_count": [{"$count": "count"}],
+            },
+        }]
 
     async def get_one(
-        self, 
-        filter_query: Dict[str, Any], 
+        self,
+        filter_query: Dict[str, Any],
+        *,
         projection: Optional[Dict[str, int]] = None,
-        populate_fields: Optional[Dict[str, str]] = None
+        populate_fields: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
+        """
+        Fetch a single document matching the query.
+
+        Uses simple ``find_one`` when no population or projection is needed,
+        otherwise falls back to an aggregation pipeline.
+
+        Args:
+            filter_query: MongoDB filter dict.
+            projection: Field projection dict.
+            populate_fields: Fields to populate via ``$lookup``.
+
+        Returns:
+            The document as a dict, or ``None`` if not found.
+        """
         filter_query = self._prepare_query(filter_query)
 
         if not populate_fields and not projection:
-            # Use standard Beanie find_one if no complex operations
-            doc = await self.document_class.find_one(filter_query)
-            if doc:
-                dumped = doc.model_dump(by_alias=True)
-                if "_id" in dumped:
-                    dumped["id"] = str(dumped.pop("_id"))
-                sanitized = self._sanitize(dumped)
-                return sanitized
-            return None
+            return await self._simple_find_one(filter_query)
 
-        # Use Aggregation for Population/Projection
-        pipeline = [{"$match": filter_query}]
+        # Aggregation path for population / projection
+        pipeline: list[dict] = [{"$match": filter_query}]
 
         if populate_fields:
-            for local_field, config in populate_fields.items():
-                target_collection = config
-                alias = local_field
-                is_link = False
-                is_string_id = False
-                is_list = False
-                fields_to_return = None
-                
-                if isinstance(config, dict):
-                    target_collection = config.get("collection")
-                    alias = config.get("field", local_field)
-                    is_link = config.get("is_link", False)
-                    is_string_id = config.get("is_string_id", False)
-                    is_list = config.get("is_list", False)
-                    fields_to_return = config.get("fields")
-                
-                # Extract the local value: it could be a string, ObjectId, dict with id, or dict with $id (DBRef)
-                if is_list:
-                    # For lists (like categories), we need to extract the ID from each element
-                    if is_link:
-                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
-                    else:
-                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
-                else:
-                    if is_link:
-                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
-                    else:
-                        local_val_expr = f"${local_field}"
-                    
-                inner_match = {}
-                if is_string_id and is_list:
-                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
-                elif is_string_id:
-                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
-                elif is_list:
-                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
-                else:
-                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
-                    
-                inner_pipeline = [{"$match": inner_match}]
-                
-                if fields_to_return and isinstance(fields_to_return, list):
-                    project_stage = {f: 1 for f in fields_to_return}
-                    project_stage["id"] = "$_id"
-                    project_stage["_id"] = 0
-                    inner_pipeline.append({"$project": project_stage})
-                else:
-                    inner_pipeline.append({"$addFields": {"id": "$_id"}})
-                    inner_pipeline.append({"$project": {"_id": 0}})
-
-                pipeline.append({
-                    "$lookup": {
-                        "from": target_collection,
-                        "let": {"local_val": local_val_expr},
-                        "pipeline": inner_pipeline,
-                        "as": alias
-                    }
-                })
-
-                if not is_list:
-                    pipeline.append({
-                        "$unwind": {
-                            "path": f"${alias}",
-                            "preserveNullAndEmptyArrays": True
-                        }
-                    })
+            pipeline += self._build_lookup_pipeline(populate_fields)
 
         if projection:
             pipeline.append({"$project": projection})
 
-        results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=1)
-        
-        if results:
-            doc = results[0]
-            if "_id" in doc:
-                doc["id"] = str(doc.pop("_id"))
-            doc = self._sanitize(doc)
-            return doc
-            
-        return None
+        results = await self.document_class.get_pymongo_collection().aggregate(
+            pipeline,
+        ).to_list(length=1)
 
-    async def create(self, data: Dict[str, Any]) -> T:
+        if not results:
+            return None
+
+        return self._clean_single_doc(results[0])
+
+    async def _simple_find_one(
+        self,
+        filter_query: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a single document without aggregation."""
+        doc = await self.document_class.find_one(filter_query)
+        if not doc:
+            return None
+
+        dumped = doc.model_dump(by_alias=True)
+        if "_id" in dumped:
+            dumped["id"] = str(dumped.pop("_id"))
+        return self._sanitize(dumped)
+
+    async def create(self, data: Dict[str, Any]) -> Any:
+        """
+        Create a new document in the database.
+
+        Args:
+            data: Dict of field values for the new document.
+
+        Returns:
+            The created Beanie Document instance.
+        """
         obj = self.document_class(**data)
         await obj.insert()
         return obj
 
-    async def update(self, filter_query: Dict[str, Any], data: Dict[str, Any]) -> Optional[T]:
+    async def update(
+        self,
+        filter_query: Dict[str, Any],
+        data: Dict[str, Any],
+        *,
+        allowed_fields: Optional[List[str]] = None,
+    ) -> Optional[Any]:
+        """
+        Update a document matching the filter.
+
+        If ``allowed_fields`` is provided, only those fields will be updated
+        — all others are silently ignored.  This prevents mass-assignment
+        vulnerabilities where a client could set ``is_superuser=True``.
+
+        Args:
+            filter_query: MongoDB filter to find the document.
+            data: Dict of field updates.
+            allowed_fields: Whitelist of field names.  ``None`` = allow all.
+                Always pass this in user-facing endpoints.
+
+        Returns:
+            The updated Beanie Document, or ``None`` if not found.
+        """
+        if allowed_fields is not None:
+            data = {k: v for k, v in data.items() if k in allowed_fields}
+
         filter_query = self._prepare_query(filter_query)
         item = await self.document_class.find_one(filter_query)
-        if item:
-            await item.set(data)
-            return item
-        return None
+        if not item:
+            return None
 
-    async def delete(self, filter_query: Dict[str, Any], soft: bool = True) -> bool:
+        await item.set(data)
+        return item
+
+    async def delete(
+        self,
+        filter_query: Dict[str, Any],
+        *,
+        soft: bool = True,
+    ) -> bool:
+        """
+        Delete a document.
+
+        Args:
+            filter_query: MongoDB filter to find the document.
+            soft: If ``True`` (default), sets ``is_deleted=True`` and
+                ``deleted_at``; if ``False``, permanently removes.
+
+        Returns:
+            ``True`` if the document was found and deleted/marked.
+        """
         filter_query = self._prepare_query(filter_query)
         item = await self.document_class.find_one(filter_query)
         if not item:
             return False
-            
+
         if soft:
-            await item.set({"is_deleted": True, "deleted_at": datetime.now(timezone.utc)})
+            await item.set({
+                "is_deleted": True,
+                "deleted_at": datetime.now(timezone.utc),
+            })
         else:
             await item.delete()
         return True
 
-    async def count(self, query: Dict[str, Any], populate_fields: Optional[Dict[str, Any]] = None) -> int:
+    async def count(
+        self,
+        query: Dict[str, Any],
+        *,
+        populate_fields: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Count documents matching the query.
+
+        Uses simple ``find().count()`` for local-only queries, or falls
+        back to an aggregation pipeline for joined-field queries.
+
+        Args:
+            query: MongoDB filter dict.
+            populate_fields: Population config (needed for joined filters).
+
+        Returns:
+            Integer count of matching documents.
+        """
         full_query = self._prepare_query(query)
-        
-        # Check if we need aggregation for joined fields
-        has_joined = any("." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")) for k in full_query.keys())
-        
+
+        has_joined = any(
+            "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id"))
+            for k in full_query
+        )
+
         if not has_joined:
             return await self.document_class.find(full_query).count()
-            
-        # Use aggregation to get count for joined filters
-        pipeline = []
-        local_query = {}
-        joined_query = {}
-        
-        for k, v in full_query.items():
-            if "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")):
-                joined_query[k] = v
-            else:
-                local_query[k] = v
-                
-        pipeline.append({"$match": local_query})
-        
-        # We need to perform lookups even for counting if we filter by joined fields
-        if populate_fields:
-            for local_field, config in populate_fields.items():
-                target_collection = config
-                alias = local_field
-                is_link = False
-                is_string_id = False
-                is_list = False
-                
-                if isinstance(config, dict):
-                    target_collection = config.get("collection")
-                    alias = config.get("field", local_field)
-                    is_link = config.get("is_link", False)
-                    is_string_id = config.get("is_string_id", False)
-                    is_list = config.get("is_list", False)
-                
-                # Check if this populated field is actually needed for joined_query
-                # If no field in joined_query starts with 'alias.', we can skip this lookup for speed (optional optimization)
-                
-                if is_list:
-                    if is_link:
-                       local_val_expr = {"$map": {"input": {"$ifNull": [f"${local_field}", []]}, "as": "item", "in": {"$ifNull": ["$$item.id", {"$ifNull": ["$$item.$id", "$$item"]}]}}}
-                    else:
-                        local_val_expr = {"$ifNull": [f"${local_field}", []]}
-                else:
-                    if is_link:
-                        local_val_expr = {"$ifNull": [f"${local_field}.id", {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}]}
-                    else:
-                        local_val_expr = f"${local_field}"
-                    
-                inner_match = {}
-                if is_string_id and is_list:
-                    inner_match = {"$expr": {"$in": [{"$toString": "$_id"}, "$$local_val"]}}
-                elif is_string_id:
-                    inner_match = {"$expr": {"$eq": ["$_id", {"$toObjectId": "$$local_val"}]}}
-                elif is_list:
-                    inner_match = {"$expr": {"$in": ["$_id", "$$local_val"]}}
-                else:
-                    inner_match = {"$expr": {"$eq": ["$_id", "$$local_val"]}}
-                    
-                pipeline.append({
-                    "$lookup": {
-                        "from": target_collection,
-                        "let": {"local_val": local_val_expr},
-                        "pipeline": [{"$match": inner_match}],
-                        "as": alias
-                    }
-                })
 
-                if not is_list:
-                    pipeline.append({
-                        "$unwind": {
-                            "path": f"${alias}",
-                            "preserveNullAndEmptyArrays": True
-                        }
-                    })
+        # Aggregation pipeline for joined-field counting
+        local_query, joined_query = self._split_query(full_query)
+        pipeline: list[dict] = [{"$match": local_query}]
+
+        if populate_fields:
+            pipeline += self._build_lookup_pipeline(populate_fields)
 
         if joined_query:
             pipeline.append({"$match": joined_query})
-            
+
         pipeline.append({"$count": "total"})
-        
-        results = await self.document_class.get_pymongo_collection().aggregate(pipeline).to_list(length=1)
+
+        results = await self.document_class.get_pymongo_collection().aggregate(
+            pipeline,
+        ).to_list(length=1)
         return results[0]["total"] if results else 0
+
+    # ── Private Helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _split_query(
+        full_query: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Split a query into local-field and joined-field parts.
+
+        Joined fields contain a dot (e.g., ``category.name``) that is
+        NOT a MongoDB operator or ID reference.
+
+        Returns:
+            Tuple of ``(local_query, joined_query)``.
+        """
+        local: Dict[str, Any] = {}
+        joined: Dict[str, Any] = {}
+
+        for k, v in full_query.items():
+            if "." in k and not (k.startswith("$") or k.endswith(".id") or k.endswith(".$id")):
+                joined[k] = v
+            else:
+                local[k] = v
+
+        return local, joined
+
+    def _clean_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Clean a list of aggregation result documents."""
+        return [self._clean_single_doc(doc) for doc in results]
+
+    def _clean_single_doc(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Move ``_id`` → ``id`` and sanitise all ObjectIds."""
+        if "_id" in doc:
+            doc["id"] = str(doc.pop("_id"))
+        return self._sanitize(doc)

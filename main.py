@@ -10,7 +10,6 @@ from backbone.core.rate_limit import RateLimit
 import os
 
 # Schemas
-from backbone.core.models import User, Session, Attachment, LogEntry, TaskLog
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
 
 # Routers
@@ -28,7 +27,6 @@ app = FastAPI(title="Modular Backbone Framework")
 
 
 models_to_register = [
-    User, Session, Attachment, LogEntry, TaskLog,
     Blog, BlogCategory, BlogLike, BlogView
 ]
 

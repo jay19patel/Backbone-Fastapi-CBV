@@ -1,12 +1,22 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Request, Response, Form, File, UploadFile
-from ..utils import PasswordManager, TokenManager
-from ..schemas import UserOut, TokenResponse, LoginSchema, GoogleLoginSchema, RegisterSchema, UserUpdate
-from ..core.models import User, Session
-from ..core.dependencies import get_current_user, oauth2_scheme
-from ..core.rate_limit import RateLimit
-from typing import Dict, Any, List, Optional
+"""backbone.auth.router — Authentication endpoints."""
+
+import logging
+
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from ..core.dependencies import get_current_user, oauth2_scheme
+from ..core.models import User, Session
+from ..core.rate_limit import RateLimit
 from ..core.repository import BeanieRepository
+from ..schemas import (
+    GoogleLoginSchema, LoginSchema, RegisterSchema,
+    TokenResponse, UserOut, UserUpdate,
+)
+from ..utils import PasswordManager, TokenManager
+
+logger = logging.getLogger("backbone.auth")
 
 class AuthRouter:
     def __init__(self, config: Any, db_instance: Any = None, prefix: str = "/auth", tags: list = ["Auth"]):
@@ -54,9 +64,7 @@ class AuthRouter:
                     return UserOut(**new_user)
                 return UserOut(**new_user.model_dump(by_alias=True))
             except Exception as e:
-                import traceback
-                with open("error_trace.log", "w") as f:
-                    f.write(traceback.format_exc())
+                logger.exception("Registration failed")
                 raise e
 
         @self.router.post("/login", response_model=TokenResponse)
@@ -99,9 +107,7 @@ class AuthRouter:
                     "token_type": "bearer"
                 }
             except Exception as e:
-                import traceback
-                with open("error_trace.log", "a") as f:
-                    f.write(f"\n--- Login Error ---\n{traceback.format_exc()}")
+                logger.exception("Login failed")
                 raise e
 
         @self.router.post("/google/login", response_model=TokenResponse)
@@ -254,9 +260,7 @@ class AuthRouter:
             except HTTPException:
                 raise
             except Exception as e:
-                import traceback
-                with open("error_trace.log", "a") as f:
-                    f.write(f"\n--- Google Login Error ---\n{traceback.format_exc()}")
+                logger.exception("Google login failed")
                 raise HTTPException(status_code=500, detail=str(e))
                 
         @self.router.post("/refresh")
@@ -343,9 +347,7 @@ class AuthRouter:
                             user.profile_image = None
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:
-                import traceback
-                with open("get_me_error.log", "w") as f:
-                    f.write(traceback.format_exc())
+                logger.exception("Get user profile failed")
                 raise e
 
         @self.router.patch("/me", response_model=UserOut)
@@ -398,7 +400,5 @@ class AuthRouter:
                             
                 return UserOut(**user.model_dump(by_alias=True))
             except Exception as e:
-                import traceback
-                with open("update_me_error.log", "w") as f:
-                    f.write(traceback.format_exc())
+                logger.exception("Update user profile failed")
                 raise e

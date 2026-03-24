@@ -400,36 +400,126 @@ async def import_data(
     })
 
 
-# ── Clear Database ─────────────────────────────────────────────────────────────
+# ── Wipe Database ──────────────────────────────────────────────────────────────
 
-@router.post("/clear-database")
-async def clear_database(request: Request, user: Optional[User] = Depends(get_admin_user)):
+from pydantic import BaseModel
+
+class ApiWipeRequest(BaseModel):
+    email: str
+    password: str
+    create_admin_if_none: bool = False
+
+@router.get("/wipe", response_class=HTMLResponse)
+async def wipe_page(request: Request, user: Optional[User] = Depends(get_admin_user)):
+    if not user:
+        return RedirectResponse(url="/admin/login")
+    return templates.TemplateResponse("wipe.html", {
+        "request": request,
+        "models": admin_site.get_registered_models(),
+        "user": user,
+        "now": datetime.now(timezone.utc),
+        "error": None
+    })
+
+@router.post("/wipe", response_class=HTMLResponse)
+async def wipe_database(
+    request: Request,
+    password: str = Form(...),
+    user: Optional[User] = Depends(get_admin_user)
+):
     """
     Superuser-only: delete ALL documents from every registered model collection.
-    Returns a JSON summary of how many documents were wiped.
+    Re-creates the admin user.
     """
     if not user or not user.is_superuser:
-        raise HTTPException(status_code=403, detail="Superuser access required")
+        return RedirectResponse(url="/admin/login")
+
+    # Verify password first
+    if not PasswordManager.verify_password(password, user.hashed_password):
+        return templates.TemplateResponse("wipe.html", {
+            "request": request,
+            "models": admin_site.get_registered_models(),
+            "user": user,
+            "now": datetime.now(timezone.utc),
+            "error": "Incorrect password. Wipe aborted."
+        })
 
     all_models = admin_site.get_registered_models()
-    results = {}
+    
+    for m in all_models:
+        model = m["model"]
+        try:
+            collection = model.get_pymongo_collection()
+            if m["name"] == "User":
+                # Delete all except current user
+                await collection.delete_many({"_id": {"$ne": user.id}})
+            else:
+                await collection.delete_many({})
+        except Exception as e:
+            pass
 
+    # Invalidate Cache
+    from ..core.config import BackboneConfig
+    config = BackboneConfig.get_instance()
+    if config.cache_service.enabled:
+        await config.cache_service.flush() # Wipe entire Redis cache for this DB
+
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/api/wipe")
+async def api_wipe_database(payload: ApiWipeRequest):
+    """
+    API endpoint to wipe the database.
+    Can also create an initial admin user if none exists.
+    """
+    superuser_count = await User.find(User.is_superuser == True).count()
+    
+    if superuser_count == 0 and payload.create_admin_if_none:
+        hashed_pw = PasswordManager.hash_password(payload.password)
+        new_superuser = User(
+            email=payload.email,
+            full_name="Admin",
+            hashed_password=hashed_pw,
+            is_superuser=True,
+            is_staff=True,
+            is_active=True
+        )
+        await new_superuser.insert()
+        user = new_superuser
+    else:
+        user = await User.find_one(User.email == payload.email)
+        if not user or not PasswordManager.verify_password(payload.password, user.hashed_password) or not user.is_superuser:
+            raise HTTPException(status_code=401, detail="Invalid admin credentials")
+            
+    # Do Wipe
+    all_models = admin_site.get_registered_models()
+    results = {}
     for m in all_models:
         model = m["model"]
         name = m["name"]
         try:
             collection = model.get_pymongo_collection()
-            result = await collection.delete_many({})
-            results[name] = result.deleted_count
+            if name == "User":
+                 res = await collection.delete_many({"_id": {"$ne": user.id}})
+            else:
+                 res = await collection.delete_many({})
+            results[name] = res.deleted_count
         except Exception as e:
             results[name] = f"error: {e}"
-
-    # Invalidate Cache
+             
+    # Cache clear
+    from ..core.config import BackboneConfig
     config = BackboneConfig.get_instance()
     if config.cache_service.enabled:
-        await config.cache_service.flush() # Wipe entire Redis cache for this DB
-
-    return {"cleared": results}
+        await config.cache_service.flush()
+        
+    return {
+        "status": "success", 
+        "message": "Database wiped successfully", 
+        "preserved_admin": str(user.id),
+        "cleared": results
+    }
 
 
 @router.get("/{model_name}", response_class=HTMLResponse)
@@ -462,7 +552,7 @@ async def model_list(
     populate_fields = BeanieRepository.detect_populate_fields(model)
     
     sort_query = [("created_at", -1)] if "created_at" in get_model_fields(model) else None
-    items = await repo.get_all(query, skip=skip, limit=limit, sort=sort_query, populate_fields=populate_fields)
+    items, _ = await repo.get_all(query, skip=skip, limit=limit, sort=sort_query, populate_fields=populate_fields)
     total_pages = math.ceil(total_count / limit) if limit > 0 else 1
     
     field_links = {}

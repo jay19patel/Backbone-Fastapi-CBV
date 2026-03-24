@@ -1,31 +1,912 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-from typing import List, Optional, Any, Type, Dict, Union, Callable, Sequence
-from beanie import Document
-from ..core.repository import BeanieRepository
-from ..core.permissions import IsOwner, BasePermission, PermissionDependency, AllowAny, IsAdminUser
-from ..schemas import UserOut, PaginatedResponse
-from ..core.config import BackboneConfig
-from ..utils.cache import CacheService, cache
-import hashlib
+"""
+backbone.generic.views
+~~~~~~~~~~~~~~~~~~~~~~
 
-class BaseGenericView:
+Generic view classes that combine mixins with route registration.
+
+Route registration **only** happens here via the ``as_router()``
+classmethod.  Mixins (in ``backbone.core.mixins``) contain zero routing
+code.
+
+Architecture:
+    ``GenericListView``      — ListMixin + GET /
+    ``GenericCreateView``    — CreateMixin + POST /
+    ``GenericRetrieveView``  — RetrieveMixin + GET /{pk}
+    ``GenericUpdateView``    — UpdateMixin + PATCH /{pk}
+    ``GenericDeleteView``    — DeleteMixin + DELETE /{pk}
+    ``GenericCrudView``      — all five combined
+    ``GenericStatsView``     — aggregate stats endpoint
+    ``GenericSubResourceView`` — array add/remove operations
+    ``GenericCustomApiView`` — custom GET/POST endpoints
+
+Usage::
+
+    class BlogView(GenericCrudView):
+        schema = Blog
+        search_fields = ["title"]
+
+    router.include_router(BlogView.as_router("/blogs"))
+"""
+
+from __future__ import annotations
+
+import inspect
+import logging
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Type
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+
+from ..core.mixins import (
+    CreateMixin,
+    DeleteMixin,
+    ListMixin,
+    RetrieveMixin,
+    UpdateMixin,
+    ViewContext,
+)
+from ..core.permissions import AllowAny, BasePermission, PermissionDependency
+from ..core.repository import BeanieRepository
+from ..schemas import PaginatedResponse, UserOut
+from ..utils.cache import CacheService, cache
+
+logger = logging.getLogger("backbone.views")
+
+
+# ── Helper Functions ────────────────────────────────────────────────────────
+
+def _parse_sort(sort_string: Optional[str]) -> Optional[list]:
     """
-    Base class for generic CRUD views using Beanie.
+    Parse a sort query parameter into MongoDB sort specification.
+
+    Args:
+        sort_string: Comma-separated field names. Prefix with ``-`` for
+            descending. Example: ``"-created_at,title"``
+
+    Returns:
+        List of ``(field, direction)`` tuples, or ``None``.
     """
+    if not sort_string:
+        return None
+
+    parsed = []
+    for field in sort_string.split(","):
+        field = field.strip()
+        if field.startswith("-"):
+            parsed.append((field[1:], -1))
+        else:
+            parsed.append((field, 1))
+    return parsed
+
+
+def _register_actions(view: Any, router: APIRouter) -> None:
+    """
+    Scan a view instance for methods decorated with ``@action``
+    and register them on the router.
+
+    Args:
+        view: The view instance to scan.
+        router: The APIRouter to register actions on.
+    """
+    for name, method in inspect.getmembers(view, inspect.ismethod):
+        config = getattr(method, "__action_config__", None)
+        if not config:
+            continue
+
+        detail = config.get("detail", False)
+        methods = config.get("methods", ["GET"])
+        kwargs = config.get("kwargs", {})
+
+        path = kwargs.pop("path", f"/{{pk}}/{name}/" if detail else f"/{name}/")
+
+        router.add_api_route(
+            path=path,
+            endpoint=method,
+            methods=[m.upper() for m in methods],
+            **kwargs,
+        )
+
+
+# ── GenericListView ─────────────────────────────────────────────────────────
+
+class GenericListView(ListMixin):
+    """
+    Ready-to-use list endpoint.  Extend and configure.
+
+    Creates: ``GET /``
+
+    Usage::
+
+        class BlogListView(GenericListView):
+            schema = Blog
+            search_fields = ["title"]
+
+        router.include_router(
+            BlogListView.as_router("/blogs", tags=["Blogs"])
+        )
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """
+        Build and return a configured APIRouter with the list endpoint.
+
+        Args:
+            prefix: URL prefix (e.g., ``"/blogs"``).
+            tags: OpenAPI tags.
+            **router_kwargs: Additional kwargs for APIRouter.
+
+        Returns:
+            A configured ``APIRouter``.
+        """
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_list_route(router, view, perm_dep)
+        _register_actions(view, router)
+
+        return router
+
+    @staticmethod
+    def _register_list_route(
+        router: APIRouter,
+        view: ListMixin,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the GET / list endpoint."""
+
+        @router.get(
+            "/",
+            summary=f"List {view.schema.__name__} records",
+        )
+        async def list_view(
+            request: Request,
+            user: Any = Depends(perm_dep),
+            page: int = Query(1, ge=1, description="Page number"),
+            page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+            search: Optional[str] = Query(None, description="Search term"),
+            sort: Optional[str] = Query(None, description="Sort field, prefix - for desc"),
+        ) -> dict:
+            await view.resolve_context(request)
+            query = await view.get_queryset(request, user)
+            query = await view.filter_queryset(query, request)
+            results, total = await view.perform_list(
+                query,
+                page=page,
+                page_size=page_size,
+                sort=_parse_sort(sort),
+            )
+            return await view.format_list(results, total, page, page_size)
+
+
+# ── GenericCreateView ───────────────────────────────────────────────────────
+
+class GenericCreateView(CreateMixin):
+    """
+    Ready-to-use create endpoint.  Extend and configure.
+
+    Creates: ``POST /``
+
+    Usage::
+
+        class BlogCreateView(GenericCreateView):
+            schema = Blog
+
+        router.include_router(
+            BlogCreateView.as_router("/blogs", tags=["Blogs"])
+        )
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with the create endpoint."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_create_route(router, view, perm_dep)
+        _register_actions(view, router)
+
+        return router
+
+    @staticmethod
+    def _register_create_route(
+        router: APIRouter,
+        view: CreateMixin,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the POST / create endpoint."""
+        create_schema = view.create_schema or view.schema
+        response_schema = view.response_schema or view.schema
+
+        async def create_view(
+            request: Request,
+            data: Any = Body(...),
+            user: Any = Depends(perm_dep),
+        ) -> Any:
+            await view.resolve_context(request)
+
+            # Extract and process link fields
+            validated_data = _extract_create_data(view, data)
+
+            # Prepare audit fields
+            validated_data.update({
+                "created_at": datetime.now(timezone.utc),
+                "is_deleted": False,
+            })
+            if user:
+                validated_data["created_by"] = str(user.id)
+
+            # Execute hook chain: before → perform → after
+            validated_data = await view.before_create(validated_data, user)
+            instance = await view.perform_create(validated_data)
+            instance = await view.after_create(instance, user)
+            await view._invalidate_cache()
+
+            return instance
+
+        create_view.__annotations__["data"] = create_schema
+        router.add_api_route(
+            "/",
+            create_view,
+            methods=["POST"],
+            response_model=response_schema,
+            status_code=201,
+            summary=f"Create {view.schema.__name__}",
+        )
+
+
+def _extract_create_data(view: ViewContext, data: Any) -> dict:
+    """Extract and process create data, handling Link fields."""
+    populate = view._get_populate_fields()
+
+    # Preserve raw string IDs before model_dump converts them
+    extracted_links = {}
+    for field_name in populate:
+        if hasattr(data, field_name):
+            val = getattr(data, field_name)
+            if val is not None:
+                extracted_links[field_name] = val
+
+    # Dump to dict
+    validated = (
+        data.model_dump(by_alias=True, exclude={"id"})
+        if hasattr(data, "model_dump")
+        else data
+    )
+
+    # Restore extracted links
+    validated.update(extracted_links)
+
+    # Convert string IDs to DBRefs
+    return view._process_link_fields(validated)
+
+
+# ── GenericRetrieveView ─────────────────────────────────────────────────────
+
+class GenericRetrieveView(RetrieveMixin):
+    """
+    Ready-to-use retrieve endpoint.  Extend and configure.
+
+    Creates: ``GET /{pk}``
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with the retrieve endpoint."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_retrieve_route(router, view, perm_dep)
+        _register_actions(view, router)
+
+        return router
+
+    @staticmethod
+    def _register_retrieve_route(
+        router: APIRouter,
+        view: RetrieveMixin,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the GET /{pk} retrieve endpoint."""
+
+        @router.get(
+            "/{pk}",
+            summary=f"Retrieve {view.schema.__name__}",
+        )
+        async def retrieve_view(
+            request: Request,
+            pk: str,
+            user: Any = Depends(perm_dep),
+        ) -> Any:
+            await view.resolve_context(request)
+            await view.before_retrieve(pk, request, user)
+            instance = await view.perform_retrieve(pk, request, user)
+            instance = await view.after_retrieve(instance, request, user)
+            return instance
+
+
+# ── GenericUpdateView ───────────────────────────────────────────────────────
+
+class GenericUpdateView(UpdateMixin):
+    """
+    Ready-to-use update endpoint.  Extend and configure.
+
+    Creates: ``PATCH /{pk}``
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with the update endpoint."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_update_route(router, view, perm_dep)
+        _register_actions(view, router)
+
+        return router
+
+    @staticmethod
+    def _register_update_route(
+        router: APIRouter,
+        view: UpdateMixin,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the PATCH /{pk} update endpoint."""
+        update_schema = view.update_schema or Dict[str, Any]
+
+        async def update_view(
+            request: Request,
+            pk: str,
+            data: Any = Body(...),
+            user: Any = Depends(perm_dep),
+        ) -> Any:
+            await view.resolve_context(request)
+
+            # Fetch the existing object + permission check
+            instance = await view.get_object(pk, request, user)
+
+            # Extract update data, strip dangerous fields
+            update_data = _extract_update_data(view, data)
+
+            # Add audit fields
+            update_data["updated_at"] = datetime.now(timezone.utc)
+            if user:
+                update_data["updated_by"] = str(user.id)
+
+            # Execute hook chain: before → perform → after
+            update_data = await view.before_update(instance, update_data, user)
+            result = await view.perform_update(instance, update_data)
+            result = await view.after_update(result, user)
+            await view._invalidate_cache()
+
+            return result
+
+        update_view.__annotations__["data"] = update_schema
+        router.add_api_route(
+            "/{pk}",
+            update_view,
+            methods=["PATCH"],
+            response_model=view.response_schema,
+            summary=f"Update {view.schema.__name__}",
+        )
+
+
+def _extract_update_data(view: ViewContext, data: Any) -> dict:
+    """Extract update data, stripping dangerous and unknown fields."""
+    raw = (
+        data.model_dump(exclude_unset=True)
+        if hasattr(data, "model_dump")
+        else dict(data)
+    )
+
+    # Strip dangerous fields
+    from ..core.mixins import DANGEROUS_FIELDS
+
+    for field in DANGEROUS_FIELDS:
+        raw.pop(field, None)
+
+    # Process link fields
+    return view._process_link_fields(raw)
+
+
+# ── GenericDeleteView ───────────────────────────────────────────────────────
+
+class GenericDeleteView(DeleteMixin):
+    """
+    Ready-to-use delete endpoint.  Extend and configure.
+
+    Creates: ``DELETE /{pk}``
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with the delete endpoint."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_delete_route(router, view, perm_dep)
+        _register_actions(view, router)
+
+        return router
+
+    @staticmethod
+    def _register_delete_route(
+        router: APIRouter,
+        view: DeleteMixin,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the DELETE /{pk} delete endpoint."""
+
+        @router.delete(
+            "/{pk}",
+            status_code=204,
+            summary=f"Delete {view.schema.__name__}",
+        )
+        async def delete_view(
+            request: Request,
+            pk: str,
+            user: Any = Depends(perm_dep),
+        ) -> None:
+            await view.resolve_context(request)
+
+            instance = await view.get_object(pk, request, user)
+
+            should_proceed = await view.before_delete(instance, user)
+            if not should_proceed:
+                return None
+
+            await view.perform_delete(instance)
+            await view.after_delete(instance, user)
+            await view._invalidate_cache()
+
+            return None
+
+
+# ── GenericCrudView (All Five Combined) ─────────────────────────────────────
+
+class GenericCrudView(
+    ListMixin,
+    CreateMixin,
+    RetrieveMixin,
+    UpdateMixin,
+    DeleteMixin,
+):
+    """
+    Full CRUD view — provides all 5 standard endpoints.
+
+    Endpoints created by ``as_router()``:
+        ``GET    /``           → list
+        ``POST   /``           → create
+        ``GET    /{pk}``       → retrieve
+        ``PATCH  /{pk}``       → update
+        ``DELETE /{pk}``       → delete
+
+    Minimal usage::
+
+        class BlogView(GenericCrudView):
+            schema = Blog
+
+        router.include_router(BlogView.as_router("/blogs"))
+
+    Full customisation::
+
+        class BlogView(GenericCrudView):
+            schema = Blog
+            response_schema = BlogOut
+            permission_classes = [IsAuthenticated]
+            search_fields = ["title", "excerpt"]
+            filter_fields = ["category.$id", "featured"]
+            lookup_field = "slug"
+
+            async def get_queryset(self, request, user):
+                base = await super().get_queryset(request, user)
+                return {**base, "isPublished": True}
+
+            async def before_create(self, data, user):
+                data["author"] = str(user.id)
+                return data
+    """
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """
+        Register all 5 CRUD routes on a single ``APIRouter``.
+
+        Route registration happens here — never in ``__init__``.
+        This means you can create the class anywhere and register
+        it wherever you want, multiple times if needed.
+
+        Args:
+            prefix: URL prefix (e.g., ``"/blogs"``).
+            tags: OpenAPI tags.
+            **router_kwargs: Additional kwargs for APIRouter.
+
+        Returns:
+            A configured ``APIRouter`` with all CRUD endpoints.
+        """
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        # Register each route via private static methods
+        GenericListView._register_list_route(router, view, perm_dep)
+        GenericCreateView._register_create_route(router, view, perm_dep)
+        GenericRetrieveView._register_retrieve_route(router, view, perm_dep)
+        GenericUpdateView._register_update_route(router, view, perm_dep)
+        GenericDeleteView._register_delete_route(router, view, perm_dep)
+
+        # Register @action decorated methods
+        _register_actions(view, router)
+
+        return router
+
+
+# ── GenericStatsView ────────────────────────────────────────────────────────
+
+class GenericStatsView(ViewContext):
+    """
+    Generic view to fetch counts, sums, etc. for multiple models.
+
+    Configuration via ``stats_config`` class attribute — a list of dicts::
+
+        class DashboardStats(GenericStatsView):
+            schema = Blog  # Required but only used for router setup
+            stats_config = [
+                {"name": "total_posts", "model": Blog, "type": "count",
+                 "filters": {"is_deleted": False}},
+                {"name": "total_views", "model": Blog, "type": "sum",
+                 "field": "views", "filters": {"is_deleted": False}},
+            ]
+
+        router.include_router(
+            DashboardStats.as_router("/stats", tags=["Dashboard"])
+        )
+    """
+
+    stats_config: List[Dict[str, Any]] = []
+    permission_classes = [AllowAny]
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with the stats endpoint."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        @router.get("/", summary="Get aggregated statistics")
+        async def stats_view(request: Request, user: Any = Depends(perm_dep)) -> dict:
+            await view.resolve_context(request)
+            return await view._compute_stats()
+
+        return router
+
+    async def _compute_stats(self) -> dict:
+        """Compute all configured statistics."""
+        results: dict = {}
+
+        for config in self.stats_config:
+            model = config["model"]
+            stat_type = config.get("type", "count")
+            filters = config.get("filters", {})
+            name = config["name"]
+
+            repo = BeanieRepository(self._repository.db if self._repository else None)
+            repo.initialize(model)
+
+            if stat_type == "count":
+                results[name] = await repo.count(filters)
+            elif stat_type == "sum":
+                results[name] = await self._compute_sum(
+                    model, config.get("field", ""), filters,
+                )
+
+        return results
+
+    @staticmethod
+    async def _compute_sum(
+        model: type,
+        field: str,
+        filters: dict,
+    ) -> int:
+        """Compute a SUM aggregation for a field."""
+        collection = model.get_pymongo_collection()
+        pipeline = [
+            {"$match": filters},
+            {"$group": {"_id": None, "total": {"$sum": f"${field}"}}},
+        ]
+        agg_results = await collection.aggregate(pipeline).to_list(length=1)
+        return (agg_results[0].get("total") or 0) if agg_results else 0
+
+
+# ── GenericSubResourceView ──────────────────────────────────────────────────
+
+class GenericSubResourceView(ViewContext):
+    """
+    Generic view for adding / removing items from an array field.
+
+    Example::
+
+        class PlaylistItemsView(GenericSubResourceView):
+            schema = Playlist
+            array_field = "blog_ids"
+            target_id_param = "id"
+            permission_classes = [IsAuthenticated]
+
+        router.include_router(
+            PlaylistItemsView.as_router("/playlists", tags=["Playlists"])
+        )
+    """
+
+    array_field: str = ""
+    target_id_param: str = "id"
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with add/remove endpoints."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        cls._register_add_route(router, view, perm_dep)
+        cls._register_remove_route(router, view, perm_dep)
+
+        return router
+
+    @staticmethod
+    def _register_add_route(
+        router: APIRouter,
+        view: GenericSubResourceView,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the POST /{pk}/{array_field}/ add endpoint."""
+
+        @router.post(
+            "/{pk}/" + view.array_field + "/",
+            status_code=200,
+            summary=f"Add item to {view.array_field}",
+        )
+        async def add_item(
+            request: Request,
+            pk: str,
+            data: Dict[str, Any] = Body(...),
+            user: Any = Depends(perm_dep),
+        ) -> dict:
+            await view.resolve_context(request)
+            instance = await view.get_object(pk, request, user)
+
+            target_id = data.get(view.target_id_param)
+            if not target_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing '{view.target_id_param}' in request body.",
+                )
+
+            from beanie import PydanticObjectId
+
+            query = {"_id": PydanticObjectId(instance.get("id", instance.get("_id")))}
+            await view._repository.update(
+                query,
+                {"$addToSet": {view.array_field: PydanticObjectId(target_id)}},
+            )
+            await view._invalidate_cache()
+            return {"status": "success", "message": f"Added to {view.array_field}"}
+
+    @staticmethod
+    def _register_remove_route(
+        router: APIRouter,
+        view: GenericSubResourceView,
+        perm_dep: Callable,
+    ) -> None:
+        """Register the DELETE /{pk}/{array_field}/{target_id}/ remove endpoint."""
+
+        @router.delete(
+            "/{pk}/" + view.array_field + "/{target_id}/",
+            status_code=200,
+            summary=f"Remove item from {view.array_field}",
+        )
+        async def remove_item(
+            request: Request,
+            pk: str,
+            target_id: str,
+            user: Any = Depends(perm_dep),
+        ) -> dict:
+            await view.resolve_context(request)
+            instance = await view.get_object(pk, request, user)
+
+            from beanie import PydanticObjectId
+
+            query = {"_id": PydanticObjectId(instance.get("id", instance.get("_id")))}
+            await view._repository.update(
+                query,
+                {"$pull": {view.array_field: PydanticObjectId(target_id)}},
+            )
+            await view._invalidate_cache()
+            return {"status": "success", "message": f"Removed from {view.array_field}"}
+
+
+# ── GenericCustomApiView ────────────────────────────────────────────────────
+
+class GenericCustomApiView(ViewContext):
+    """
+    Generic view for building custom endpoints using Backbone permissions.
+
+    Subclasses should override ``get()`` or ``post()``.
+
+    Example::
+
+        class SearchApiView(GenericCustomApiView):
+            schema = Blog
+            endpoint = "/search"
+            permission_classes = [AllowAny]
+
+            async def get(self, request, user):
+                q = request.query_params.get("q", "")
+                # ... custom logic
+                return {"results": [...]}
+
+        router.include_router(
+            SearchApiView.as_router("/api", tags=["Search"])
+        )
+    """
+
+    endpoint: str = ""
+
+    @classmethod
+    def as_router(
+        cls,
+        prefix: str,
+        tags: Optional[List[str]] = None,
+        **router_kwargs: Any,
+    ) -> APIRouter:
+        """Build and return a configured APIRouter with custom endpoints."""
+        view = cls()
+        router = APIRouter(
+            prefix=prefix,
+            tags=tags or [prefix.strip("/")],
+            **router_kwargs,
+        )
+        perm_dep = view.get_permission_dependency()
+
+        # Register GET if overridden
+        if cls.get is not GenericCustomApiView.get:
+            @router.get(view.endpoint)
+            async def custom_get(
+                request: Request,
+                user: Any = Depends(perm_dep),
+            ) -> Any:
+                await view.resolve_context(request)
+                return await view.get(request, user)
+
+        # Register POST if overridden
+        if cls.post is not GenericCustomApiView.post:
+            @router.post(view.endpoint)
+            async def custom_post(
+                request: Request,
+                data: Dict[str, Any] = Body(...),
+                user: Any = Depends(perm_dep),
+            ) -> Any:
+                await view.resolve_context(request)
+                return await view.post(request, data, user)
+
+        return router
+
+    async def get(self, request: Request, user: Any) -> Any:
+        """Override in subclass to handle GET requests."""
+        raise NotImplementedError("GET method not implemented")
+
+    async def post(
+        self,
+        request: Request,
+        data: Dict[str, Any],
+        user: Any,
+    ) -> Any:
+        """Override in subclass to handle POST requests."""
+        raise NotImplementedError("POST method not implemented")
+
+
+# ── Backward Compatibility Aliases ──────────────────────────────────────────
+# These allow existing code to import old names while transitioning
+
+# Legacy constructor-based view classes
+class BaseGenericView(ViewContext):
+    """
+    Legacy base class — use ``GenericCrudView`` with ``as_router()`` instead.
+
+    Supports the old constructor-based API for backward compatibility.
+    This allows existing code like ``GenericCrud(schema=Blog, prefix="/blogs")``
+    to continue working during migration to the new ``as_router()`` pattern.
+    """
+
     def __init__(
         self,
         schema: Optional[Type[BaseModel]] = None,
         prefix: str = "",
         tags: Optional[List[str]] = None,
         repository: Optional[BeanieRepository] = None,
-        permission_classes: Union[Type[BasePermission], Sequence[Type[BasePermission]]] = IsOwner,
+        permission_classes: Any = None,
         list_fields: Optional[List[str]] = None,
         search_fields: Optional[List[str]] = None,
         filter_fields: Optional[List[str]] = None,
         ordering_fields: Optional[List[str]] = None,
         database: Optional[Any] = None,
-        use_auth: bool = False,
         cache_ttl: int = 300,
         populate_fields: Optional[Dict[str, str]] = None,
         fetch_links: bool = False,
@@ -34,14 +915,16 @@ class BaseGenericView:
         create_schema: Optional[Type[BaseModel]] = None,
         update_schema: Optional[Type[BaseModel]] = None,
         response_schema: Optional[Type[BaseModel]] = None,
-        **kwargs # Accept other kwargs safely for subclasses
-    ):
-        
+        **kwargs: Any,
+    ) -> None:
         from ..core.rate_limit import RateLimit
-        
+
         self.prefix = prefix or getattr(self, "prefix", "")
-        router_kwargs = {"prefix": self.prefix, "tags": tags or [self.prefix.strip("/") if self.prefix else "default"]}
-        
+        router_kwargs: dict = {
+            "prefix": self.prefix,
+            "tags": tags or [self.prefix.strip("/") if self.prefix else "default"],
+        }
+
         if rate_limit is True:
             router_kwargs["dependencies"] = [Depends(RateLimit())]
         elif rate_limit:
@@ -51,585 +934,398 @@ class BaseGenericView:
                 router_kwargs["dependencies"] = [rate_limit]
 
         self.router = APIRouter(**router_kwargs)
-        
-        self.schema = schema or getattr(self, "schema", None)
+
+        self.schema = schema or getattr(self.__class__, "schema", None)
         if not self.schema:
             raise ValueError("A schema must be provided or set as a class attribute.")
-            
-        self.create_schema = create_schema or getattr(self, "create_schema", self.schema)
-        self.update_schema = update_schema or getattr(self, "update_schema", Dict[str, Any])
-        self.response_schema = response_schema or getattr(self, "response_schema", self.schema)
+
+        self.create_schema = create_schema or getattr(self.__class__, "create_schema", None) or self.schema
+        self.update_schema = update_schema or getattr(self.__class__, "update_schema", None) or Dict[str, Any]
+        self.response_schema = response_schema or getattr(self.__class__, "response_schema", None) or self.schema
         self.cache_ttl = cache_ttl
         self.lookup_field = lookup_field
-        
-        # Resolve Repository Class and Instance
-        self.repository = repository
-        if not self.repository:
-            self.repository = BeanieRepository(database)
 
-        # Initialize repository with schema metadata
-        self.repository.initialize(self.schema)
-        
-        self.use_auth = use_auth
-        self.search_fields = search_fields or []
-        self.filter_fields = filter_fields or []
-        self.ordering_fields = ordering_fields or []
-        
-        if not isinstance(permission_classes, (list, tuple)):
-            self.permission_classes = [permission_classes]
-        else:
-            self.permission_classes = list(permission_classes)
+        self._repository = repository or BeanieRepository(database)
+        self._repository.initialize(self.schema)
 
-        self.list_fields = list_fields
-        self.perm_dep = PermissionDependency(self.permission_classes, self.use_auth)
-        self.cache_service: Optional[CacheService] = None
+        self.search_fields = search_fields or getattr(self.__class__, "search_fields", [])
+        self.filter_fields = filter_fields or getattr(self.__class__, "filter_fields", [])
+        self.list_fields = list_fields or getattr(self.__class__, "list_fields", None)
+
+        if permission_classes is not None:
+            if not isinstance(permission_classes, (list, tuple)):
+                self.permission_classes = [permission_classes]
+            else:
+                self.permission_classes = list(permission_classes)
+
+        perm_dep = self.get_permission_dependency()
+        self.perm_dep = perm_dep
+        self._cache = None
+        self.cache_service = None
         self.fetch_links = fetch_links
         self.populate_fields = populate_fields or {}
 
         if self.fetch_links:
-            self.populate_fields.update(self._detect_populate_fields())
-            
+            self.populate_fields.update(
+                BeanieRepository.detect_populate_fields(self.schema),
+            )
+
         self._register_actions()
-        
-    def _register_actions(self):
-        """
-        Scans the view instance for methods decorated with @action and registers them.
-        """
-        import inspect
-        for name, method in inspect.getmembers(self, inspect.ismethod):
-            config = getattr(method, "__action_config__", None)
-            if config:
-                detail = config.get("detail", False)
-                methods = config.get("methods", ["GET"])
-                kwargs = config.get("kwargs", {})
-                
-                # Default path is method name
-                path = f"/{{pk}}/{name}/" if detail else f"/{name}/"
-                
-                # If path overridden in kwargs, use it
-                if "path" in kwargs:
-                    path = kwargs.pop("path")
-                
-                self.router.add_api_route(
-                    path=path,
-                    endpoint=method,
-                    methods=[m.upper() for m in methods],
-                    **kwargs
-                )
-            
-    def _detect_populate_fields(self) -> Dict[str, Any]:
-        """
-        Detects Beanie Link fields and adds them to populate_fields.
-        Returns a dict of field_name -> target_collection.
-        """
-        from ..core.repository import BeanieRepository
-        return BeanieRepository.detect_populate_fields(self.schema)
 
-    async def _resolve_context(self, request: Request):
-        """
-        Ensure the repository and cache have the correct DB/Client from BackboneConfig.
-        """
+    def _register_actions(self) -> None:
+        """Scan for @action decorated methods and register them."""
+        _register_actions(self, self.router)
+
+    async def _resolve_context(self, request: Request) -> None:
+        """Legacy method name — delegates to resolve_context."""
+        await self.resolve_context(request)
+
+    async def resolve_context(self, request: Request) -> None:
+        """Ensure repository and cache are initialised."""
         config = request.app.state.backbone_config
-        if self.repository.db is None:
-            self.repository.db = config.database
-        
-        if not self.cache_service:
-            self.cache_service = getattr(config, "cache_service", None)
+        if self._repository.db is None:
+            self._repository.db = config.database
+        if not self._cache:
+            self._cache = getattr(config, "cache_service", None)
+            self.cache_service = self._cache
 
-    async def _invalidate_cache(self):
-        if self.cache_service:
-            # Broad pattern to clear both @cache decorator and manual _get_object_internal cache
-            pattern = f"backbone:*{self.prefix}*"
-            await self.cache_service.delete_pattern(pattern)
 
-    def _get_projection(self) -> Optional[Dict[str, int]]:
-        if self.list_fields:
-            projection = {field: 1 for field in self.list_fields}
-            projection["_id"] = 1
-            return projection
-        return None
+# Legacy view classes that use the constructor-based API
+class GenericList(BaseGenericView, ListMixin):
+    """Legacy list view — use ``GenericListView`` with ``as_router()`` instead."""
 
-    async def _get_object_internal(self, pk: str, request: Request, user: Optional[UserOut], use_cache: bool = True) -> Any:
-        await self._resolve_context(request)
-        
-        cache_key = f"backbone:cache:{self.prefix}:detail:{pk}"
-        
-        async def fetch_item():
-            query = {
-                "$or": [{self.lookup_field: pk}, {"id": pk}],
-                "is_deleted": False
-            }
-            item = await self.repository.get_one(query)
-            if not item:
-                raise HTTPException(status_code=404, detail="Item not found")
-            
-            # Note: item is a dict here, make sure permission_class handles dict or convert if needed
-            for permission_class in self.permission_classes:
-                perm = permission_class(request, user)
-                if not await perm.has_object_permission(item):
-                    raise HTTPException(status_code=403, detail="Object-level access denied")
-            return item if isinstance(item, dict) else item.model_dump(by_alias=True)
-
-        if use_cache and self.cache_service and self.cache_service.enabled:
-            data = await self.cache_service.get_or_set(cache_key, self.cache_ttl, fetch_item)
-            return self.schema(**data)
-            
-        item_data = await fetch_item()
-        return self.schema(**item_data)
-
-    def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Converts string IDs provided in the payload into valid MongoDB DBRef objects
-        for Beanie Link fields, allowing clients to send simple string IDs.
-        """
-        from bson import ObjectId
-        from bson.dbref import DBRef
-        
-        for field_name, config in self.populate_fields.items():
-            if field_name not in payload or not payload[field_name]:
-                continue
-                
-            val = payload[field_name]
-            collection_name = config.get("collection")
-            if not collection_name:
-                continue
-                
-            try:
-                if isinstance(val, str) and len(val) == 24:
-                    payload[field_name] = DBRef(collection=collection_name, id=ObjectId(val))
-                elif isinstance(val, list):
-                    new_val = []
-                    for item in val:
-                        if isinstance(item, str) and len(item) == 24:
-                            new_val.append(DBRef(collection=collection_name, id=ObjectId(item)))
-                        elif isinstance(item, dict) and "id" in item:
-                            new_val.append(DBRef(collection=collection_name, id=ObjectId(item["id"])))
-                        else:
-                            new_val.append(item)
-                    payload[field_name] = new_val
-                elif isinstance(val, dict) and "id" in val:
-                    payload[field_name] = DBRef(collection=collection_name, id=ObjectId(val["id"]))
-            except Exception:
-                pass
-                
-        return payload
-
-class GenericList(BaseGenericView):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._register_list_route()
+        self._register_list_endpoint()
 
-    def _register_list_route(self):
-        # Add filter_fields to OpenAPI documentation dynamically
-        parameters = []
-        if self.filter_fields:
-            for field in self.filter_fields:
-                parameters.append({
-                    "name": field,
-                    "in": "query",
-                    "required": False,
-                    "schema": {"type": "string"},
-                    "description": f"Filter by {field}"
-                })
-        
-        # If list_fields is set, result dicts are partial — don't validate against the full schema.
-        # Use response_schema only when returning full objects (no projection).
+    def _register_list_endpoint(self) -> None:
+        """Register the list route on self.router."""
+        view = self
+
         list_response_model = PaginatedResponse[Any] if self.list_fields else PaginatedResponse[self.response_schema]
-        
-        @self.router.get("/", response_model=list_response_model, openapi_extra={"parameters": parameters})
-        # @cache(key_prefix=f"backbone:{self.prefix}:list")
-        async def list(
+
+        @self.router.get("/", response_model=list_response_model)
+        async def list_endpoint(
             request: Request,
             user: Optional[UserOut] = Depends(self.perm_dep),
-            page: int = Query(None, ge=1),
-            page_size: int = Query(None, ge=1, le=100),
-            skip: int = Query(None, ge=0),
-            limit: int = Query(None, ge=1, le=100),
+            page: int = Query(1, ge=1),
+            page_size: int = Query(10, ge=1, le=100),
             search: Optional[str] = None,
-            sort: Optional[str] = None
-        ):
-            await self._resolve_context(request)
-            
-            # Default values if not provided
-            page = page or 1
-            page_size = page_size or 10
-            
-            # If skip/limit are provided, calculate page/page_size for consistency
-            if skip is not None and limit is not None:
-                page_size = limit
-                page = (skip // limit) + 1
-            
-            query = {"is_deleted": {"$ne": True}}
-            if search and self.search_fields:
-                query["$or"] = [{field: {"$regex": search, "$options": "i"}} for field in self.search_fields]
-            
-            from urllib.parse import unquote
-            from beanie import PydanticObjectId
-            
-            for key, val in request.query_params.items():
-                key = unquote(key)
-                if key in ["page", "page_size", "search", "sort", "skip", "limit"]:
-                    continue
-                
-                # Determine the field name for filter check
-                field_name = key.split("__")[0] if "__" in key else key
-                
-                # Check if this field is allowed for filtering
-                is_allowed = False
-                if self.filter_fields:
-                    if field_name in self.filter_fields or key in self.filter_fields:
-                        is_allowed = True
-                    else:
-                        # Handle dot notation partially (e.g. category in filter_fields allows category.name)
-                        for f in self.filter_fields:
-                            if field_name.startswith(f + ".") or f == field_name:
-                                is_allowed = True
-                                break
-                
-                if is_allowed:
-                    # Simple type conversion
-                    if isinstance(val, str):
-                        if val.lower() == 'true': val = True
-                        elif val.lower() == 'false': val = False
-                        elif val.isdigit(): val = int(val)
-                    
-                    if "__" in key:
-                        field, op = key.split("__", 1)
-                        
-                        # Special handling for DBRef fields ($id, $ref)
-                        # MongoDB handles owner.$id automatically in queries, but we must ensure it's not treated as an operator
-                        
-                        # Handle ObjectId conversion for related fields
-                        if any(suffix in field for suffix in [".id", ".$id", "_id"]):
-                            try:
-                                if isinstance(val, str) and "," in val:
-                                    val = [PydanticObjectId(v.strip()) for v in val.split(",")]
-                                else:
-                                    val = PydanticObjectId(str(val))
-                            except: pass
-                            
-                        if op == "ne": query[field] = {"$ne": val}
-                        elif op == "in": query[field] = {"$in": val if isinstance(val, list) else val.split(",")}
-                        # ...
-                        elif op == "nin": query[field] = {"$nin": val if isinstance(val, list) else val.split(",")}
-                        elif op == "gt": query[field] = {"$gt": val}
-                        elif op == "gte": query[field] = {"$gte": val}
-                        elif op == "lt": query[field] = {"$lt": val}
-                        elif op == "lte": query[field] = {"$lte": val}
-                    else:
-                        # Handle ObjectId conversion for direct fields
-                        if any(suffix in key for suffix in [".id", ".$id", "_id"]):
-                            try:
-                                val = PydanticObjectId(str(val))
-                            except: pass
-                        query[key] = val
-            
-            skip_val = (page - 1) * page_size
-            
-            sort_parsed = None
-            if sort:
-                sort_parsed = []
-                for s in sort.split(","):
-                    s = s.strip()
-                    if s.startswith("-"):
-                        sort_parsed.append((s[1:], -1))
-                    else:
-                        sort_parsed.append((s, 1))
-            
-            results = await self.repository.get_all(
-                query, 
-                skip=skip_val, 
-                limit=page_size, 
-                sort=sort_parsed,
-                projection=self._get_projection(),
-                populate_fields=self.populate_fields
-            )
-            total = await self.repository.count(query, populate_fields=self.populate_fields)
-            
-            return {
-                "total": total,
-                "count": total, # For compatibility
-                "page": page,
-                "page_size": page_size,
-                "total_pages": (total + page_size - 1) // page_size,
-                "results": results
-            }
-
-class GenericCreate(BaseGenericView):
-    def __init__(self, *args, **kwargs):
-        # Default use_auth to True for creation unless explicitly set
-        if "use_auth" not in kwargs:
-            kwargs["use_auth"] = True
-        super().__init__(*args, **kwargs)
-        self._register_create_route()
-
-    def _register_create_route(self):
-        from datetime import datetime, timezone
-        @self.router.post("/", response_model=self.response_schema, status_code=201)
-        @cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create") # Idempotency
-        async def create(request: Request, data: self.create_schema, user: Optional[UserOut] = Depends(self.perm_dep)):
-            await self._resolve_context(request)
-            
-            # Step 1: Extract string IDs from Pydantic model before model_dump() destroys them
-            # via field_serializer rules
-            extracted_links = {}
-            for field_name in self.populate_fields.keys():
-                if hasattr(data, field_name):
-                    val = getattr(data, field_name)
-                    if val is not None:
-                        extracted_links[field_name] = val
-            
-            # Step 2: Dump the model 
-            validated_data = data.model_dump(by_alias=True, exclude={"id"}) if hasattr(data, "model_dump") else data
-            
-            # Step 3: Restore the extracted link strings into the payload
-            for k, v in extracted_links.items():
-                validated_data[k] = v
-                
-            # Step 4: Convert string IDs into DBRefs for Link fields
-            validated_data = self._process_link_fields(validated_data)
-            
-            # Prepare audit fields
-            audit_data = {
-                "created_at": datetime.now(timezone.utc),
-                "is_deleted": False
-            }
-            if user:
-                audit_data["created_by"] = str(user.id)
-                
-            validated_data.update(audit_data)
-            result = await self.repository.create(validated_data)
-            await self._invalidate_cache()
-            return result
-
-class GenericRetrieve(BaseGenericView):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._register_retrieve_route()
-
-    def _register_retrieve_route(self):
-        @self.router.get("/{pk}", response_model=self.response_schema)
-        @cache(key_prefix=f"backbone:cache:{self.prefix}:detail")
-        async def retrieve(request: Request, pk: str, user: Optional[UserOut] = Depends(self.perm_dep)):
-            await self._resolve_context(request)
-            # We bypass the internal _get_object_internal and do it directly to support projection/population
-            # and for the decorator to work perfectly
-            query = {
-                "$or": [{self.lookup_field: pk}, {"id": pk}],
-                "is_deleted": False
-            }
-            item = await self.repository.get_one(
+            sort: Optional[str] = None,
+        ) -> dict:
+            await view._resolve_context(request)
+            query = await view.get_queryset(request, user)
+            query = await view.filter_queryset(query, request)
+            results, total = await view.perform_list(
                 query,
-                populate_fields=self.populate_fields
+                page=page,
+                page_size=page_size,
+                sort=_parse_sort(sort),
             )
-            if not item:
-                raise HTTPException(status_code=404, detail="Item not found")
-            
-            for permission_class in self.permission_classes:
-                perm = permission_class(request, user)
-                if not await perm.has_object_permission(item):
-                    raise HTTPException(status_code=403, detail="Object-level access denied")
-            
-            # Emit Signal for analytics (View counting, etc.)
-            from ..core.signals import signals
-            try:
-                await signals.on_view.emit(item, model_class=self.schema, request=request, user=user)
-            except Exception:
-                pass 
-            
-            return item
+            return await view.format_list(results, total, page, page_size)
 
-class GenericUpdate(BaseGenericView):
-    def __init__(self, *args, **kwargs):
-        kwargs["use_auth"] = True
+
+class GenericCreate(BaseGenericView, CreateMixin):
+    """Legacy create view — use ``GenericCreateView`` with ``as_router()`` instead."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._register_update_route()
+        self._register_create_endpoint()
 
-    def _get_update_allowed_fields(self) -> set:
-        """Return the set of field names allowed for update (from update_schema)."""
-        schema = self.update_schema
-        if hasattr(schema, 'model_fields'):
-            return set(schema.model_fields.keys())
-        return set()
+    def _register_create_endpoint(self) -> None:
+        """Register the create route on self.router."""
+        view = self
+        create_schema = self.create_schema
 
-    def _register_update_route(self):
-        @self.router.patch("/{pk}", response_model=self.response_schema)
-        async def update(request: Request, pk: str, data: self.update_schema, user: UserOut = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user, use_cache=False)
-            
-            # --- Security: allowlist to schema fields ONLY (prevents mass assignment) ---
-            allowed = self._get_update_allowed_fields()
-            raw = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else dict(data)
-            update_data = {k: v for k, v in raw.items() if k in allowed}
-            # Never allow these regardless of schema definition
-            for dangerous in ("is_superuser", "is_staff", "is_active", "hashed_password", "password"):
-                update_data.pop(dangerous, None)
-            
-            # Auto-convert string IDs to DBRefs for Link fields
-            update_data = self._process_link_fields(update_data)
-            
-            from datetime import datetime, timezone
+        async def create_endpoint(
+            request: Request,
+            data: Any = Body(...),
+            user: Optional[UserOut] = Depends(self.perm_dep),
+        ) -> Any:
+            await view._resolve_context(request)
+            validated_data = _extract_create_data(view, data)
+            validated_data.update({
+                "created_at": datetime.now(timezone.utc),
+                "is_deleted": False,
+            })
+            if user:
+                validated_data["created_by"] = str(user.id)
+            validated_data = await view.before_create(validated_data, user)
+            instance = await view.perform_create(validated_data)
+            instance = await view.after_create(instance, user)
+            await view._invalidate_cache()
+            return instance
+
+        create_endpoint.__annotations__["data"] = create_schema
+        cached_endpoint = cache(expire=30, include_ip=True, key_prefix=f"backbone:{self.prefix}:create")(create_endpoint)
+        self.router.add_api_route("/", cached_endpoint, methods=["POST"], response_model=self.response_schema, status_code=201)
+
+
+class GenericRetrieve(BaseGenericView, RetrieveMixin):
+    """Legacy retrieve view — use ``GenericRetrieveView`` with ``as_router()`` instead."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._register_retrieve_endpoint()
+
+    def _register_retrieve_endpoint(self) -> None:
+        """Register the retrieve route on self.router."""
+        view = self
+
+        @self.router.get("/{pk}", response_model=self.response_schema)
+        async def retrieve_endpoint(
+            request: Request,
+            pk: str,
+            user: Optional[UserOut] = Depends(self.perm_dep),
+        ) -> Any:
+            await view._resolve_context(request)
+            await view.before_retrieve(pk, request, user)
+            instance = await view.perform_retrieve(pk, request, user)
+            instance = await view.after_retrieve(instance, request, user)
+            return instance
+
+
+class GenericUpdate(BaseGenericView, UpdateMixin):
+    """Legacy update view — use ``GenericUpdateView`` with ``as_router()`` instead."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._register_update_endpoint()
+
+    def _register_update_endpoint(self) -> None:
+        """Register the update route on self.router."""
+        view = self
+        update_schema = self.update_schema
+
+        async def update_endpoint(
+            request: Request,
+            pk: str,
+            data: Any = Body(...),
+            user: UserOut = Depends(self.perm_dep),
+        ) -> Any:
+            await view._resolve_context(request)
+            instance = await view.get_object(pk, request, user)
+            update_data = _extract_update_data(view, data)
             update_data["updated_at"] = datetime.now(timezone.utc)
-            update_data["updated_by"] = str(user.id)
-            
-            query = {"$or": [{self.lookup_field: pk}, {"id": pk}]}
-            result = await self.repository.update(query, update_data)
-            await self._invalidate_cache()
+            if user:
+                update_data["updated_by"] = str(user.id)
+            update_data = await view.before_update(instance, update_data, user)
+            result = await view.perform_update(instance, update_data)
+            result = await view.after_update(result, user)
+            await view._invalidate_cache()
             return result
 
-class GenericDelete(BaseGenericView):
-    def __init__(self, *args, **kwargs):
-        kwargs["use_auth"] = True
-        super().__init__(*args, **kwargs)
-        self._register_delete_route()
+        update_endpoint.__annotations__["data"] = update_schema
+        self.router.add_api_route("/{pk}", update_endpoint, methods=["PATCH"], response_model=self.response_schema)
 
-    def _register_delete_route(self):
+
+class GenericDelete(BaseGenericView, DeleteMixin):
+    """Legacy delete view — use ``GenericDeleteView`` with ``as_router()`` instead."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._register_delete_endpoint()
+
+    def _register_delete_endpoint(self) -> None:
+        """Register the delete route on self.router."""
+        view = self
+
         @self.router.delete("/{pk}", status_code=204)
-        async def delete(request: Request, pk: str, user: UserOut = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user, use_cache=False)
-            query = {"$or": [{self.lookup_field: pk}, {"id": pk}]}
-            await self.repository.delete(query, soft=True)
-            await self._invalidate_cache()
+        async def delete_endpoint(
+            request: Request,
+            pk: str,
+            user: UserOut = Depends(self.perm_dep),
+        ) -> None:
+            await view._resolve_context(request)
+            instance = await view.get_object(pk, request, user)
+            should_proceed = await view.before_delete(instance, user)
+            if not should_proceed:
+                return None
+            await view.perform_delete(instance)
+            await view.after_delete(instance, user)
+            await view._invalidate_cache()
             return None
+
 
 class GenericCrud(GenericList, GenericCreate, GenericRetrieve, GenericUpdate, GenericDelete):
     """
-    Combined CRUD view with all standard operations.
+    Legacy combined CRUD view — use ``GenericCrudView`` with ``as_router()`` instead.
+
+    Maintains backward compatibility with the constructor-based API.
     """
-    def __init__(self, *args, **kwargs):
-        # We don't call super().__init__ because it would call BaseGenericView and then 
-        # all mixins would call it again. Instead, we call each mixin's _register method.
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         BaseGenericView.__init__(self, *args, **kwargs)
-        self._register_list_route()
-        self._register_create_route()
-        self._register_retrieve_route()
-        self._register_update_route()
-        self._register_delete_route()
+        self._register_list_endpoint()
+        self._register_create_endpoint()
+        self._register_retrieve_endpoint()
+        self._register_update_endpoint()
+        self._register_delete_endpoint()
+
 
 class GenericStats(BaseGenericView):
     """
-    Generic view to fetch counts, sums, etc. for multiple models in one endpoint.
-    Example stats_config:
-    [
-        {"name": "total_posts", "model": Blog, "type": "count", "filters": {"is_deleted": False}},
-        {"name": "total_views", "model": Blog, "type": "sum", "field": "views", "filters": {"is_deleted": False}}
-    ]
+    Legacy stats view — use ``GenericStatsView`` with ``as_router()`` instead.
+
+    Fixed: NameError on ``agg_results`` — now properly defines local variable.
     """
-    def __init__(self, stats_config: List[Dict[str, Any]], *args, **kwargs):
-        # Ensure we don't accidentally enforce object owner auth for stats
-        kwargs.setdefault("use_auth", False)
+
+    def __init__(
+        self,
+        stats_config: List[Dict[str, Any]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         kwargs.setdefault("permission_classes", [AllowAny])
         super().__init__(*args, **kwargs)
         self.stats_config = stats_config
         self._register_stats_route()
 
-    def _register_stats_route(self):
+    def _register_stats_route(self) -> None:
+        """Register the stats endpoint."""
+        view = self
+
         @self.router.get("/", tags=self.router.tags)
-        async def get_stats(request: Request):
-            await self._resolve_context(request)
-            results = {}
-            for config in self.stats_config:
+        async def get_stats(request: Request) -> dict:
+            await view._resolve_context(request)
+            results: dict = {}
+
+            for config in view.stats_config:
                 model = config["model"]
                 stat_type = config.get("type", "count")
                 filters = config.get("filters", {})
                 name = config["name"]
-                
-                repo = BeanieRepository(self.repository.db)
+
+                repo = BeanieRepository(view._repository.db)
                 repo.initialize(model)
-                
+
                 if stat_type == "count":
-                    count = await repo.count(filters)
-                    results[name] = count
+                    results[name] = await repo.count(filters)
                 elif stat_type == "sum":
                     field = config.get("field")
                     collection = model.get_pymongo_collection()
                     pipeline = [
                         {"$match": filters},
-                        {"$group": {"_id": None, "total": {"$sum": f"${field}"}}}
+                        {"$group": {"_id": None, "total": {"$sum": f"${field}"}}},
                     ]
-                    # .aggregate() returns a Motor cursor — must call to_list() to materialise
-                    cursor = collection.aggregate(pipeline)
-                    agg_results = await cursor.to_list(length=1)
+                    agg_results = await collection.aggregate(pipeline).to_list(length=1)
                     results[name] = (agg_results[0].get("total") or 0) if agg_results else 0
+
             return results
 
+        return get_stats
+
+
 class GenericSubResource(BaseGenericView):
-    """
-    Generic view for adding or removing items from an array field (Like playlists -> blogs).
-    """
-    def __init__(self, array_field: str, target_id_param: str = "id", *args, **kwargs):
-        kwargs.setdefault("use_auth", True)
+    """Legacy sub-resource view — use ``GenericSubResourceView`` with ``as_router()`` instead."""
+
+    def __init__(
+        self,
+        array_field: str,
+        target_id_param: str = "id",
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.array_field = array_field
         self.target_id_param = target_id_param
         self._register_array_routes()
 
-    def _register_array_routes(self):
-        from fastapi import Body
+    def _register_array_routes(self) -> None:
+        """Register add/remove array routes."""
         from beanie import PydanticObjectId
-        
+
+        view = self
+
         @self.router.post("/{pk}/" + self.array_field + "/", status_code=200)
-        async def add_item(request: Request, pk: str, data: Dict[str, Any] = Body(...), user: Optional[UserOut] = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user, use_cache=False)
-            
-            target_id = data.get(self.target_id_param)
+        async def add_item(
+            request: Request,
+            pk: str,
+            data: Dict[str, Any] = Body(...),
+            user: Optional[UserOut] = Depends(self.perm_dep),
+        ) -> dict:
+            await view._resolve_context(request)
+            item = await view.get_object(pk, request, user)
+
+            target_id = data.get(view.target_id_param)
             if not target_id:
-                raise HTTPException(status_code=400, detail=f"Missing {self.target_id_param}")
-                
-            query = {"_id": item.id}
-            await self.repository.update(query, {
-                "$addToSet": {self.array_field: PydanticObjectId(target_id)}
-            })
-            await self._invalidate_cache()
-            return {"status": "success", "message": f"Added to {self.array_field}"}
+                raise HTTPException(status_code=400, detail=f"Missing {view.target_id_param}")
+
+            item_id = item.get("id") or item.get("_id")
+            query = {"_id": PydanticObjectId(item_id)}
+            await view._repository.update(
+                query,
+                {"$addToSet": {view.array_field: PydanticObjectId(target_id)}},
+            )
+            await view._invalidate_cache()
+            return {"status": "success", "message": f"Added to {view.array_field}"}
 
         @self.router.delete("/{pk}/" + self.array_field + "/{target_id}/", status_code=200)
-        async def remove_item(request: Request, pk: str, target_id: str, user: Optional[UserOut] = Depends(self.perm_dep)):
-            item = await self._get_object_internal(pk, request, user, use_cache=False)
-            
-            query = {"_id": item.id}
-            await self.repository.update(query, {
-                "$pull": {self.array_field: PydanticObjectId(target_id)}
-            })
-            await self._invalidate_cache()
-            return {"status": "success", "message": f"Removed from {self.array_field}"}
+        async def remove_item(
+            request: Request,
+            pk: str,
+            target_id: str,
+            user: Optional[UserOut] = Depends(self.perm_dep),
+        ) -> dict:
+            await view._resolve_context(request)
+            item = await view.get_object(pk, request, user)
+
+            item_id = item.get("id") or item.get("_id")
+            query = {"_id": PydanticObjectId(item_id)}
+            await view._repository.update(
+                query,
+                {"$pull": {view.array_field: PydanticObjectId(target_id)}},
+            )
+            await view._invalidate_cache()
+            return {"status": "success", "message": f"Removed from {view.array_field}"}
+
 
 class GenericCustomApi(BaseGenericView):
-    """
-    Generic view to easily build custom endpoints using standard Backbone permissions logic.
-    Subclasses should override `get` or `post`.
-    """
-    def __init__(self, endpoint: str = "", *args, **kwargs):
-        # BaseGenericView needs a schema, but custom APIs might not map to a DB collection.
-        # We can pass schema=None if it doesn't map directly, but the repository logic might complain 
-        # so typically a dummy schema or the main model schema is passed.
-        from ..core.permissions import AllowAny
+    """Legacy custom API view — use ``GenericCustomApiView`` with ``as_router()`` instead."""
+
+    def __init__(
+        self,
+        endpoint: str = "",
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         kwargs.setdefault("permission_classes", [AllowAny])
         super().__init__(*args, **kwargs)
         self.endpoint = endpoint
         self._register_custom_routes()
 
-    def _register_custom_routes(self):
-        from fastapi import Body
+    def _register_custom_routes(self) -> None:
+        """Register custom GET/POST routes."""
+        view = self
 
-        # Check if the subclass implemented `get`
         if type(self).get != GenericCustomApi.get:
             @self.router.get(self.endpoint, tags=self.router.tags)
-            async def custom_get(request: Request, user: Optional[UserOut] = Depends(self.perm_dep)):
-                await self._resolve_context(request) # Ensure db access is ready if needed
-                return await self.get(request, user)
+            async def custom_get(
+                request: Request,
+                user: Optional[UserOut] = Depends(self.perm_dep),
+            ) -> Any:
+                await view._resolve_context(request)
+                return await view.get(request, user)
 
-        # Check if the subclass implemented `post`
         if type(self).post != GenericCustomApi.post:
             @self.router.post(self.endpoint, tags=self.router.tags)
-            async def custom_post(request: Request, data: Dict[str, Any] = Body(...), user: Optional[UserOut] = Depends(self.perm_dep)):
-                await self._resolve_context(request)
-                return await self.post(request, data, user)
+            async def custom_post(
+                request: Request,
+                data: Dict[str, Any] = Body(...),
+                user: Optional[UserOut] = Depends(self.perm_dep),
+            ) -> Any:
+                await view._resolve_context(request)
+                return await view.post(request, data, user)
 
     async def get(self, request: Request, user: Optional[UserOut]) -> Any:
-        # Override in subclass
+        """Override in subclass."""
         raise NotImplementedError("GET method not implemented")
 
-    async def post(self, request: Request, data: Dict[str, Any], user: Optional[UserOut]) -> Any:
-        # Override in subclass
+    async def post(
+        self,
+        request: Request,
+        data: Dict[str, Any],
+        user: Optional[UserOut],
+    ) -> Any:
+        """Override in subclass."""
         raise NotImplementedError("POST method not implemented")
