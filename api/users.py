@@ -41,7 +41,7 @@ async def get_top_authors():
     
     user_repo = get_repo(User)
     # Get top 5 active users
-    users = await user_repo.get_all({"is_active": True}, limit=5)
+    users, _ = await user_repo.get_all({"is_active": True}, limit=5)
     
     blog_repo = get_repo(Blog)
     blog_view_repo = get_repo(BlogView)
@@ -56,7 +56,7 @@ async def get_top_authors():
         blog_count = await blog_repo.count({"author.$id": obj_id, "is_deleted": False})
         
         # 2. Total Views & Likes 
-        blogs = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
+        blogs, _ = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
         blog_ids = [PydanticObjectId(b["id"]) for b in blogs]
         
         total_views = 0
@@ -121,8 +121,7 @@ async def get_all_users_with_stats(
         ]
     
     # 2. Get Users
-    users = await user_repo.get_all(query, skip=skip, limit=limit)
-    total = await user_repo.count(query)
+    users, total = await user_repo.get_all(query, skip=skip, limit=limit)
     
     blog_repo = get_repo(Blog)
     blog_view_repo = get_repo(BlogView)
@@ -137,7 +136,7 @@ async def get_all_users_with_stats(
         blog_count = await blog_repo.count({"author.$id": obj_id, "is_deleted": False})
         
         # Views & Likes 
-        blogs = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
+        blogs, _ = await blog_repo.get_all({"author.$id": obj_id, "is_deleted": False}, limit=1000, projection={"id": 1})
         blog_ids = [PydanticObjectId(b["id"]) for b in blogs]
         
         total_views = 0
@@ -212,7 +211,7 @@ async def get_user_profile(email: str):
     blog_count = await blog_repo.count({"author.$id": PydanticObjectId(user_id), "is_deleted": False})
     
     # 2. Total Views & Likes 
-    blogs_stats = await blog_repo.get_all({"author.$id": PydanticObjectId(user_id), "is_deleted": False}, limit=1000)
+    blogs_stats, _ = await blog_repo.get_all({"author.$id": PydanticObjectId(user_id), "is_deleted": False}, limit=1000)
     blog_ids = [b["id"] for b in blogs_stats]
     
     total_views = await blog_view_repo.count({"blog.$id": {"$in": blog_ids}})

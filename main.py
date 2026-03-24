@@ -11,12 +11,15 @@ import os
 
 # Schemas
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
+from schemas.content import FAQ, Testimonial
+from schemas.playlists import Playlist
 
 # Routers
 from api.users import router as users_router
 from api.blogs import router as blogs_router
 from backbone.core.media_router import router as media_router
-from backbone.core.media_router import router as media_router
+from api.content import router as content_router
+from api.playlists import router as playlists_router
 
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
@@ -27,7 +30,8 @@ app = FastAPI(title="Modular Backbone Framework")
 
 
 models_to_register = [
-    Blog, BlogCategory, BlogLike, BlogView
+    Blog, BlogCategory, BlogLike, BlogView,
+    FAQ, Testimonial, Playlist
 ]
 
 BackboneConfig(
@@ -43,6 +47,8 @@ BackboneConfig(
 app.include_router(users_router, prefix="/api")
 app.include_router(blogs_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
+app.include_router(content_router, prefix="/api")
+app.include_router(playlists_router, prefix="/api")
 
 @app.get("/")
 async def root():

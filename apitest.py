@@ -164,6 +164,64 @@ async def create_blogs(
     return [r for r in results if r]
 
 
+async def create_playlists(client: httpx.AsyncClient, token: str, uid: str, blog_ids: List[str], thumb_id: Optional[str]):
+    if not blog_ids:
+        return
+    headers = {"Authorization": f"Bearer {token}"}
+    for i in range(2):
+        ts = int(time.time() * 1000)
+        selected_blogs = random.sample(blog_ids, k=min(3, len(blog_ids)))
+        data = {
+            "name": f"Playlist {i + 1} for User {uid[:5]}",
+            "slug": f"playlist-{uid[-5:]}-{i}-{ts}",
+            "description": "A curated collection of my best tech blogs.",
+            "thumbnail": thumb_id,
+            "blogs": selected_blogs,
+            "is_public": True,
+            "owner": uid
+        }
+        resp = await client.post(f"{BASE_URL}/api/playlists/", json=data, headers=headers)
+        if resp.status_code == 201:
+            print(f"  ✔ Playlist created: {data['name']}")
+        else:
+            print(f"  ✘ Playlist failed {resp.status_code}: {resp.text[:120]}")
+
+
+async def create_testimonial(client: httpx.AsyncClient, token: str, uid: str):
+    headers = {"Authorization": f"Bearer {token}"}
+    testimonials = [
+        "This platform has completely transformed how I write blogs!",
+        "Incredible performance and beautiful UI. Highly recommended.",
+        "The best blogging framework I've ever used. Simply amazing.",
+        "Fastest API I've ever integrated with. Love the customizability."
+    ]
+    data = {
+        "user": uid,
+        "content": random.choice(testimonials)
+    }
+    resp = await client.post(f"{BASE_URL}/api/testimonials/", json=data, headers=headers)
+    if resp.status_code == 201:
+        print(f"  ✔ Testimonial created for user: {uid[:8]}")
+    else:
+        print(f"  ✘ Testimonial failed {resp.status_code}: {resp.text[:120]}")
+
+
+async def create_faqs(client: httpx.AsyncClient, token: str):
+    headers = {"Authorization": f"Bearer {token}"}
+    faqs = [
+        {"question": "How do I create a new blog post?", "answer": "Go to your dashboard, click 'New Blog', and start writing!"},
+        {"question": "Can I edit a published blog?", "answer": "Yes, you can edit your blogs anytime from the author portal."},
+        {"question": "How are views calculated?", "answer": "We use a smart 15-minute deduplication system to ensure accurate unique view counts."},
+        {"question": "What is a Playlist?", "answer": "A playlist is a curated collection of your favorite blogs that you can share with others!"}
+    ]
+    for i, faq in enumerate(faqs):
+        resp = await client.post(f"{BASE_URL}/api/faqs/", json=faq, headers=headers)
+        if resp.status_code == 201:
+            print(f"  ✔ FAQ created: {faq['question']}")
+        else:
+            print(f"  ✘ FAQ failed {resp.status_code}: {resp.text[:120]}")
+
+
 async def test_blog_list(client: httpx.AsyncClient):
     """Verify list endpoint and basic pagination."""
     resp = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=5")
@@ -219,6 +277,15 @@ async def user_worker(i: int) -> List[str]:
         # Create category + blogs
         cat_id = await create_category(client, token, i)
         slugs_raw = await create_blogs(client, token, uid, uname, cat_id, thumb_id, section_img_id)
+        
+        # Create Playlists and Testimonial
+        if slugs_raw:
+            await create_playlists(client, token, uid, slugs_raw, thumb_id)
+        
+        # Only ~20% of users leave a testimonial to simulate real-world usage
+        if random.random() < 0.2:
+            await create_testimonial(client, token, uid)
+            
         return slugs_raw
 
 
@@ -271,6 +338,19 @@ async def main():
     results = await asyncio.gather(*[bounded_worker(i) for i in range(NUM_USERS)])
     for slugs in results:
         all_slugs.extend(slugs)
+        
+    # Generate FAQs globally using the very first user's token (or admin)
+    print("\n[Seed] Generating FAQs...")
+    async def global_content_seeder():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            auth = await client.post(f"{BASE_URL}/api/auth/login", json={"email": f"user0_{int(time.time() - 1000)}@test.com", "password": "password123"})
+            # Fallback to authenticating just to create FAQs
+            if auth.status_code != 200:
+                auth = await register_and_login(client, 9999)
+            if auth and "access_token" in auth:
+                await create_faqs(client, auth["access_token"])
+    
+    await global_content_seeder()
 
     print(f"\n[Seed] Done. Created {len(all_slugs)} blogs across {NUM_USERS} users.")
 

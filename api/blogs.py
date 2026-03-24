@@ -325,15 +325,58 @@ async def handle_blog_view(instance: dict, **kwargs):
         # Same user as author, do not increment views
         return
         
-    # Create a BlogView document in MongoDB and increment Blog counter
+    global _recent_views_cache
+    if '_recent_views_cache' not in globals():
+        _recent_views_cache = {}
+        
+    try:
+        request = kwargs.get("request")
+        ip_address = request.client.host if request and hasattr(request, "client") and request.client else None
+    except Exception:
+        ip_address = None
+        
+    import time
+    now_ts = time.time()
+    
+    # Clean up cache every ~1000 requests loosely (prevent memory leak)
+    if len(_recent_views_cache) > 10000:
+        _recent_views_cache.clear()
+        
+    cache_key = f"{blog_id}:{current_user_id or ip_address or 'unknown'}"
+    
+    last_view_time = _recent_views_cache.get(cache_key)
+    if last_view_time and (now_ts - last_view_time) < (15 * 60): # 15 minutes
+        return
+        
+    _recent_views_cache[cache_key] = now_ts
+
+    # Deduplicate recent views (15 minutes) in Database (for multi-worker sync)
     try:
         from schemas.blogs import BlogView
         from bson import ObjectId
-        
-        request = kwargs.get("request")
-        ip_address = request.client.host if request and hasattr(request, "client") and request.client else None
+        from datetime import datetime, timezone, timedelta
         
         view_repo = get_repo(BlogView, request)
+        
+        # Check if a view was recorded recently (15 minutes window)
+        time_threshold = datetime.now(timezone.utc) - timedelta(minutes=15)
+        query = {
+            "blog.$id": ObjectId(blog_id),
+            "created_at": {"$gte": time_threshold}
+        }
+        
+        if current_user_id:
+            query["user.$id"] = ObjectId(current_user_id)
+        elif ip_address:
+            query["ip_address"] = ip_address
+        else:
+            query["ip_address"] = "unknown"
+            
+        recent_view = await BlogView.get_pymongo_collection().find_one(query)
+        if recent_view:
+            return  # Skip incrementing, already viewed recently
+
+        # Create a BlogView document in MongoDB and increment Blog counter
         await view_repo.create({
             "user": str(current_user_id) if current_user_id else None,
             "blog": str(blog_id),
@@ -347,6 +390,13 @@ async def handle_blog_view(instance: dict, **kwargs):
     except Exception as e:
         print(f"Analytics Error (View Count): {e}")
 
-# Register the signal listener
+# Register the signal listener safely to prevent duplication across module reloads
 from backbone.core.signals import signals
+
+# Remove old handlers with the same name to prevent duplicates
+signals.on_view._handlers[Blog] = [
+    h for h in signals.on_view._handlers.get(Blog, []) 
+    if getattr(h, "__name__", "") != "handle_blog_view"
+]
+
 signals.on_view.connect(Blog, handle_blog_view)
