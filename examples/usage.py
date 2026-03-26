@@ -1,10 +1,9 @@
 """
-Backbone Framework — Usage Examples
+Backbone Framework - Usage Examples
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 10 examples showing real-world usage of the Backbone framework.
-These demonstrate both the new ``as_router()`` pattern and the
-legacy constructor pattern.
+These demonstrate the modern as_router() pattern.
 
 Note: These examples assume you have Beanie Document models
       defined elsewhere (e.g., Blog, BlogCategory, etc.).
@@ -32,8 +31,8 @@ from backbone.core.mixins import ViewContext
 router = APIRouter()
 
 
-# ── Example 1: Minimal View ─────────────────────────────────────────────────
-# 3 lines of code → full CRUD API with pagination, search, filters
+# - Example 1: Minimal View -
+# 3 lines of code -> full CRUD API with pagination, search, filters
 
 class BlogView(GenericCrudView):
     """Full CRUD for blogs with zero boilerplate."""
@@ -45,7 +44,7 @@ class BlogView(GenericCrudView):
 # router.include_router(BlogView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 2: Filtered Queryset ────────────────────────────────────────────
+# - Example 2: Filtered Queryset -
 # Override get_queryset() to scope results
 
 class PublishedBlogView(GenericCrudView):
@@ -64,7 +63,7 @@ class PublishedBlogView(GenericCrudView):
 # router.include_router(PublishedBlogView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 3: before_create — Auto-assign Author ───────────────────────────
+# - Example 3: before_create - Auto-assign Author -
 # Set the author field automatically from the authenticated user
 
 class AuthorAutoAssignView(GenericCrudView):
@@ -81,7 +80,7 @@ class AuthorAutoAssignView(GenericCrudView):
 # router.include_router(AuthorAutoAssignView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 4: after_create — Send Notification ─────────────────────────────
+# - Example 4: after_create - Send Notification -
 # Post-create hook for side effects
 
 class NotifyOnCreateView(GenericCrudView):
@@ -100,7 +99,7 @@ class NotifyOnCreateView(GenericCrudView):
 # router.include_router(NotifyOnCreateView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 5: before_delete — Prevent Deletion of Published ────────────────
+# - Example 5: before_delete - Prevent Deletion of Published -
 # Guard hook that can cancel the operation
 
 class GuardedDeleteView(GenericCrudView):
@@ -121,11 +120,11 @@ class GuardedDeleteView(GenericCrudView):
 # router.include_router(GuardedDeleteView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 6: Custom Response Schema ───────────────────────────────────────
+# - Example 6: Custom Response Schema -
 # Use a different Pydantic model for list/detail responses
 
 class BlogListItemSchema(BaseModel):
-    """Lightweight schema for list responses — excludes content."""
+    """Lightweight schema for list responses - excludes content."""
 
     id: str
     title: str
@@ -144,7 +143,7 @@ class BlogListView(GenericCrudView):
 # router.include_router(BlogListView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 7: Combined Overrides ───────────────────────────────────────────
+# - Example 7: Combined Overrides -
 # Multiple hooks and config in one view
 
 class FullBlogView(GenericCrudView):
@@ -181,7 +180,7 @@ class FullBlogView(GenericCrudView):
 # router.include_router(FullBlogView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 8: Custom Endpoint + CRUD ───────────────────────────────────────
+# - Example 8: Custom Endpoint + CRUD -
 # @action decorator for custom endpoints alongside standard CRUD
 
 from backbone.generic.action import action
@@ -217,7 +216,7 @@ class BlogWithActionsView(GenericCrudView):
 # router.include_router(BlogWithActionsView.as_router("/blogs", tags=["Blogs"]))
 
 
-# ── Example 9: Two Views on One Router ──────────────────────────────────────
+# - Example 9: Two Views on One Router -
 # Compose multiple view sets using BackboneRouter
 
 class CategoryView(GenericCrudView):
@@ -243,11 +242,11 @@ class PostView(GenericCrudView):
 # app.include_router(backbone_router.get_router())
 
 
-# ── Example 10: Stats View ──────────────────────────────────────────────────
+# - Example 10: Stats View -
 # Aggregated dashboard statistics
 
 class DashboardStats(GenericStatsView):
-    """Dashboard statistics — counts and sums across models."""
+    """Dashboard statistics - counts and sums across models."""
 
     schema = Document  # Any model works as the base
     stats_config = [
@@ -263,14 +262,6 @@ class DashboardStats(GenericStatsView):
             "type": "count",
             "filters": {"is_deleted": False},
         },
-        # Sum example:
-        # {
-        #     "name": "total_likes",
-        #     "model": Blog,
-        #     "type": "sum",
-        #     "field": "likes",
-        #     "filters": {"is_deleted": False},
-        # },
     ]
 
 

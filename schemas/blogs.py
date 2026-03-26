@@ -38,7 +38,7 @@ class BlogSectionLinks(BlogSectionBase):
 
 class BlogSectionImage(BlogSectionBase):
     type: Literal["image"] = "image"
-    attachment: Optional[Any] = None  # Stores attachment ID (str) or resolved attachment dict
+    attachment: Optional[Link[Attachment]] = None  # Resolved generically by Backbone
     caption: Optional[str] = None
     content: Optional[str] = None
 

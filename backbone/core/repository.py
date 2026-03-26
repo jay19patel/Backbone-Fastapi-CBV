@@ -27,6 +27,7 @@ from typing import Any, Dict, Generic, List, Optional, Protocol, Type, TypeVar, 
 
 from beanie import Document, PydanticObjectId
 from bson import ObjectId
+from bson.dbref import DBRef
 from fastapi import HTTPException
 from pydantic import BaseModel
 
@@ -170,85 +171,100 @@ class BeanieRepository(Generic[T]):
     # ── Link Detection ──────────────────────────────────────────────────────
 
     @staticmethod
-    def detect_populate_fields(schema: Type[BaseModel]) -> Dict[str, Any]:
+    def _extract_link_info(annotation: Any) -> tuple[Optional[Type[Document]], bool]:
+        """Extract (target_model, is_list) from a Link[] annotation."""
+        from typing import get_args, get_origin
+        from beanie import Link
+        
+        origin = get_origin(annotation)
+        target_model = None
+        is_list = False
+
+        if origin is Link:
+            target_model = get_args(annotation)[0]
+        elif origin in (list, List):
+            args = get_args(annotation)
+            if args and get_origin(args[0]) is Link:
+                target_model = get_args(args[0])[0]
+                is_list = True
+        elif origin is Union:
+            for arg in get_args(annotation):
+                if get_origin(arg) is Link:
+                    target_model = get_args(arg)[0]
+                    break
+                if get_origin(arg) in (list, List):
+                    inner_args = get_args(arg)
+                    if inner_args and get_origin(inner_args[0]) is Link:
+                        target_model = get_args(inner_args[0])[0]
+                        is_list = True
+                        break
+        return target_model, is_list
+
+    @staticmethod
+    def detect_populate_fields(schema: Type[BaseModel], prefix: str = "", depth: int = 0) -> Dict[str, Any]:
         """
-        Auto-detect Beanie ``Link`` fields and audit user fields on a schema.
-
-        Scans the model's field annotations for ``Link[TargetModel]`` types
-        and builds a populate-config dict used by ``_build_lookup_pipeline()``.
-
-        Args:
-            schema: A Pydantic / Beanie model class to introspect.
-
-        Returns:
-            Dict mapping field names to their population configuration.
+        Recursively detect Beanie ``Link`` fields and audit user fields on a schema.
+        Handles nested models, lists, and unions up to depth 2.
         """
         from typing import get_args, get_origin
-
-        from beanie import Link
+        if depth > 2: return {}
 
         detected: Dict[str, Any] = {}
 
-        # 1. Hardcode audit user fields
-        for audit_field in AUDIT_USER_FIELDS:
-            if audit_field in schema.model_fields:
-                detected[audit_field] = {
-                    "collection": "users",
-                    "field": audit_field,
-                    "is_string_id": True,
-                    "fields": list(DEFAULT_USER_RETURN_FIELDS),
-                }
+        # 1. Top-level only: Audit user fields
+        if not prefix:
+            for audit_field in AUDIT_USER_FIELDS:
+                if audit_field in schema.model_fields:
+                    detected[audit_field] = {
+                        "collection": "users",
+                        "field": audit_field,
+                        "is_string_id": True,
+                        "fields": list(DEFAULT_USER_RETURN_FIELDS),
+                    }
 
-        # 2. Detect Link[] annotations
+        # 2. Field-by-field check
         for field_name, field_info in schema.model_fields.items():
-            if field_name in detected:
-                continue
-
+            full_path = f"{prefix}{field_name}"
             annotation = field_info.annotation
-            origin = get_origin(annotation)
-            target_model = None
-            is_list = False
+            
+            target_model, is_list = BeanieRepository._extract_link_info(annotation)
 
-            if origin is Link:
-                target_model = get_args(annotation)[0]
-            elif origin in (list, List):
-                args = get_args(annotation)
-                if args and get_origin(args[0]) is Link:
-                    target_model = get_args(args[0])[0]
-                    is_list = True
-            elif origin is Union:
-                for arg in get_args(annotation):
-                    if get_origin(arg) is Link:
-                        target_model = get_args(arg)[0]
-                        break
-                    if get_origin(arg) in (list, List):
-                        inner_args = get_args(arg)
-                        if inner_args and get_origin(inner_args[0]) is Link:
-                            target_model = get_args(inner_args[0])[0]
-                            is_list = True
-                            break
-
-            if not target_model:
-                continue
-            if not (hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name")):
-                continue
-
-            collection_name = target_model.Settings.name
-            return_fields = getattr(target_model.Settings, "return_link_data", None)
-
-            config_dict: Dict[str, Any] = {
-                "collection": collection_name,
-                "field": field_name,
-                "is_link": True,
-                "is_list": is_list,
-            }
-
-            if return_fields and isinstance(return_fields, list):
-                config_dict["fields"] = return_fields
-            elif collection_name == "users":
-                config_dict["fields"] = list(DEFAULT_USER_RETURN_FIELDS)
-
-            detected[field_name] = config_dict
+            if target_model and hasattr(target_model, "Settings") and hasattr(target_model.Settings, "name"):
+                collection_name = target_model.Settings.name
+                config_dict: Dict[str, Any] = {
+                    "collection": collection_name,
+                    "field": full_path,
+                    "is_link": True,
+                    "is_list": is_list,
+                }
+                
+                return_fields = getattr(target_model.Settings, "return_link_data", None)
+                if return_fields and isinstance(return_fields, list):
+                    config_dict["fields"] = return_fields
+                elif collection_name == "users":
+                    config_dict["fields"] = list(DEFAULT_USER_RETURN_FIELDS)
+                
+                detected[full_path] = config_dict
+            else:
+                # Recurse into nested models/lists/unions to find more links
+                # but only if it's not a direct Link (already handled)
+                def flatten_types(t: Any) -> list:
+                    res = []
+                    uo = get_origin(t)
+                    if uo is Union:
+                        for a in get_args(t): res.extend(flatten_types(a))
+                    elif uo in (list, List):
+                        # Link info in list is handled by _extract_link_info above
+                        # If we are here, it's a list OF something else (like models)
+                        res.extend(flatten_types(get_args(t)[0]))
+                    elif isinstance(t, type):
+                        res.append(t)
+                    return res
+                
+                inner_types = flatten_types(annotation)
+                for itype in inner_types:
+                    if isinstance(itype, type) and issubclass(itype, BaseModel) and itype is not schema:
+                        detected.update(BeanieRepository.detect_populate_fields(itype, f"{full_path}.", depth + 1))
 
         return detected
 
@@ -267,6 +283,11 @@ class BeanieRepository(Generic[T]):
             The sanitised structure with string IDs.
         """
         if isinstance(data, dict):
+            # Auto-resolve media URLs for any "file_path" fields
+            if "file_path" in data and isinstance(data["file_path"], str):
+                from .url_utils import get_media_url
+                data["file_path"] = get_media_url(data["file_path"])
+                
             return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
         if isinstance(data, list):
             return [BeanieRepository._sanitize(v) for v in data]
@@ -362,15 +383,10 @@ class BeanieRepository(Generic[T]):
 
         try:
             return PydanticObjectId(value)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"'{value}' is not a valid ID for field "
-                    f"'{key.replace('_id', 'id')}'. "
-                    f"Expected a 24-character hex string."
-                ),
-            ) from exc
+        except Exception:
+            # Fallback: Return original string if not a valid ObjectId.
+            # This allows $or queries (ID or Slug) to work without raising 400 errors.
+            return value
 
     # ── Lookup Pipeline (Single Source of Truth) ────────────────────────────
 
@@ -394,6 +410,9 @@ class BeanieRepository(Generic[T]):
         stages: list[dict] = []
 
         for local_field, config in populate_fields.items():
+            if "." in local_field:
+                continue  # Handled post-fetch by _resolve_deep_links
+                
             target_collection, alias, is_link, is_string_id, is_list, fields_to_return = (
                 BeanieRepository._unpack_populate_config(local_field, config)
             )
@@ -507,6 +526,105 @@ class BeanieRepository(Generic[T]):
 
         return pipeline
 
+    # ── Deep Link Resolution (Post-fetch) ──────────────────────────────────
+
+    async def _resolve_deep_links(self, doc: dict, populate_fields: Dict[str, Any]) -> dict:
+        """
+        Fetch and inject documents for links nested inside lists or objects.
+        This handles cases where $lookup is too complex to build generically.
+        """
+        from bson import ObjectId
+
+        for field_path, config in populate_fields.items():
+            if "." not in field_path: continue  # Handled by aggregation
+            
+            parts = field_path.split(".")
+            parent_path = ".".join(parts[:-1])
+            link_field = parts[-1]
+            
+            # 1. Find the parent objects containing the link
+            # We use a simple recursive extractor
+            def get_containers(data, path_parts):
+                if not path_parts:
+                    if isinstance(data, list): return [d for d in data if isinstance(d, dict)]
+                    if isinstance(data, dict): return [data]
+                    return []
+                
+                key = path_parts[0]
+                remaining = path_parts[1:]
+                
+                if isinstance(data, list):
+                    res = []
+                    for item in data:
+                        res.extend(get_containers(item, path_parts))
+                    return res
+                if isinstance(data, dict):
+                    val = data.get(key)
+                    return get_containers(val, remaining) if val is not None else []
+                return []
+
+            containers = get_containers(doc, parts[:-1])
+            if not containers: continue
+
+            # 2. Extract unique IDs to fetch
+            id_to_containers = {}
+            for c in containers:
+                if not isinstance(c, dict): continue
+                raw = c.get(link_field)
+                with open("/tmp/debug_repo.log", "a") as f:
+                    f.write(f"DEBUG: Found link at {field_path}: {raw}\n")
+                if not raw: continue
+                
+                # Normalize ID from string, DBRef, or Link object
+                if isinstance(raw, str) and len(raw) == 24:
+                    att_id = raw
+                elif isinstance(raw, DBRef):
+                    att_id = str(raw.id)
+                elif isinstance(raw, dict):
+                    oid = raw.get("$id") or raw.get("id")
+                    att_id = str(oid) if oid else None
+                else:
+                    att_id = None
+                
+                if att_id: id_to_containers.setdefault(att_id, []).append(c)
+
+            # 3. Batch fetch from target collection
+            if id_to_containers:
+                try:
+                    target_coll = self.db[config["collection"]] if self.db is not None else None
+                    if target_coll is None:
+                         from .config import BackboneConfig
+                         target_coll = BackboneConfig.get_instance().database[config["collection"]]
+
+                    oids = [ObjectId(aid) for aid in id_to_containers.keys()]
+                    projection = {f: 1 for f in config.get("fields", [])} if config.get("fields") else {}
+                    if projection:
+                         projection["id"] = "$_id"
+                         projection["_id"] = 0
+                    
+                    cursor = target_coll.find({"_id": {"$in": oids}}, projection)
+                    results = await cursor.to_list(length=len(oids))
+                    
+                    with open("/tmp/debug_repo.log", "a") as f:
+                        f.write(f"DEBUG: Found {len(results)} docs for deep link {field_path}\n")
+
+                    for r in results:
+                        # Map back to dict with 'id' string
+                        if "_id" in r:
+                             r["id"] = str(r.pop("_id"))
+                        
+                        # Apply sanitization (media URLs, etc.)
+                        r = BeanieRepository._sanitize(r)
+                        
+                        rid = str(r.get("id"))
+                        for c in id_to_containers.get(rid, []):
+                            c[link_field] = r
+                except Exception as e:
+                    with open("/tmp/debug_repo.log", "a") as f:
+                        f.write(f"DEBUG: ERROR in _resolve_deep_links: {e}\n")
+
+        return doc
+
     # ── Core CRUD Operations ────────────────────────────────────────────────
 
     async def get_all(
@@ -571,9 +689,14 @@ class BeanieRepository(Generic[T]):
 
         facet_result = raw[0]
         total = facet_result.get("total_count", [{}])[0].get("count", 0) if facet_result.get("total_count") else 0
-        results = self._clean_results(facet_result.get("results", []))
-
-        return results, total
+        results = facet_result.get("results", [])
+        
+        # Resolve deep links for every result in the list
+        if populate_fields:
+            import asyncio
+            results = await asyncio.gather(*[self._resolve_deep_links(r, populate_fields) for r in results])
+            
+        return self._clean_results(results), total
 
     @staticmethod
     def _build_facet_stage(
@@ -655,11 +778,20 @@ class BeanieRepository(Generic[T]):
         results = await self.document_class.get_pymongo_collection().aggregate(
             pipeline,
         ).to_list(length=1)
+        
+        with open("/tmp/debug_repo.log", "a") as f:
+            f.write(f"DEBUG: Pipeline: {pipeline}\n")
+            f.write(f"DEBUG: Results after pipeline: {results}\n")
 
         if not results:
             return None
 
-        return self._clean_single_doc(results[0])
+        doc = results[0]
+        # Resolve any deep (nested) links after the main aggregation
+        if populate_fields:
+            doc = await self._resolve_deep_links(doc, populate_fields)
+            
+        return self._clean_single_doc(doc)
 
     async def _simple_find_one(
         self,

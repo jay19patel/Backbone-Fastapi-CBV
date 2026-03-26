@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict # Added for pydantic models
 from ..core.models import User
-from ..utils import PasswordManager, TokenManager
+from ..common.utils import PasswordManager, TokenManager
 from .site import admin_site
 
 # Define INTERNAL_FIELDS globally
@@ -688,7 +688,7 @@ async def model_create_handle(
                 except: pass
                 
             if model_name == "User" and key == "hashed_password" and val:
-                from ..utils import PasswordManager
+                from ..common.utils import PasswordManager
                 if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
                     

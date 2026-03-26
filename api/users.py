@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from backbone import GenericCrud, AllowAny, BeanieRepository
+from backbone import GenericCrudView, AllowAny, BeanieRepository
 import urllib.parse
 from beanie import PydanticObjectId
 from backbone.core.models import User
@@ -20,15 +20,15 @@ class BlogViewRepository(BeanieRepository[BlogView]):
 class BlogLikeRepository(BeanieRepository[BlogLike]):
     pass
 
-user_crud = GenericCrud(
-    schema=User,
-    prefix="/users",
-    tags=["Users"],
-    search_fields=["full_name", "email", "headline", "bio"],
-    list_fields=["id", "full_name", "email", "headline", "profile_image"],
-    fetch_links=True,
-    permission_classes=[AllowAny]
-)
+
+
+class UserView(GenericCrudView):
+    schema = User
+    search_fields = ["full_name", "email", "headline", "bio"]
+    list_fields = ["id", "full_name", "email", "headline", "profile_image"]
+    fetch_links = True
+    permission_classes = [AllowAny]
+
 
 router = APIRouter()
 
@@ -173,7 +173,7 @@ async def get_all_users_with_stats(
     return {"results": enhanced_users, "total": total}
 
 # Include generic routes AFTER
-router.include_router(user_crud.router)
+router.include_router(UserView.as_router("/users", tags=["Users"]))
 
 
 def get_repo(model) -> BeanieRepository:

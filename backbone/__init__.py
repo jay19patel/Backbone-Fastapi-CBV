@@ -9,22 +9,13 @@ Public API — import everything from here::
 
     from backbone import GenericCrudView, IsAuthenticated, BeanieRepository
 
-Two patterns are supported:
-
-**New pattern (recommended):**
+Usage:
 
 .. code-block:: python
 
     class BlogView(GenericCrudView):
         schema = Blog
     router.include_router(BlogView.as_router("/blogs"))
-
-**Legacy pattern (backward compatible):**
-
-.. code-block:: python
-
-    blog_crud = GenericCrud(schema=Blog, prefix="/blogs")
-    router.include_router(blog_crud.router)
 """
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -60,7 +51,7 @@ from .core.mixins import (
     ViewContext,
 )
 
-# ── Generic Views — New Pattern (as_router) ──────────────────────────────
+# ── Generic Views (as_router) ───────────────────────────────────────────
 from .generic.views import (
     GenericCreateView,
     GenericCrudView,
@@ -73,20 +64,6 @@ from .generic.views import (
     GenericUpdateView,
 )
 
-# ── Generic Views — Legacy Pattern (constructor) ─────────────────────────
-from .generic.views import (
-    BaseGenericView,
-    GenericCreate,
-    GenericCrud,
-    GenericCustomApi,
-    GenericDelete,
-    GenericList,
-    GenericRetrieve,
-    GenericStats,
-    GenericSubResource,
-    GenericUpdate,
-)
-
 # ── Router Aggregation ───────────────────────────────────────────────────
 from .generic.routers import BackboneRouter
 
@@ -96,10 +73,17 @@ from .schemas import PaginatedResponse, TokenResponse, UserOut
 # ── Auth ─────────────────────────────────────────────────────────────────
 from .auth.router import AuthRouter
 
-# ── Utilities ────────────────────────────────────────────────────────────
-from .utils import PasswordManager, TokenManager
-from .utils.cache import CacheService
-from .utils.tasks import background_task
+# ── Common Services & Utils ──────────────────────────────────────────────
+from .common.services import CacheService, background_task
+from .common.utils import PasswordManager, TokenManager, logger
+from .common.exceptions import (
+    BackboneException,
+    NotFoundException,
+    ValidationException,
+    AuthenticationException,
+    PermissionException,
+    ServiceException
+)
 
 # ── Admin ────────────────────────────────────────────────────────────────
 from .admin import admin_site
@@ -134,7 +118,7 @@ __all__ = [
     "RetrieveMixin",
     "UpdateMixin",
     "DeleteMixin",
-    # New Views (as_router pattern)
+    # Generic Views
     "GenericListView",
     "GenericCreateView",
     "GenericRetrieveView",
@@ -144,17 +128,6 @@ __all__ = [
     "GenericStatsView",
     "GenericSubResourceView",
     "GenericCustomApiView",
-    # Legacy Views (constructor pattern)
-    "BaseGenericView",
-    "GenericList",
-    "GenericCreate",
-    "GenericRetrieve",
-    "GenericUpdate",
-    "GenericDelete",
-    "GenericCrud",
-    "GenericStats",
-    "GenericSubResource",
-    "GenericCustomApi",
     # Router
     "BackboneRouter",
     # Schemas
@@ -163,11 +136,18 @@ __all__ = [
     "TokenResponse",
     # Auth
     "AuthRouter",
-    # Utilities
+    # Common
     "PasswordManager",
     "TokenManager",
     "CacheService",
     "background_task",
+    "logger",
+    "BackboneException",
+    "NotFoundException",
+    "ValidationException",
+    "AuthenticationException",
+    "PermissionException",
+    "ServiceException",
     # Admin
     "admin_site",
 ]

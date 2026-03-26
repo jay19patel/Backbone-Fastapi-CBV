@@ -43,7 +43,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from ..schemas import UserOut
-from ..utils.cache import CacheService
+from ..common.services import CacheService
 from .permissions import (
     AllowAny,
     BasePermission,
@@ -230,11 +230,25 @@ class ViewContext:
     # ── Internal Helpers ─────────────────────────────────────────────────
 
     def _build_lookup_query(self, pk: str) -> dict:
-        """Build a query to find an object by PK using lookup_field."""
-        return {
-            "$or": [{self.lookup_field: pk}, {"id": pk}],
-            "is_deleted": False,
-        }
+        """
+        Build a query to find an object by PK using lookup_field.
+        Smart lookup: Only adds 'id' to the query if 'pk' looks like an ObjectId.
+        """
+        query = {"is_deleted": False}
+        
+        if self.lookup_field == "id" or self.lookup_field == "_id":
+            query["id"] = pk
+            return query
+
+        # Check if pk looks like an ObjectId (24 hex chars)
+        is_oid = len(pk) == 24 and all(c in "0123456789abcdefABCDEF" for c in pk)
+        
+        if is_oid:
+            query["$or"] = [{self.lookup_field: pk}, {"id": pk}]
+        else:
+            query[self.lookup_field] = pk
+            
+        return query
 
     def _get_populate_fields(self) -> Dict[str, Any]:
         """Return the populate_fields config, auto-detecting if fetch_links is set."""

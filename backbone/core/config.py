@@ -2,8 +2,7 @@ from typing import List, Any, Optional, Type
 from fastapi import FastAPI
 from .repository import BeanieRepository
 from .database import init_database
-from ..utils.cache import CacheService
-from .queue import TaskQueue, TaskWorker
+from ..common.services import CacheService, TaskQueue, TaskWorker
 from ..admin.router import router as admin_router
 from ..admin.site import admin_site
 from ..auth.router import AuthRouter
@@ -60,11 +59,13 @@ class BackboneConfig:
         self.database = self.mongo_client[self.config.DATABASE_NAME]
 
         # Cache Service
+        from ..common.services import CacheService, cache
         self.redis_client = None
-        self.cache_service = CacheService(None, enabled=False)
+        self.cache_service = cache  # Use the global instance
         if getattr(self.config, "CACHE_ENABLED", False):
             self.redis_client = redis.from_url(self.config.REDIS_URL, decode_responses=True)
-            self.cache_service = CacheService(self.redis_client, enabled=True)
+            self.cache_service.redis = self.redis_client
+            self.cache_service.enabled = True
 
         # Task Queue
         self.task_queue = TaskQueue(self.redis_client)
@@ -162,6 +163,31 @@ class BackboneConfig:
             except Exception as log_exc:
                 print(f"Failed to log global exception: {log_exc}")
             return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
+
+        from ..common.exceptions import BackboneException
+
+        @self.app.exception_handler(BackboneException)
+        async def backbone_exception_handler(request: Request, exc: BackboneException):
+            """
+            Handle custom Backbone exceptions and return structured JSON responses.
+            """
+            content = {
+                "detail": exc.detail or exc.message,
+                "error_code": exc.error_code or "UNKNOWN_ERROR"
+            }
+            # Log the error if it's a 500
+            if exc.status_code >= 500:
+                try:
+                    await LogEntry(
+                        level="error",
+                        message=exc.message,
+                        extra={"status_code": exc.status_code, "error_code": exc.error_code, "url": str(request.url)},
+                        module="backbone_exception_handler"
+                    ).insert()
+                except Exception as log_exc:
+                    print(f"Failed to log backbone exception: {log_exc}")
+            
+            return JSONResponse(content=content, status_code=exc.status_code)
 
     def _setup_middlewares(self):
         from fastapi.middleware.cors import CORSMiddleware

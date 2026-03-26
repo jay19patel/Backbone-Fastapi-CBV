@@ -1,30 +1,30 @@
-import os
-import base64
-import httpx
-import mimetypes
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Body, Request
-from pydantic import BaseModel
 from typing import Optional, Any
-from backbone.generic.views import GenericCustomApi
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
+import httpx
+import os
+import mimetypes
+
+from backbone.generic.views import GenericCustomApiView
 from backbone.core.permissions import AllowAny
 from backbone.core.models import Attachment
-from backbone.core.media import process_attachment_upload, _is_cloudinary_configured, _upload_to_cloudinary, _save_to_local
-from backbone.utils.tasks import background_task
+from backbone.core.media import (
+    process_attachment_upload, 
+    _is_cloudinary_configured, 
+    _upload_to_cloudinary, 
+    _save_to_local
+)
 
-class MediaRouter(GenericCustomApi):
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("schema", Attachment)
-        kwargs.setdefault("prefix", "/media")
-        kwargs.setdefault("tags", ["Media"])
-        kwargs.setdefault("endpoint", "/upload")
-        # We need to explicitly allow form-data passing, so we'll override the post method completely
-        super().__init__(*args, **kwargs)
+class MediaView(GenericCustomApiView):
+    schema = Attachment
+    permission_classes = [AllowAny]
+
+    @classmethod
+    def as_router(cls, prefix: str = "/media", tags: list = ["Media"], **kwargs) -> APIRouter:
+        router = APIRouter(prefix=prefix, tags=tags, **kwargs)
+        view = cls()
         
-    def _register_custom_routes(self):
-        # Override the default _register_custom_routes because GenericCustomApi expects a JSON Body 
-        # and we need to accept Form data + UploadFile for standard HTML file uploads
-        @self.router.post(self.endpoint, tags=self.router.tags)
-        async def custom_post(
+        @router.post("/upload")
+        async def upload_media(
             request: Request,
             file: Optional[UploadFile] = File(None),
             url: Optional[str] = Form(None),
@@ -32,10 +32,27 @@ class MediaRouter(GenericCustomApi):
             document_id: Optional[str] = Form(None),
             field_name: Optional[str] = Form(None)
         ):
-            await self._resolve_context(request)
-            return await self.post(request, file=file, url=url, collection_name=collection_name, document_id=document_id, field_name=field_name)
+            await view._resolve_context(request)
+            return await view.handle_upload(
+                request, 
+                file=file, 
+                url=url, 
+                collection_name=collection_name, 
+                document_id=document_id, 
+                field_name=field_name
+            )
+        
+        return router
 
-    async def post(self, request: Request, file: Optional[UploadFile] = None, url: Optional[str] = None, collection_name: Optional[str] = None, document_id: Optional[str] = None, field_name: Optional[str] = None) -> Any:
+    async def handle_upload(
+        self, 
+        request: Request, 
+        file: Optional[UploadFile] = None, 
+        url: Optional[str] = None, 
+        collection_name: Optional[str] = None, 
+        document_id: Optional[str] = None, 
+        field_name: Optional[str] = None
+    ) -> Any:
         if not file and not url:
             raise HTTPException(status_code=400, detail="Either 'file' or 'url' must be provided.")
             
@@ -104,7 +121,7 @@ class MediaRouter(GenericCustomApi):
             if not ext: ext = mimetypes.guess_extension(content_type) or ".jpg"
             if ext == ".jpe": ext = ".jpg"
 
-            # Upload directly (synchronous — works on serverless too)
+            # Upload directly
             if _is_cloudinary_configured():
                 file_url = await _upload_to_cloudinary(
                     file_bytes, subfolder, attachment_id, content_type
@@ -112,8 +129,6 @@ class MediaRouter(GenericCustomApi):
             else:
                 local_filename = f"{attachment_id}{ext}"
                 file_url = await _save_to_local(file_bytes, subfolder, local_filename)
-                # Convert local path to full URL
-                file_url_response = f"{request.base_url}{file_url.lstrip('/')}"
 
             # Update attachment with result
             attachment.file_path = file_url
@@ -122,7 +137,7 @@ class MediaRouter(GenericCustomApi):
             attachment.size = size_mb
             await attachment.save()
 
-            # Automatic linking (run in background if Redis available, else inline)
+            # Automatic linking
             if attachment.collection_name and attachment.document_id and attachment.field_name:
                 from backbone.core.config import BackboneConfig
                 config = BackboneConfig.get_instance()
@@ -153,5 +168,4 @@ class MediaRouter(GenericCustomApi):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to process upload: {str(e)}")
 
-media_api = MediaRouter()
-router = media_api.router
+router = MediaView.as_router()

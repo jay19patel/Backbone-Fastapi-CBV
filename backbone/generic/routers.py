@@ -13,11 +13,6 @@ Usage (new pattern)::
     backbone_router.register_view("/blogs", BlogView)
     app.include_router(backbone_router.get_router())
 
-Usage (legacy pattern)::
-
-    backbone_router = BackboneRouter(prefix="/api/v1")
-    backbone_router.register("/blogs", BlogCrud)
-    app.include_router(backbone_router.get_router())
 """
 
 from __future__ import annotations
@@ -72,33 +67,7 @@ class BackboneRouter:
         self.router.include_router(view_router)
         self.registry.append(view_class)
 
-    def register(
-        self,
-        prefix: str,
-        viewset: Type[Any],
-        basename: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """
-        Register a legacy constructor-based viewset.
-
-        For backward compatibility with existing code.
-
-        Args:
-            prefix: URL prefix for this viewset.
-            viewset: A legacy ``GenericCrud`` or similar class.
-            basename: Optional name (unused, kept for compat).
-            **kwargs: Additional kwargs for the viewset constructor.
-        """
-        if not prefix.startswith("/"):
-            prefix = "/" + prefix
-
-        instance = viewset(prefix=prefix, **kwargs)
-
-        if hasattr(instance, "router"):
-            self.router.include_router(instance.router)
-        self.registry.append(instance)
-
     def get_router(self) -> APIRouter:
         """Return the aggregated ``APIRouter``."""
         return self.router
+

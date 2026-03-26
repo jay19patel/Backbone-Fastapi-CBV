@@ -14,7 +14,7 @@ from ..schemas import (
     GoogleLoginSchema, LoginSchema, RegisterSchema,
     TokenResponse, UserOut, UserUpdate,
 )
-from ..utils import PasswordManager, TokenManager
+from ..common.utils import PasswordManager, TokenManager
 
 logger = logging.getLogger("backbone.auth")
 

@@ -11,7 +11,7 @@ import os
 
 # Schemas
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
-from schemas.content import FAQ, Testimonial
+from schemas.content import FAQ, Testimonial, Contact
 from schemas.playlists import Playlist
 
 # Routers
@@ -31,7 +31,7 @@ app = FastAPI(title="Modular Backbone Framework")
 
 models_to_register = [
     Blog, BlogCategory, BlogLike, BlogView,
-    FAQ, Testimonial, Playlist
+    FAQ, Testimonial, Contact, Playlist
 ]
 
 BackboneConfig(

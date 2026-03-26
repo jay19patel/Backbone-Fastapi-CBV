@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Type
 from .signals import signals
 from beanie import Document, PydanticObjectId, Insert, Replace, Save, Delete, Update, before_event, after_event, Link
@@ -11,7 +11,7 @@ class AuditDocument(Document):
     """
     Base Document with audit fields (created_at, updated_at, soft delete).
     """
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the document was created")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the document was created")
     created_by: Optional[str] = Field(default=None, description="ID of the user who created this document")
     updated_at: Optional[datetime] = Field(default=None, description="Timestamp when the document was last updated")
     updated_by: Optional[str] = Field(default=None, description="ID of the user who last updated this document")
@@ -116,7 +116,7 @@ class Session(AuditDocument):
         ]
 
 class LogEntry(Document):
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of the log entry")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of the log entry")
     level: str = Field(description="Severity level of the log (INFO, ERROR, etc.)")
     message: str = Field(description="Main log message")
     module: Optional[str] = Field(default=None, description="Name of the module where the log occurred")
@@ -133,11 +133,11 @@ class LogEntry(Document):
         ]
 
 class TaskLog(Document):
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp of the task recording")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of the task recording")
     task_id: str = Field(description="Unique identifier for the background task")
     function_name: str = Field(description="Name of the function executed by the task")
     status: str = Field(default="queued", description="Current status (queued, processing, completed, failed)")
-    queued_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the task was queued")
+    queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the task was queued")
     started_at: Optional[datetime] = Field(default=None, description="Timestamp when the task started processing")
     completed_at: Optional[datetime] = Field(default=None, description="Timestamp when the task finished execution")
     error_message: Optional[str] = Field(default=None, description="Error message if the task failed")
@@ -212,7 +212,7 @@ class Attachment(Document):
     status: str = Field(default="pending", description="Processing status (pending, completed, failed)")
     size: Optional[float] = Field(default=None, description="Size of the file in bytes")
     
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Timestamp when the upload began")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the upload began")
     created_by: Optional[str] = Field(default=None, description="ID of the user who uploaded the file")
     
     @field_serializer('file_path', when_used='json')

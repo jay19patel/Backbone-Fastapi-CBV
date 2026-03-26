@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from ..utils import TokenManager
+from ..common.utils import TokenManager
 from ..schemas import UserOut
 from .models import User, Session
 from typing import Optional

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, Tuple
 from fastapi import Request
 
 from backbone.core.models import User, Session
-from backbone.utils import PasswordManager, TokenManager
+from backbone.common.utils import PasswordManager, TokenManager
 from backbone.core.repository import BeanieRepository
 
 class AuthService:
@@ -51,13 +51,13 @@ class AuthService:
         user_ref = DBRef("users", ObjectId(user_id))
         
         import uuid
-        from datetime import datetime, timedelta
+        from datetime import timezone
         
         # 1. Create Session Record
         session_data = {
             "user": user_ref,
             "refresh_token": str(uuid.uuid4()), # Temp unique to avoid index collision
-            "expires_at": datetime.utcnow() + timedelta(days=7),
+            "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
             "user_agent": user_agent,
             "ip_address": ip_address,
             "is_active": True
