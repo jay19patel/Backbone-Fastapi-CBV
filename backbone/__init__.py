@@ -23,7 +23,7 @@ from .core.config import BackboneConfig
 from .core.settings import Settings, settings
 
 # ── Core Models ──────────────────────────────────────────────────────────
-from .core.models import EventDocument, LogEntry, Session, TaskLog, User
+from .core.models import EventDocument, LogEntry, PasswordResetToken, Session, TaskLog, User
 
 # ── Signals ──────────────────────────────────────────────────────────────
 from .core.signals import Signal, signals
@@ -58,9 +58,11 @@ from .generic.views import (
     GenericCustomApiView,
     GenericDeleteView,
     GenericListView,
+    GenericFormView,
     GenericRetrieveView,
     GenericStatsView,
     GenericSubResourceView,
+    GenericTemplateView,
     GenericUpdateView,
 )
 
@@ -99,6 +101,7 @@ __all__ = [
     "LogEntry",
     "EventDocument",
     "TaskLog",
+    "PasswordResetToken",
     # Signals
     "signals",
     "Signal",
@@ -128,6 +131,8 @@ __all__ = [
     "GenericStatsView",
     "GenericSubResourceView",
     "GenericCustomApiView",
+    "GenericTemplateView",
+    "GenericFormView",
     # Router
     "BackboneRouter",
     # Schemas

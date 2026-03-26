@@ -7,19 +7,43 @@ Modern router-based generic views for Backbone.
 from __future__ import annotations
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader
 
 from ..core.mixins import (
     CreateMixin, DeleteMixin, ListMixin, RetrieveMixin, UpdateMixin, ViewContext
 )
-from ..core.permissions import AllowAny
-from ..schemas import UserOut
-from ..common.services import cache
+from ..core.permissions import AllowAny, PermissionDependency
 from .utils import _parse_sort, _register_actions, _extract_create_data, _extract_update_data
 
 logger = logging.getLogger("backbone.views")
+APP_TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "templates"
+FRAMEWORK_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates"
+
+
+def build_page_templates() -> Jinja2Templates:
+    """Use app templates first, then fall back to Backbone templates."""
+    environment = default_page_templates.env if "default_page_templates" in globals() else None
+    loader = ChoiceLoader(
+        [
+            FileSystemLoader(str(APP_TEMPLATE_ROOT)),
+            FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)),
+        ]
+    )
+    if environment is not None:
+        environment.loader = loader
+        return default_page_templates
+    templates = Jinja2Templates(directory=str(APP_TEMPLATE_ROOT))
+    templates.env.loader = loader
+    return templates
+
+
+default_page_templates = build_page_templates()
 
 class GenericListView(ListMixin):
     @classmethod
@@ -231,3 +255,130 @@ class GenericCustomApiView(ViewContext):
         return router
     async def get(self, *args, **kwargs): raise NotImplementedError()
     async def post(self, *args, **kwargs): raise NotImplementedError()
+
+
+class GenericTemplateView:
+    template_name: str = ""
+    template_engine: Jinja2Templates = default_page_templates
+    permission_classes: List[Any] = [AllowAny]
+    page_name: str = "Template Page"
+    page_description: str = ""
+    admin_category: str = "Framework Pages"
+    include_in_admin: bool = True
+
+    def get_permission_dependency(self) -> Callable:
+        return PermissionDependency(self.permission_classes)
+
+    def get_template_name(self) -> str:
+        if not self.template_name:
+            raise ValueError("template_name must be defined for GenericTemplateView subclasses.")
+        return self.template_name
+
+    def normalize_context(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: self.normalize_context(val) for key, val in value.items()}
+        if isinstance(value, list):
+            return [self.normalize_context(item) for item in value]
+        if hasattr(value, "model_dump"):
+            return self.normalize_context(value.model_dump(by_alias=True))
+        return value
+
+    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+        return {}
+
+    async def render(self, request: Request, context: Dict[str, Any], status_code: int = 200) -> HTMLResponse:
+        full_context = {
+            "request": request,
+            "page_name": self.page_name,
+            "page_description": self.page_description,
+            "current_user": context.get("current_user"),
+            **self.normalize_context(context),
+        }
+        return self.template_engine.TemplateResponse(self.get_template_name(), full_context, status_code=status_code)
+
+    @classmethod
+    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+        view = cls()
+        route_name = kwargs.pop("name", cls.__name__.lower())
+        admin_path = kwargs.pop("admin_path", prefix)
+        router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
+        perm_dep = view.get_permission_dependency()
+
+        @router.get("/", response_class=HTMLResponse, name=route_name)
+        async def page_view(request: Request, user: Any = Depends(perm_dep)) -> HTMLResponse:
+            context = await view.get_context_data(request, user=user)
+            context["current_user"] = user
+            return await view.render(request, context)
+
+        if view.include_in_admin:
+            from ..admin.site import admin_site
+
+            admin_site.register_page(
+                name=view.page_name,
+                path=admin_path,
+                methods=["GET"],
+                description=view.page_description,
+                category=view.admin_category,
+            )
+
+        return router
+
+
+class GenericFormView(GenericTemplateView):
+    success_redirect_url: Optional[str] = None
+
+    async def post_context_data(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+        return {}
+
+    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+        return await self.post_context_data(request, form_data, user=user)
+
+    @staticmethod
+    def _form_to_dict(form_data: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        for key in form_data.keys():
+            values = form_data.getlist(key)
+            payload[key] = values if len(values) > 1 else values[0]
+        return payload
+
+    @classmethod
+    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+        view = cls()
+        route_name = kwargs.pop("name", cls.__name__.lower())
+        admin_path = kwargs.pop("admin_path", prefix)
+        router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
+        perm_dep = view.get_permission_dependency()
+
+        @router.get("/", response_class=HTMLResponse, name=route_name)
+        async def page_view(request: Request, user: Any = Depends(perm_dep)) -> HTMLResponse:
+            context = await view.get_context_data(request, user=user)
+            context["current_user"] = user
+            return await view.render(request, context)
+
+        @router.post("/", response_class=HTMLResponse)
+        async def form_submit(request: Request, user: Any = Depends(perm_dep)) -> HTMLResponse:
+            raw_form = await request.form()
+            payload = view._form_to_dict(raw_form)
+            result = await view.handle_submit(request, payload, user=user)
+            if isinstance(result, RedirectResponse):
+                return result
+            if view.success_redirect_url and result.get("success"):
+                return RedirectResponse(url=view.success_redirect_url, status_code=303)
+
+            base_context = await view.get_context_data(request, user=user)
+            base_context.update(result)
+            base_context["current_user"] = user
+            return await view.render(request, base_context)
+
+        if view.include_in_admin:
+            from ..admin.site import admin_site
+
+            admin_site.register_page(
+                name=view.page_name,
+                path=admin_path,
+                methods=["GET", "POST"],
+                description=view.page_description,
+                category=view.admin_category,
+            )
+
+        return router

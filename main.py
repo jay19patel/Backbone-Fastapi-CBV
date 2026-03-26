@@ -20,6 +20,8 @@ from api.blogs import router as blogs_router
 from backbone.core.media_router import router as media_router
 from api.content import router as content_router
 from api.playlists import router as playlists_router
+from pages.contact import router as pages_router
+from backbone.auth.pages import router as auth_pages_router
 
 # --------------------------------------------------------------------------
 # Application Setup & Dependencies
@@ -49,6 +51,8 @@ app.include_router(blogs_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
 app.include_router(content_router, prefix="/api")
 app.include_router(playlists_router, prefix="/api")
+app.include_router(pages_router, prefix="/pages")
+app.include_router(auth_pages_router, prefix="/pages")
 
 @app.get("/")
 async def root():

@@ -46,8 +46,8 @@ class BackboneConfig:
             self.config.validate_runtime()
         
         # Default Core Models
-        from .models import User, Session, LogEntry, TaskLog, Attachment
-        core_models = [User, Session, LogEntry, TaskLog, Attachment]
+        from .models import User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken
+        core_models = [User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken]
         
         # Ensures core models are loaded first to safely resolve Beanie links
         self.document_models = core_models.copy()
@@ -118,8 +118,8 @@ class BackboneConfig:
 
         # Register Models with Admin Site
         # Register Models with Admin Site
-        from .models import User, Session, LogEntry, TaskLog, Attachment
-        core_models_set = {User, Session, LogEntry, TaskLog, Attachment}
+        from .models import User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken
+        core_models_set = {User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken}
         
         for model in self.document_models:
             category = "Core Models" if model in core_models_set else "Custom Models"

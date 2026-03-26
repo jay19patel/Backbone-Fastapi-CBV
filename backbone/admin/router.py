@@ -101,6 +101,7 @@ router = APIRouter(prefix="/admin")
 # Get absolute path to templates
 template_dir = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=template_dir)
+templates.env.globals["admin_site"] = admin_site
 
 # Custom Filters
 def nice_title(value: str) -> str:
@@ -221,6 +222,7 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "models": models,
+        "pages": admin_site.get_registered_pages(),
         "user": user,
         "now": datetime.now(timezone.utc),
         "db_stats": db_stats,
