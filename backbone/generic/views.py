@@ -62,7 +62,7 @@ class GenericCreateView(CreateMixin):
             inst = await view.perform_create(val_data)
             inst = await view.after_create(inst, user)
             await view._invalidate_cache()
-            return inst
+            return view._serialize_response(inst)
         create_view.__annotations__["data"] = view.create_schema or view.schema
         router.add_api_route("/", create_view, methods=["POST"], response_model=view.response_schema or view.schema, status_code=201)
 
@@ -81,7 +81,26 @@ class GenericRetrieveView(RetrieveMixin):
         async def retrieve_view(request: Request, pk: str, user: Any = Depends(perm_dep)) -> Any:
             await view.resolve_context(request)
             await view.before_retrieve(pk, request, user)
-            inst = await view.perform_retrieve(pk, request, user)
+            if view._cache and view._cache.enabled:
+                cache_key = view._build_cache_key(
+                    "detail",
+                    {
+                        "pk": pk,
+                        "lookup_field": view.lookup_field,
+                        "populate_fields": view._get_populate_fields(),
+                        "user_id": str(user.id) if user else None,
+                    },
+                )
+                inst = await view._cache.get_or_set(
+                    cache_key,
+                    view.cache_ttl,
+                    view.perform_retrieve,
+                    pk,
+                    request,
+                    user,
+                )
+            else:
+                inst = await view.perform_retrieve(pk, request, user)
             return await view.after_retrieve(inst, request, user)
 
 class GenericUpdateView(UpdateMixin):
@@ -105,7 +124,7 @@ class GenericUpdateView(UpdateMixin):
             result = await view.perform_update(inst, upd_data)
             result = await view.after_update(result, user)
             await view._invalidate_cache()
-            return result
+            return view._serialize_response(result)
         update_view.__annotations__["data"] = view.update_schema or Dict[str, Any]
         router.add_api_route("/{pk}", update_view, methods=["PATCH"], response_model=view.response_schema or view.schema)
 

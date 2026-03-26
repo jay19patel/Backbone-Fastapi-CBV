@@ -32,6 +32,8 @@ Design decisions:
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 import re
 from datetime import datetime, timezone
 from math import ceil
@@ -268,8 +270,25 @@ class ViewContext:
     async def _invalidate_cache(self) -> None:
         """Clear cached data for this view's prefix."""
         if self._cache and self._cache.enabled:
-            pattern = f"backbone:*"
+            pattern = f"{self._cache_namespace}:*"
             await self._cache.delete_pattern(pattern)
+
+    @property
+    def _cache_namespace(self) -> str:
+        settings_name = getattr(getattr(self.schema, "Settings", None), "name", None)
+        return f"backbone:{settings_name or self.schema.__name__.lower()}"
+
+    def _build_cache_key(self, operation: str, payload: Dict[str, Any]) -> str:
+        raw = json.dumps(payload, sort_keys=True, default=str)
+        digest = hashlib.md5(raw.encode()).hexdigest()
+        return f"{self._cache_namespace}:{operation}:{digest}"
+
+    def _serialize_response(self, data: Any) -> Any:
+        if data is None:
+            return None
+        if self._repository is None:
+            return data
+        return self._repository.serialize_document(data)
 
     def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -404,10 +423,17 @@ class ListMixin(ViewContext):
     def _apply_search(self, query: dict, search: str) -> dict:
         """Apply full-text search across configured search_fields."""
         safe_search = re.escape(search)
-        query["$or"] = [
+        search_clause = [
             {field: {"$regex": safe_search, "$options": "i"}}
             for field in self.search_fields
         ]
+        if "$or" in query:
+            existing_or = query.pop("$or")
+            query["$and"] = query.get("$and", [])
+            query["$and"].append({"$or": existing_or})
+            query["$and"].append({"$or": search_clause})
+        else:
+            query["$or"] = search_clause
         return query
 
     def _apply_filters(self, query: dict, request: Request) -> dict:
@@ -480,9 +506,11 @@ class ListMixin(ViewContext):
             query[field] = {operator_map[op]: val}
         elif op == "in":
             items = val if isinstance(val, list) else str(val).split(",")
+            items = [ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item for item in items]
             query[field] = {"$in": items}
         elif op == "nin":
             items = val if isinstance(val, list) else str(val).split(",")
+            items = [ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item for item in items]
             query[field] = {"$nin": items}
 
         return query
@@ -528,14 +556,34 @@ class ListMixin(ViewContext):
             Tuple of ``(list_of_documents, total_count)``.
         """
         skip = (page - 1) * page_size
-        return await self._repository.get_all(
-            query,
-            skip=skip,
-            limit=page_size,
-            sort=sort,
-            projection=self._get_projection(),
-            populate_fields=self._get_populate_fields(),
+        projection = self._get_projection()
+        populate_fields = self._get_populate_fields()
+
+        async def fetch_results() -> tuple[list, int]:
+            return await self._repository.get_all(
+                query,
+                skip=skip,
+                limit=page_size,
+                sort=sort,
+                projection=projection,
+                populate_fields=populate_fields,
+            )
+
+        if not self._cache or not self._cache.enabled:
+            return await fetch_results()
+
+        cache_key = self._build_cache_key(
+            "list",
+            {
+                "query": query,
+                "skip": skip,
+                "limit": page_size,
+                "sort": sort,
+                "projection": projection,
+                "populate_fields": populate_fields,
+            },
         )
+        return await self._cache.get_or_set(cache_key, self.cache_ttl, fetch_results)
 
     async def format_list(
         self,

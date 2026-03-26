@@ -1,11 +1,15 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    secret_key: str = "your_super_secret_key_here_at_least_32_chars"  # Override in production
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
+    secret_key: str = Field(
+        default="your_super_secret_key_here_at_least_32_chars",
+        alias="SECRET_KEY",
+    )
+    algorithm: str = Field(default="HS256", alias="ALGORITHM")
+    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
     ENVIRONMENT: str = "develop"
     
     # Defaults for DB
@@ -42,9 +46,17 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT == "develop"
 
     @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
+
+    @property
     def cookie_settings(self) -> dict:
         if self.is_development:
             return {"secure": False, "httponly": True, "samesite": "lax"}
         return {"secure": True, "httponly": True, "samesite": "strict"}
+
+    def validate_runtime(self) -> None:
+        if self.is_production and self.secret_key == "your_super_secret_key_here_at_least_32_chars":
+            raise ValueError("SECRET_KEY must be explicitly configured in production.")
 
 settings = Settings()

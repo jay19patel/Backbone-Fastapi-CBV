@@ -97,6 +97,17 @@ class CacheService:
             logger.error(f"Cache PATTERN DELETE error for '{pattern}': {exc}")
         return False
 
+    async def flush(self) -> bool:
+        """Flush the configured Redis database."""
+        if not self.enabled:
+            return False
+        try:
+            await self.redis.flushdb()
+            return True
+        except Exception as exc:
+            logger.error(f"Cache FLUSH error: {exc}")
+        return False
+
     def __call__(self, expire: int = 300, include_ip: bool = False, key_prefix: str = "cache"):
         """FastAPI-compatible caching decorator."""
         def decorator(func):
@@ -202,7 +213,8 @@ class TaskQueue:
         try:
             result = await self.redis.blpop(self.queue_name, timeout=5)
             if result: return json.loads(result[1])
-        except Exception: pass
+        except Exception as exc:
+            logger.error(f"Failed to dequeue task: {exc}")
         return None
 
 class TaskWorker:
@@ -233,7 +245,8 @@ class TaskWorker:
                         task_log.status = "processing"
                         task_log.started_at = datetime.now(timezone.utc)
                         await task_log.save()
-            except Exception: pass
+            except Exception as exc:
+                logger.warning(f"Failed to load task log {task_id}: {exc}")
 
         start_time = time.time()
         try:

@@ -9,12 +9,15 @@ from ..auth.router import AuthRouter
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as redis
 import asyncio
+import logging
 import os
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from .settings import Settings, settings
 
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger("backbone.config")
 
 class BackboneConfig:
     """
@@ -39,6 +42,8 @@ class BackboneConfig:
     ):
         self.app = app
         self.config = config
+        if hasattr(self.config, "validate_runtime"):
+            self.config.validate_runtime()
         
         # Default Core Models
         from .models import User, Session, LogEntry, TaskLog, Attachment
@@ -139,7 +144,7 @@ class BackboneConfig:
                         module="http_exception_handler"
                     ).insert()
             except Exception as log_exc:
-                print(f"Failed to log HTTP exception: {log_exc}")
+                logger.warning("Failed to log HTTP exception: %s", log_exc)
             
             headers = getattr(exc, "headers", None)
             if headers:
@@ -148,10 +153,7 @@ class BackboneConfig:
 
         @self.app.exception_handler(Exception)
         async def global_exception_handler(request: Request, exc: Exception):
-            import traceback
-            print("--- GLOBAL EXCEPTION ---")
-            traceback.print_exc()
-            print("------------------------")
+            logger.exception("Unhandled application exception")
             try:
                 await LogEntry(
                     level="error",
@@ -161,7 +163,7 @@ class BackboneConfig:
                     module="global_exception_handler"
                 ).insert()
             except Exception as log_exc:
-                print(f"Failed to log global exception: {log_exc}")
+                logger.warning("Failed to log global exception: %s", log_exc)
             return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
 
         from ..common.exceptions import BackboneException
@@ -185,7 +187,7 @@ class BackboneConfig:
                         module="backbone_exception_handler"
                     ).insert()
                 except Exception as log_exc:
-                    print(f"Failed to log backbone exception: {log_exc}")
+                    logger.warning("Failed to log backbone exception: %s", log_exc)
             
             return JSONResponse(content=content, status_code=exc.status_code)
 
@@ -216,34 +218,34 @@ class BackboneConfig:
 
     @property
     def cookie_settings(self) -> dict:
+        if hasattr(self.config, "cookie_settings"):
+            return self.config.cookie_settings
         if self.is_development:
             return {"secure": False, "httponly": True, "samesite": "lax"}
-        return {"secure": True, "httponly": True, "samesite": "none"}
+        return {"secure": True, "httponly": True, "samesite": "strict"}
 
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
         # Startup
-        print("System: Connecting to MongoDB (Beanie)...")
+        logger.info("Connecting to MongoDB and initializing Beanie")
         await init_database(
             client=self.mongo_client,
             database_name=self.config.DATABASE_NAME,
             document_models=[m for m in self.document_models if hasattr(m, "Settings")]
         )
-        print("System: Beanie Initialized.")
+        logger.info("Beanie initialized")
 
         # Start Task Workers
         if self.task_queue.enabled:
             worker_count = getattr(self.config, "WORKER_COUNT", 1)
-            print(f"System: Starting {worker_count} Task Worker(s)...")
+            logger.info("Starting %s task worker(s)", worker_count)
             for i in range(worker_count):
                 worker = TaskWorker(self.task_queue, worker_name=f"Worker-{i+1}")
                 asyncio.create_task(worker.run())
 
-        print("System: Beanie Initialized.")
-
-        print("System: Online and Ready.")
+        logger.info("Application online and ready")
         
         yield
         
         # Shutdown
-        print("System: Shutting down...")
+        logger.info("Application shutting down")

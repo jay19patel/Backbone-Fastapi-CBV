@@ -2,6 +2,7 @@ import os
 import math
 from datetime import datetime, timezone
 from typing import Optional, List
+from bson import ObjectId
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -24,6 +25,76 @@ def get_model_fields(model):
         if hasattr(cls, "model_fields") and isinstance(cls.model_fields, dict):
             all_fields.update(cls.model_fields)
     return all_fields
+
+def get_display_fields(model):
+    return [
+        key for key in get_model_fields(model).keys()
+        if key not in ["hashed_password", "password"] and key not in INTERNAL_FIELDS
+    ]
+
+def get_admin_search_fields(config, model):
+    configured = getattr(config["admin"], "search_fields", None)
+    if configured:
+        return [field for field in configured if field in get_model_fields(model)]
+
+    fallback = []
+    for field_name in ["name", "title", "full_name", "username", "email", "filename", "question", "subject", "slug"]:
+        if field_name in get_model_fields(model):
+            fallback.append(field_name)
+    return fallback
+
+def build_admin_search_query(base_query, q, search_field, search_fields):
+    query = dict(base_query)
+    if not q:
+        return query
+
+    clauses = []
+    trimmed = q.strip()
+
+    if search_field == "id":
+        if ObjectId.is_valid(trimmed):
+            clauses.append({"_id": ObjectId(trimmed)})
+        else:
+            clauses.append({"_id": trimmed})
+    else:
+        target_fields = search_fields if search_field in ("all", "", None) else [search_field]
+        for field_name in target_fields:
+            clauses.append({field_name: {"$regex": trimmed, "$options": "i"}})
+        if search_field in ("all", "", None) and ObjectId.is_valid(trimmed):
+            clauses.append({"_id": ObjectId(trimmed)})
+
+    if not clauses:
+        return query
+
+    if query:
+        return {"$and": [query, {"$or": clauses}]}
+    return {"$or": clauses}
+
+def get_default_sort_field(model, config):
+    ordering = getattr(config["admin"], "ordering", None)
+    if ordering:
+        field_name = ordering[1:] if ordering.startswith("-") else ordering
+        if field_name in get_model_fields(model) or field_name == "id":
+            return ordering
+    if "created_at" in get_model_fields(model):
+        return "-created_at"
+    return "-id"
+
+def build_sort_query(model, config, sort_by, order):
+    requested_field = sort_by or get_default_sort_field(model, config)
+    requested_order = order
+
+    if requested_field.startswith("-"):
+        requested_order = "desc"
+        requested_field = requested_field[1:]
+
+    allowed_fields = set(get_display_fields(model)) | {"id", "created_at", "updated_at"}
+    if requested_field not in allowed_fields:
+        requested_field = "created_at" if "created_at" in get_model_fields(model) else "id"
+
+    sort_field = "_id" if requested_field == "id" else requested_field
+    sort_direction = -1 if requested_order == "desc" else 1
+    return [(sort_field, sort_direction)], requested_field, requested_order
 
 router = APIRouter(prefix="/admin")
 
@@ -237,7 +308,10 @@ async def logout(request: Request):
                 from ..auth.service import AuthService
                 auth_service = AuthService(request)
                 await auth_service.logout(sid)
-         except: pass
+         except Exception:
+             pass
+
+    return response
          
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -527,6 +601,11 @@ async def model_list(
     request: Request, 
     model_name: str, 
     page: int = 1,
+    q: str = "",
+    search_field: str = "all",
+    sort_by: str = "",
+    order: str = "desc",
+    page_size: int = 20,
     user: Optional[User] = Depends(get_admin_user)
 ):
     if not user:
@@ -537,21 +616,26 @@ async def model_list(
         raise HTTPException(status_code=404, detail="Model not found")
     
     model = config["model"]
-    limit = 20
+    limit = max(10, min(page_size, 100))
     skip = (page - 1) * limit
-    
-    query = {}
+
+    base_query = {}
     if "is_deleted" in get_model_fields(model):
-        query["is_deleted"] = {"$ne": True}
-        
+        base_query["is_deleted"] = {"$ne": True}
+
+    search_fields = get_admin_search_fields(config, model)
+    if search_field not in {"all", "id"} and search_field not in search_fields:
+        search_field = "all"
+
+    query = build_admin_search_query(base_query, q, search_field, search_fields)
     total_count = await model.find(query).count()
     
     from ..core.repository import BeanieRepository
     repo = BeanieRepository()
     repo.document_class = model
     populate_fields = BeanieRepository.detect_populate_fields(model)
-    
-    sort_query = [("created_at", -1)] if "created_at" in get_model_fields(model) else None
+
+    sort_query, active_sort_field, active_sort_order = build_sort_query(model, config, sort_by, order)
     items, _ = await repo.get_all(query, skip=skip, limit=limit, sort=sort_query, populate_fields=populate_fields)
     total_pages = math.ceil(total_count / limit) if limit > 0 else 1
     
@@ -578,7 +662,14 @@ async def model_list(
         "now": datetime.now(timezone.utc),
         "field_links": field_links,
         "model_fields": get_model_fields(model),
-        "internal_fields": INTERNAL_FIELDS
+        "internal_fields": INTERNAL_FIELDS,
+        "display_fields": get_display_fields(model),
+        "search_fields": search_fields,
+        "search_query": q,
+        "active_search_field": search_field,
+        "active_sort_field": active_sort_field,
+        "active_sort_order": active_sort_order,
+        "page_size_options": [10, 20, 50, 100]
     })
 
 @router.get("/{model_name}/create", response_class=HTMLResponse)
@@ -992,17 +1083,8 @@ async def admin_api_search(
     query = {}
     if "is_deleted" in get_model_fields(model):
         query["is_deleted"] = {"$ne": True}
-        
-    if q:
-        search_params = []
-        for field_name in ["name", "title", "full_name", "username", "email", "filename", "question", "subject"]:
-            if field_name in get_model_fields(model):
-                search_params.append({field_name: {"$regex": q, "$options": "i"}})
-        if search_params:
-            if "is_deleted" in query:
-                query = {"$and": [{"is_deleted": {"$ne": True}}, {"$or": search_params}]}
-            else:
-                query = {"$or": search_params}
+
+    query = build_admin_search_query(query, q or "", "all", get_admin_search_fields(config, model))
             
     items = await model.find(query).skip(skip).limit(limit).to_list()
     total = await model.find(query).count()
@@ -1024,4 +1106,3 @@ async def admin_api_search(
         "limit": limit,
         "total_pages": math.ceil(total / limit)
     }
-

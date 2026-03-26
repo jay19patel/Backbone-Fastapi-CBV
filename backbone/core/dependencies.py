@@ -12,6 +12,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     Dependency to fetch the current authenticated User Beanie document.
     """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = TokenManager.decode_token(token)
     if not payload or payload.get("type") != "access":
         raise HTTPException(
@@ -58,5 +65,5 @@ async def get_optional_user(token: str = Depends(oauth2_scheme)) -> Optional[Use
             return None
         user = await get_current_user(token)
         return UserOut(**user.model_dump(by_alias=True))
-    except:
+    except Exception:
         return None

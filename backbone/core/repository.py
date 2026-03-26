@@ -21,6 +21,8 @@ Design decisions:
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Generic, List, Optional, Protocol, Type, TypeVar, Union
@@ -620,8 +622,7 @@ class BeanieRepository(Generic[T]):
                         for c in id_to_containers.get(rid, []):
                             c[link_field] = r
                 except Exception as e:
-                    with open("/tmp/debug_repo.log", "a") as f:
-                        f.write(f"DEBUG: ERROR in _resolve_deep_links: {e}\n")
+                    logger.warning("Failed to resolve deep links for '%s': %s", link_field, e)
 
         return doc
 
@@ -778,10 +779,6 @@ class BeanieRepository(Generic[T]):
         results = await self.document_class.get_pymongo_collection().aggregate(
             pipeline,
         ).to_list(length=1)
-        
-        with open("/tmp/debug_repo.log", "a") as f:
-            f.write(f"DEBUG: Pipeline: {pipeline}\n")
-            f.write(f"DEBUG: Results after pipeline: {results}\n")
 
         if not results:
             return None
@@ -844,6 +841,11 @@ class BeanieRepository(Generic[T]):
         Returns:
             The updated Beanie Document, or ``None`` if not found.
         """
+        uses_update_operators = any(key.startswith("$") for key in data)
+
+        if uses_update_operators and allowed_fields is not None:
+            raise ValueError("allowed_fields cannot be combined with raw MongoDB update operators.")
+
         if allowed_fields is not None:
             data = {k: v for k, v in data.items() if k in allowed_fields}
 
@@ -851,6 +853,13 @@ class BeanieRepository(Generic[T]):
         item = await self.document_class.find_one(filter_query)
         if not item:
             return None
+
+        if uses_update_operators:
+            await self.document_class.get_pymongo_collection().update_one(
+                {"_id": item.id},
+                data,
+            )
+            return await self.document_class.get(item.id)
 
         await item.set(data)
         return item
@@ -966,4 +975,17 @@ class BeanieRepository(Generic[T]):
         """Move ``_id`` → ``id`` and sanitise all ObjectIds."""
         if "_id" in doc:
             doc["id"] = str(doc.pop("_id"))
+        return self._sanitize(doc)
+
+    def serialize_document(self, doc: Any) -> Any:
+        """Convert a document-like object into Backbone's sanitized response shape."""
+        if doc is None:
+            return None
+        if isinstance(doc, list):
+            return [self.serialize_document(item) for item in doc]
+        if isinstance(doc, dict):
+            return self._clean_single_doc(copy.deepcopy(doc))
+        if isinstance(doc, Document):
+            dumped = doc.model_dump(by_alias=True)
+            return self._clean_single_doc(dumped)
         return self._sanitize(doc)
