@@ -1,0 +1,11 @@
+{% extends "email/base_email.html" %}
+{% block title %}Welcome to Blogermenia{% endblock %}
+{% block heading %}Welcome, {{ full_name }}{% endblock %}
+{% block content %}
+<p>Your account has been created successfully on Blogermenia.</p>
+<p>You can now login and start writing, publishing, and managing your content.</p>
+<p>
+    <a class="button" href="{{ login_url }}">Login To Dashboard</a>
+</p>
+<p>If you did not create this account, contact support immediately.</p>
+{% endblock %}

@@ -141,7 +141,9 @@ class TaskLog(Document):
     started_at: Optional[datetime] = Field(default=None, description="Timestamp when the task started processing")
     completed_at: Optional[datetime] = Field(default=None, description="Timestamp when the task finished execution")
     error_message: Optional[str] = Field(default=None, description="Error message if the task failed")
+    error_traceback: Optional[str] = Field(default=None, description="Traceback captured when the task fails")
     execution_time_s: Optional[float] = Field(default=None, description="Total execution time in seconds")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Arbitrary structured metadata for observability")
 
     class Settings:
         name = "task_logs"
@@ -149,6 +151,50 @@ class TaskLog(Document):
             IndexModel([("status", ASCENDING)]),
             IndexModel([("task_id", ASCENDING)]),
             IndexModel([("created_at", DESCENDING)])
+        ]
+
+class EmailDeliveryLog(Document):
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the email job record was created")
+    queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the email was queued for sending")
+    started_at: Optional[datetime] = Field(default=None, description="Timestamp when sending started")
+    sent_at: Optional[datetime] = Field(default=None, description="Timestamp when email was sent")
+
+    to_email: EmailStr = Field(description="Recipient email address")
+    subject: str = Field(description="Email subject line")
+    from_email: Optional[EmailStr] = Field(default=None, description="Sender email used for this delivery")
+    template_name: Optional[str] = Field(default=None, description="Template path used to render email body")
+    context: Dict[str, Any] = Field(default_factory=dict, description="Template context payload")
+    plain_text_body: Optional[str] = Field(default=None, description="Optional plain text fallback body")
+    html_body: Optional[str] = Field(default=None, description="Rendered HTML body")
+
+    attachments: List[Dict[str, Any]] = Field(default_factory=list, description="Explicit attachments metadata")
+    pdf_attachments: List[Dict[str, Any]] = Field(default_factory=list, description="Templates to be rendered into PDF attachments")
+    status: str = Field(default="queued", description="queued, processing, sent, failed, skipped")
+    attempt_count: int = Field(default=0, description="How many send attempts were made")
+
+    error_message: Optional[str] = Field(default=None, description="Failure reason if send failed")
+    error_traceback: Optional[str] = Field(default=None, description="Traceback captured when send failed")
+    provider_message_id: Optional[str] = Field(default=None, description="Provider response message id when available")
+
+    class Settings:
+        name = "email_delivery_logs"
+        indexes = [
+            IndexModel([("to_email", ASCENDING)]),
+            IndexModel([("status", ASCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
+        ]
+
+class BackboneStore(Document):
+    scope: str = Field(default="global", description="Singleton scope identifier")
+    values: Dict[str, Any] = Field(default_factory=dict, description="Flexible key/value map")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the store document was created")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the store document was last updated")
+
+    class Settings:
+        name = "backbone_store"
+        indexes = [
+            IndexModel([("scope", ASCENDING)], unique=True),
+            IndexModel([("updated_at", DESCENDING)]),
         ]
 
 class PasswordResetToken(Document):

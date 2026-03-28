@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Blogermenia Welcome Packet</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 24mm 18mm;
+        }
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            color: #111827;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        h1 {
+            font-size: 22px;
+            margin: 0 0 8px;
+        }
+        h2 {
+            font-size: 15px;
+            margin: 20px 0 8px;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 4px;
+        }
+        .muted {
+            color: #6b7280;
+        }
+        ul {
+            padding-left: 18px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome To Blogermenia</h1>
+    <p class="muted">Prepared for: {{ full_name }}</p>
+
+    <h2>Quick Start Checklist</h2>
+    <ul>
+        <li>Login and verify your profile details.</li>
+        <li>Upload profile photo and set your author bio.</li>
+        <li>Create your first blog draft.</li>
+        <li>Publish and share your article.</li>
+    </ul>
+
+    <h2>Important Links</h2>
+    <p>Login URL: {{ login_url }}</p>
+    <p>Support: {{ support_email }}</p>
+
+    <h2>Security Reminder</h2>
+    <p>Never share your login credentials and always use a strong password.</p>
+
+    <p class="muted">Generated in {{ current_year }} by Blogermenia.</p>
+</body>
+</html>

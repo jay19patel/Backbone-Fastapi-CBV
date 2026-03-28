@@ -1,119 +1,137 @@
-# Backbone for FastAPI
+# Blogermenia Backend (Backbone FastAPI)
 
-`Backbone` is the reusable backend framework layer inside this repository. It is designed to make FastAPI development faster by combining class-based CRUD views, Beanie repositories, permissions, auth, admin tooling, caching, Redis jobs, and shared infrastructure into one coherent developer experience.
+This backend is a FastAPI + MongoDB (Beanie) application built on top of the in-repo framework **Backbone**.
 
-This package is already useful for internal development. The next goal is to make it cleaner, more extensible, and more production-grade.
+Backbone provides:
+- generic class-based CRUD APIs
+- auth/session flows
+- admin UI
+- background jobs (logged + internal no-log queues)
+- media/attachment processing
+- template pages/forms
+- email queue + PDF attachment support
+- singleton key-value store (`backbone.db_store`)
 
-## Goals
+The app entrypoint is `main.py`.
 
-- reduce repeated CRUD boilerplate
-- give developers an easy way to build APIs from Beanie models
-- provide a built-in admin surface
-- support auth, sessions, media, caching, and background jobs
-- keep extension points simple so Backbone can grow into a real reusable framework
+---
 
-## Current Feature Set
+## 1. What Is Inside
 
-### Core
-
-- `BackboneConfig` for app bootstrap and lifecycle wiring
-- Beanie database initialization
-- framework settings with environment-based behavior
-- shared exception and utility layers
-
-### Data and repository layer
-
-- `BeanieRepository` abstraction
-- CRUD helpers
-- pagination support
-- projection support
-- populate/link detection support
-- soft-delete-oriented query patterns
-
-### Generic views
-
-- `GenericListView`
-- `GenericCreateView`
-- `GenericRetrieveView`
-- `GenericUpdateView`
-- `GenericDeleteView`
-- `GenericCrudView`
-- `GenericStatsView`
-- `GenericSubResourceView`
-- `GenericCustomApiView`
-- custom `@action(...)` endpoints on views
-
-### Auth
-
-- register
-- login
-- refresh
-- logout
-- Google login
-- session validation
-- JWT access and refresh token helpers
-
-### Admin
-
-- model registry
-- admin login
-- dashboard
-- model browsing
-- export screens
-- template-driven HTML admin pages
-
-### Infrastructure
-
-- Redis-backed caching
-- Redis-backed background task queue
-- background worker loop
-- sliding-window rate limiting
-- signal/event hooks
-- attachment/media support
-- DB log persistence support
-
-## High-Level Architecture
+### High-level structure
 
 ```text
 backend/
-├── backbone/
-│   ├── admin/        # Admin registry, router, templates
-│   ├── auth/         # Auth router and auth services
-│   ├── common/       # Shared services, utils, exceptions
-│   ├── core/         # Config, settings, models, permissions, repository
-│   ├── generic/      # Generic class-based views and router helpers
-│   └── schemas/      # Shared response/input schemas
-├── api/              # App-level routers built using Backbone
-├── schemas/          # App-level document models
-└── main.py           # App entrypoint
+├── main.py                     # FastAPI app bootstrap + router wiring
+├── api/                        # App API routers (blogs, users, playlists, content)
+├── schemas/                    # App Beanie models
+├── pages/                      # App template page views
+├── templates/                  # App templates (pages + email)
+├── backbone/                   # Framework layer
+│   ├── core/                   # config, settings, models, repository, media
+│   ├── generic/                # Generic views + router helpers
+│   ├── auth/                   # Auth API + reset-password pages
+│   ├── admin/                  # Admin site/router/templates
+│   ├── common/                 # cache + background queue services
+│   ├── email_sender.py         # queued SMTP email sender + PDF attachments
+│   └── db.py                   # singleton key/value store service
+└── test/apitest.py             # heavy integration seed and validation script
 ```
 
-## Developer Workflow
+---
 
-The intended usage pattern is:
+## 2. Quick Start
 
-1. Define a Beanie `Document`.
-2. Create a view class using `GenericCrudView` or another generic view.
-3. Configure permissions, search fields, list fields, and link population.
-4. Register the router in the app.
-5. Optionally add custom actions, signals, admin config, and service logic.
+### Prerequisites
 
-### Example
+- Python `3.13+`
+- MongoDB running
+- Redis running (required for async queue workers; without Redis tasks run sync fallback)
+- `uv`
+
+### Install
+
+```bash
+cd backend
+uv sync
+```
+
+### Configure `.env`
+
+Create/update `.env` in `backend/` with valid `KEY=value` lines.
+
+Important:
+- do not use Python style (`EMAIL_PORT: int = 587`)
+- do not add quotes unless required
+
+### Run API
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+Base URL default:
+- `http://127.0.0.1:8000`
+
+---
+
+## 3. Core App Boot Flow
+
+`main.py`:
+1. creates FastAPI app
+2. registers app models
+3. initializes `BackboneConfig`
+4. includes routers under `/api` and `/pages`
+
+`BackboneConfig` wires:
+- MongoDB
+- Redis cache + queues (when enabled)
+- task workers (`WORKER_COUNT`, `INTERNAL_WORKER_COUNT`)
+- auth router (`/api/auth/*`)
+- admin router (`/admin/*`)
+- static media mount in non-production
+- global exception logging to `logs` collection
+
+---
+
+## 4. Generic CRUD and Mixins
+
+Backbone generic views are built from mixins:
+- `ListMixin`
+- `CreateMixin`
+- `RetrieveMixin`
+- `UpdateMixin`
+- `DeleteMixin`
+
+Main ready-to-use views:
+- `GenericCrudView`
+- `GenericStatsView`
+- `GenericCustomApiView`
+- `GenericTemplateView`
+- `GenericFormView`
+
+### Example: CRUD API in 10 lines
 
 ```python
-from backbone import GenericCrudView, AllowAny
+from backbone.generic.views import GenericCrudView
+from backbone.core.permissions import AllowAny
 from schemas.blogs import Blog
 
 class BlogView(GenericCrudView):
     schema = Blog
     search_fields = ["title", "excerpt"]
-    permission_classes = [AllowAny]
+    list_fields = ["id", "title", "slug", "author"]
     fetch_links = True
+    permission_classes = [AllowAny]
+```
 
+Then include router:
+
+```python
 router.include_router(BlogView.as_router("/blogs", tags=["Blogs"]))
 ```
 
-### Custom action example
+### Custom action on generic view
 
 ```python
 from backbone.generic.action import action
@@ -121,127 +139,353 @@ from backbone.generic.action import action
 class BlogView(GenericCrudView):
     @action(detail=True, methods=["post"])
     async def publish(self, request, pk):
-        return {"status": "published"}
+        return {"status": "published", "id": pk}
 ```
 
-## Running The Backend
+---
 
-### Prerequisites
+## 5. Background Jobs (Important)
 
-- Python 3.13+
-- MongoDB
-- Redis
-- `uv`
+Backbone has two queue patterns:
 
-### Install
+1. **Logged queue**  
+   Use `background_task(...)`  
+   - queue: `backbone_tasks`
+   - creates `task_logs` entries (`TaskLog`)
+   - good for business jobs where visibility is needed
 
-```bash
-uv sync
+2. **Internal queue (no TaskLog entry)**  
+   Use `background_internal_task(...)`  
+   - queue: `backbone_internal_tasks`
+   - no `task_logs` creation
+   - used by internal framework jobs (like attachment processing)
+
+### Worker behavior
+
+- Workers start only when Redis client is enabled (`CACHE_ENABLED=true`).
+- If Redis is disabled/unavailable, queue helper falls back to immediate sync execution.
+
+---
+
+## 6. Media / Attachment Upload
+
+Endpoint:
+- `POST /api/media/upload`
+
+Supports:
+- multipart file upload (`file`)
+- image URL fetch (`url`)
+
+Flow:
+1. creates `Attachment` doc with `pending`
+2. enqueues internal background task (no TaskLog)
+3. worker stores file (Cloudinary or local `/media/...`)
+4. updates attachment status (`completed`/`failed`)
+5. auto-links attachment to target document field when `collection_name`, `document_id`, `field_name` are provided
+
+Response includes:
+- `id` (attachment id)
+- `task_id` (internal queue task id, may be `null` in sync fallback)
+- `status`
+- `url`
+
+---
+
+## 7. Email System
+
+Email sender module:
+- `backbone.email_sender`
+
+Main capabilities:
+- queued SMTP sending
+- HTML template rendering (Jinja2)
+- optional plain text fallback
+- file attachments (`file_path` or `content_base64`)
+- template-to-PDF attachment generation (ReportLab)
+- delivery status logging in `email_delivery_logs`
+
+Collections used:
+- `email_delivery_logs`
+
+Statuses:
+- `queued`
+- `processing`
+- `sent`
+- `failed`
+- `skipped` (when `EMAIL_ENABLED=false`)
+
+### Automatic registration emails
+
+On user register (`/api/auth/register`), system queues:
+1. welcome email
+2. welcome-pack email with PDF attachment
+
+### Generic usage
+
+```python
+from backbone import email_sender
+
+await email_sender.queue_email(
+    to_email="user@example.com",
+    subject="Invoice",
+    template_name="email/welcome_pack_email.html",
+    context={"full_name": "Demo User"},
+    pdf_attachments=[
+        {
+            "template_name": "email/pdf/welcome_packet.html",
+            "context": {"full_name": "Demo User"},
+            "filename": "packet.pdf",
+            "content_type": "application/pdf",
+        }
+    ],
+)
 ```
 
-### Start the API
+### Gmail note
 
-```bash
-uv run uvicorn main:app --reload
+For Gmail SMTP:
+- use `EMAIL_USERNAME`
+- use Gmail **App Password** in `EMAIL_PASSWORD`
+- set matching `EMAIL_FROM_EMAIL`
+
+---
+
+## 8. Singleton Key-Value Store (`backbone.db_store`)
+
+Backbone provides a single document store in MongoDB collection `backbone_store`.
+
+Use cases:
+- API keys
+- feature flags
+- small runtime-config values
+
+API:
+- `await db_store.get(key, default=None)`
+- `await db_store.set(key, value)`
+- `await db_store.update({...})`
+- `await db_store.delete(key)`
+- `await db_store.all()`
+
+Rules:
+- key cannot be empty
+- key cannot contain `.`
+- key cannot start with `$`
+
+### Example
+
+```python
+from backbone import db_store
+
+await db_store.set("homepage_banner", "Welcome to Blogermenia")
+banner = await db_store.get("homepage_banner")
 ```
 
-## Configuration
+Also see testing page:
+- `GET /pages/store-test/`
 
-Backbone settings are defined in [`backbone/core/settings.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/core/settings.py).
+---
 
-Important settings:
+## 9. Auth, Pages, Admin
 
-- `SECRET_KEY`
-- `ENVIRONMENT`
-- `MONGODB_URL`
-- `DATABASE_NAME`
-- `CACHE_ENABLED`
-- `REDIS_URL`
-- `RATE_LIMIT_ENABLED`
-- `CORS_ALLOWED_ORIGINS`
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `CLOUDINARY_URL`
+### Auth API (`/api/auth`)
 
-Example `.env`:
+- `POST /register`
+- `POST /login`
+- `POST /google/login`
+- `POST /refresh`
+- `POST /logout`
+- `GET /me`
+- `PATCH /me`
+
+### Password reset pages
+
+- `GET/POST /pages/reset-password/`
+- `GET/POST /pages/reset-password/confirm/`
+
+### App pages
+
+- `/pages/contact/`
+- `/pages/contact/submissions/`
+- `/pages/about/`
+- `/pages/store-test/`
+
+### Admin
+
+- `/admin/*`
+- model browsing and management for core + app models
+
+---
+
+## 10. Environment Variables (Defaults and Purpose)
+
+From `backbone/core/settings.py`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SECRET_KEY` | `your_super_secret_key_here_at_least_32_chars` | JWT/security secret |
+| `ALGORITHM` | `HS256` | JWT algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | access token lifetime |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | refresh token lifetime |
+| `ENVIRONMENT` | `develop` | `develop` / `production` behavior |
+| `MONGODB_URL` | `mongodb://localhost:27017` | MongoDB URL |
+| `DATABASE_NAME` | `backbone_app` | DB name |
+| `CACHE_ENABLED` | `false` | enables Redis cache + async queues |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis URL |
+| `CACHE_TTL` | `300` | default cache TTL |
+| `WORKER_COUNT` | `2` | logged task worker count |
+| `INTERNAL_WORKER_COUNT` | `2` | internal task worker count |
+| `RATE_LIMIT_ENABLED` | `true` | global rate limiting toggle |
+| `RATE_LIMIT_DEFAULT_CALLS` | `100` | default request count limit |
+| `RATE_LIMIT_DEFAULT_WINDOW` | `60` | default window seconds |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | CORS list |
+| `GOOGLE_CLIENT_ID` | `""` | Google auth |
+| `GOOGLE_CLIENT_SECRET` | `""` | Google auth |
+| `CLOUDINARY_URL` | `""` | Cloudinary config |
+| `EMAIL_ENABLED` | `true` | email on/off |
+| `EMAIL_HOST` | `smtp.gmail.com` | SMTP host |
+| `EMAIL_PORT` | `587` | SMTP port |
+| `EMAIL_USE_TLS` | `true` | STARTTLS |
+| `EMAIL_USE_SSL` | `false` | implicit SSL |
+| `EMAIL_USERNAME` | `""` | SMTP username |
+| `EMAIL_PASSWORD` | `""` | SMTP password/app password |
+| `EMAIL_FROM_EMAIL` | `no-reply@example.com` | sender email |
+| `EMAIL_FROM_NAME` | `Backbone` | sender display name |
+| `EMAIL_TIMEOUT_SECONDS` | `30` | SMTP timeout |
+
+### Example `.env`
 
 ```env
-SECRET_KEY=replace_with_a_real_secret
 ENVIRONMENT=develop
-MONGODB_URL=mongodb://localhost:27017
-DATABASE_NAME=backbone_app
+SECRET_KEY=replace_with_a_real_secret
+
+MONGODB_URL=mongodb://127.0.0.1:27017
+DATABASE_NAME=BlogerMenia
+
 CACHE_ENABLED=true
-REDIS_URL=redis://localhost:6379/0
-RATE_LIMIT_ENABLED=true
+REDIS_URL=redis://127.0.0.1:6379/0
+WORKER_COUNT=2
+INTERNAL_WORKER_COUNT=2
+
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+RATE_LIMIT_ENABLED=true
+
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 CLOUDINARY_URL=
+
+EMAIL_ENABLED=true
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_USE_SSL=false
+EMAIL_USERNAME=your_gmail@gmail.com
+EMAIL_PASSWORD=your_gmail_app_password
+EMAIL_FROM_EMAIL=your_gmail@gmail.com
+EMAIL_FROM_NAME=Blogermenia
+EMAIL_TIMEOUT_SECONDS=30
 ```
 
-## What Is Good Right Now
+---
 
-- the generic CRUD foundation is strong
-- the package structure is understandable
-- the framework already reduces a lot of repetitive FastAPI code
-- auth, admin, cache, signals, and jobs are integrated in one place
-- developers can build app-level routers quickly
+## 11. Testing and Validation
 
-## What Needs Improvement
+### A. Fast smoke check
 
-Backbone is not fully production-grade yet. The biggest gaps are:
+```bash
+uv run python -c "import main; print(bool(main.app))"
+```
 
-- framework code and app code are still partly coupled
-- repository methods do not always return one consistent shape
-- there are too many broad exception handlers and silent fallbacks
-- admin and auth flows need stronger hardening
-- worker architecture is still lightweight
-- observability and tests need stronger coverage
+### B. Heavy integration test
 
-The full review is documented in [BACKBONE_ARCHITECTURE_AUDIT.md](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/BACKBONE_ARCHITECTURE_AUDIT.md).
+Script:
+- `test/apitest.py`
 
-## Recommended Next Refactor Stages
+What it does:
+- optional DB wipe
+- creates many users
+- uploads attachments (user/blog/playlist)
+- creates categories/blogs/playlists
+- optionally creates testimonials + FAQs
+- validates list endpoints
+- validates `store-test` page set/get flow
+- validates email logs in DB
 
-### Stage 1: Stabilize contracts
+Run:
 
-- standardize repository return types
-- add a proper app factory pattern
-- remove old/outdated assumptions
-- document extension boundaries clearly
+```bash
+uv run python test/apitest.py
+```
 
-### Stage 2: Improve developer ergonomics
+Tune load by editing constants at top of file:
+- `NUM_USERS`
+- `BLOGS_PER_USER`
+- `PLAYLISTS_PER_USER`
+- `USER_WORKER_CONCURRENCY`
+- `BLOG_CREATE_CONCURRENCY`
 
-- add cleaner service-layer examples
-- add better admin customization APIs
-- add scaffolding helpers
-- improve docs and usage examples
+Current repository defaults are intentionally low for quick validation.  
+For heavy seed (around 2500 blogs), set for example:
+- `NUM_USERS = 50`
+- `BLOGS_PER_USER = 50`
+- `PLAYLISTS_PER_USER = 2`
 
-### Stage 3: Production hardening
+---
 
-- strengthen auth and admin security
-- add health checks
-- add structured logging and metrics
-- improve background worker architecture
-- add framework-level tests
+## 12. Build Your Own Feature (Recommended Pattern)
 
-## Design Direction
+1. Add/extend Beanie model in `schemas/`.
+2. Add view class using `GenericCrudView` in `api/`.
+3. Include router in `main.py`.
+4. Use `background_task` for tracked business jobs.
+5. Use `email_sender.queue_email(...)` for async email.
+6. Use `db_store` for small dynamic key-value config.
 
-To keep Backbone easy to extend, new work should follow these rules:
+---
 
-- routers should stay thin
-- services should hold business logic
-- repositories should own persistence logic
-- framework internals should stay app-agnostic
-- extension points should be explicit and documented
+## 13. Troubleshooting
 
-## Useful Files
+### 1) `python-dotenv could not parse statement...`
 
-- package exports: [`backbone/__init__.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/__init__.py)
-- config bootstrap: [`backbone/core/config.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/core/config.py)
-- settings: [`backbone/core/settings.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/core/settings.py)
-- repository: [`backbone/core/repository.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/core/repository.py)
-- mixins: [`backbone/core/mixins.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/core/mixins.py)
-- generic views: [`backbone/generic/views.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/generic/views.py)
-- auth router: [`backbone/auth/router.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/auth/router.py)
-- admin router: [`backbone/admin/router.py`](/Users/jaypatel/Desktop/Development/Jay/Blogermenia-Djnago/backend/backbone/admin/router.py)
+Your `.env` line format is invalid.  
+Use:
+- `KEY=value`
 
+Do not use:
+- `KEY: int = 123`
+
+### 2) SMTP `530 Authentication Required`
+
+Fix:
+- set `EMAIL_USERNAME`
+- set `EMAIL_PASSWORD` (App Password for Gmail)
+- ensure `EMAIL_FROM_EMAIL` matches sender account
+
+### 3) Background tasks not entering queue
+
+If `CACHE_ENABLED=false`, Redis queue is disabled and tasks run synchronously.  
+Set:
+- `CACHE_ENABLED=true`
+- valid `REDIS_URL`
+
+### 4) Media uploads remain pending
+
+Check:
+- Redis worker running (for async mode)
+- Cloudinary config (if using cloud)
+- attachment errors in logs collection (`logs`) and attachment status in `attachments`
+
+---
+
+## 14. Key Files to Read
+
+- `main.py`
+- `backbone/__init__.py`
+- `backbone/core/config.py`
+- `backbone/core/settings.py`
+- `backbone/core/models.py`
+- `backbone/common/services.py`
+- `backbone/email_sender.py`
+- `backbone/db.py`
+- `backbone/core/media_router.py`
+- `pages/contact.py`
+- `test/apitest.py`

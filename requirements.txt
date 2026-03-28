@@ -13,3 +13,4 @@ python-slugify>=8.0.4
 redis>=4.5.1
 uvicorn>=0.32.0
 cloudinary>=1.36.0
+reportlab>=4.2.2

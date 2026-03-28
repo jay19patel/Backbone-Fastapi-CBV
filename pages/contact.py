@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from bson import ObjectId
 from fastapi import APIRouter, Request
 
-from backbone import AllowAny, GenericFormView, GenericTemplateView
+from backbone import AllowAny, GenericFormView, GenericTemplateView, db_store
 from backbone.core.repository import BeanieRepository
 from schemas.content import Contact
 
@@ -166,6 +166,60 @@ class AboutPage(GenericTemplateView):
         }
 
 
+class StoreTestPage(GenericFormView):
+    template_name = "pages/store_test.html"
+    permission_classes = [AllowAny]
+    page_name = "Backbone Store Test"
+    page_description = "Set and read Backbone singleton key/value data using backbone.db_store.get."
+    admin_category = "Application Pages"
+
+    @staticmethod
+    def _resolve_key(request: Request) -> str:
+        key = str(request.query_params.get("key", "homepage_banner")).strip()
+        return key or "homepage_banner"
+
+    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+        key = self._resolve_key(request)
+        value = await db_store.get(key, "No value set yet.")
+        return {
+            "submitted": False,
+            "success": False,
+            "error": "",
+            "active_key": key,
+            "active_value": value,
+            "form_values": {"key": key, "value": ""},
+            "all_values": await db_store.all(),
+        }
+
+    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+        key = str(form_data.get("key", "")).strip()
+        value = str(form_data.get("value", "")).strip()
+
+        if not key:
+            return {
+                "submitted": True,
+                "success": False,
+                "error": "Key is required.",
+                "active_key": "homepage_banner",
+                "active_value": await db_store.get("homepage_banner", "No value set yet."),
+                "form_values": {"key": "", "value": value},
+                "all_values": await db_store.all(),
+            }
+
+        await db_store.set(key, value)
+        fetched_value = await db_store.get(key)
+        return {
+            "submitted": True,
+            "success": True,
+            "error": "",
+            "message_text": f"Saved and fetched via backbone.db_store.get('{key}')",
+            "active_key": key,
+            "active_value": fetched_value,
+            "form_values": {"key": key, "value": ""},
+            "all_values": await db_store.all(),
+        }
+
+
 router = APIRouter()
 router.include_router(
     ContactPage.as_router(
@@ -189,5 +243,13 @@ router.include_router(
         tags=["Pages"],
         name="about_page",
         admin_path="/pages/about",
+    )
+)
+router.include_router(
+    StoreTestPage.as_router(
+        "/store-test",
+        tags=["Pages"],
+        name="store_test_page",
+        admin_path="/pages/store-test",
     )
 )

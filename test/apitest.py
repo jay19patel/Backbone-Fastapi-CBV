@@ -1,377 +1,553 @@
 import asyncio
-import httpx
-import random
-import time
 import os
-from typing import List, Optional
+import random
+import sys
+import time
+import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from backbone.core.settings import settings
+
+
+# ---------------------------------------------------------------------------
+# Test Config (edit directly here)
+# ---------------------------------------------------------------------------
 BASE_URL = "http://127.0.0.1:8000"
+REQUEST_TIMEOUT = 90
 
-NUM_USERS = 50
-BLOGS_PER_USER = 50
-CONCURRENT_REQUESTS = 3
+# Heavy seed config (50 * 50 = 2500 blogs)
+NUM_USERS = 1
+BLOGS_PER_USER = 1
+PLAYLISTS_PER_USER = 1
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGE_PATH = os.path.join(BASE_DIR, "blog.png")
-PROFILE_IMAGE_PATH = os.path.join(BASE_DIR, "profile.png")
+# Runtime concurrency controls
+USER_WORKER_CONCURRENCY = 1
+BLOG_CREATE_CONCURRENCY = 1
+
+# Optional data toggles
+CLEAR_DATABASE_BEFORE_RUN = True
+CREATE_GLOBAL_FAQS = True
+TESTIMONIAL_PROBABILITY = 0.25
+
+# Files
+IMAGE_PATH = os.path.join(CURRENT_DIR, "blog.png")
+PROFILE_IMAGE_PATH = os.path.join(CURRENT_DIR, "profile.png")
+PLAYLIST_IMAGE_PATH = os.path.join(CURRENT_DIR, "playlist.png")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+class APITestFailure(RuntimeError):
+    pass
+
+
+def _banner(text: str) -> None:
+    print(f"\n{'=' * 78}\n{text}\n{'=' * 78}")
+
+
+def _ok(text: str) -> None:
+    print(f"  [OK] {text}")
+
+
+def _warn(text: str) -> None:
+    print(f"  [WARN] {text}")
+
+
+def _fail(text: str) -> None:
+    raise APITestFailure(text)
+
+
+async def _assert_status(resp: httpx.Response, expected: List[int], label: str) -> None:
+    if resp.status_code in expected:
+        return
+    _fail(f"{label} failed. status={resp.status_code}, body={resp.text[:500]}")
+
+
+def _auth_headers(token: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _require_assets() -> None:
+    missing = [p for p in [IMAGE_PATH, PROFILE_IMAGE_PATH, PLAYLIST_IMAGE_PATH] if not os.path.exists(p)]
+    if missing:
+        _fail(f"Missing required test image assets: {missing}")
+
+
+async def clear_database_if_enabled() -> None:
+    if not CLEAR_DATABASE_BEFORE_RUN:
+        _warn("Skipping DB wipe (CLEAR_DATABASE_BEFORE_RUN=False)")
+        return
+
+    _banner("Database Cleanup")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(
+                f"{BASE_URL}/admin/api/wipe",
+                json={
+                    "email": "admin@test.com",
+                    "password": "password123",
+                    "create_admin_if_none": True,
+                },
+            )
+            if resp.status_code == 200:
+                _ok("Database wiped via admin API")
+                return
+            _warn(f"Admin wipe API failed ({resp.status_code}), using direct DB drop")
+        except Exception as exc:
+            _warn(f"Admin wipe API not reachable: {exc}. Using direct DB drop")
+
+    mongo = AsyncIOMotorClient(settings.MONGODB_URL)
+    try:
+        await mongo.drop_database(settings.DATABASE_NAME)
+        _ok(f"Dropped database directly: {settings.DATABASE_NAME}")
+    finally:
+        mongo.close()
+
+
+async def health_check(client: httpx.AsyncClient) -> None:
+    resp = await client.get(f"{BASE_URL}/")
+    await _assert_status(resp, [200], "Health check")
+    _ok("Server is reachable")
+
 
 async def upload_image(
     client: httpx.AsyncClient,
     token: str,
-    file_path: str = None,
-    url: str = None,
-    collection: str = None,
-    doc_id: str = None,
-    field: str = None,
+    *,
+    file_path: Optional[str] = None,
+    url: Optional[str] = None,
+    collection_name: Optional[str] = None,
+    document_id: Optional[str] = None,
+    field_name: Optional[str] = None,
 ) -> Optional[str]:
-    f = None
+    if not file_path and not url:
+        return None
+
+    data: Dict[str, Any] = {}
+    if collection_name:
+        data["collection_name"] = collection_name
+    if document_id:
+        data["document_id"] = document_id
+    if field_name:
+        data["field_name"] = field_name
+
+    headers = _auth_headers(token)
+
+    file_handle = None
     try:
-        data = {}
-        if collection:
-            data["collection_name"] = collection
-        if doc_id:
-            data["document_id"] = doc_id
-        if field:
-            data["field_name"] = field
-
-        headers = {"Authorization": f"Bearer {token}"}
-
         if file_path:
-            f = open(file_path, "rb")
-            files = {"file": (os.path.basename(file_path), f, "image/jpeg")}
-            resp = await client.post(f"{BASE_URL}/api/media/upload", files=files, data=data, headers=headers)
-        elif url:
+            file_handle = open(file_path, "rb")
+            files = {"file": (os.path.basename(file_path), file_handle, "image/png")}
+            resp = await client.post(f"{BASE_URL}/api/media/upload", data=data, files=files, headers=headers)
+        else:
             data["url"] = url
             resp = await client.post(f"{BASE_URL}/api/media/upload", data=data, headers=headers)
-        else:
-            return None
 
-        if resp.status_code == 200:
-            att_id = resp.json().get("id")
-            print(f"  ✔ Uploaded → attachment id: {att_id}")
-            return att_id
-        else:
-            print(f"  ✘ Upload failed {resp.status_code}: {resp.text[:120]}")
-    except Exception as e:
-        print(f"  ✘ Upload error: {e}")
+        await _assert_status(resp, [200], "Media upload")
+        payload = resp.json()
+        attachment_id = payload.get("id")
+        if not attachment_id:
+            _fail(f"Media upload response missing attachment id: {payload}")
+        return str(attachment_id)
     finally:
-        if f:
-            f.close()
-    return None
+        if file_handle:
+            file_handle.close()
 
 
-async def register_and_login(client: httpx.AsyncClient, i: int) -> Optional[dict]:
-    ts = int(time.time())
-    email = f"user{i}_{ts}@test.com"
-    payload = {"email": email, "password": "password123", "full_name": f"Test User {i}"}
+async def register_and_login(client: httpx.AsyncClient, run_id: str, idx: int) -> Dict[str, str]:
+    email = f"apitest_{run_id}_{idx}@example.com"
+    password = "password123"
+    full_name = f"API Test User {idx}"
 
-    print(f"\n[User {i}] Registering {email}...")
-    resp = await client.post(f"{BASE_URL}/api/auth/register", json=payload)
+    reg = await client.post(
+        f"{BASE_URL}/api/auth/register",
+        json={"email": email, "password": password, "full_name": full_name},
+    )
+    await _assert_status(reg, [201], f"Register user {idx}")
 
-    if resp.status_code not in (201, 400):
-        print(f"  ✘ Register failed: {resp.text}")
-        return None
+    login = await client.post(
+        f"{BASE_URL}/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    await _assert_status(login, [200], f"Login user {idx}")
+    token = login.json().get("access_token")
+    if not token:
+        _fail(f"Login missing access token for {email}")
 
-    login = await client.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": "password123"})
-    if login.status_code != 200:
-        print(f"  ✘ Login failed: {login.text}")
-        return None
+    me = await client.get(f"{BASE_URL}/api/auth/me", headers=_auth_headers(token))
+    await _assert_status(me, [200], f"/me user {idx}")
+    me_json = me.json()
+    user_id = str(me_json.get("id") or me_json.get("_id") or "")
+    if not user_id:
+        _fail(f"Could not resolve user id for {email}")
 
-    auth = login.json()
-    print(f"  ✔ Logged in. Token: {auth['access_token'][:20]}...")
-    return auth
-
-
-async def get_me(client: httpx.AsyncClient, token: str) -> Optional[dict]:
-    resp = await client.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"})
-    if resp.status_code == 200:
-        return resp.json()
-    print(f"  ✘ /me failed: {resp.text}")
-    return None
+    return {
+        "email": email,
+        "password": password,
+        "full_name": full_name,
+        "token": token,
+        "user_id": user_id,
+    }
 
 
-async def create_category(client: httpx.AsyncClient, token: str, idx: int) -> Optional[str]:
+async def create_category(client: httpx.AsyncClient, token: str, run_id: str, idx: int) -> str:
     ts = int(time.time() * 1000)
-    headers = {"Authorization": f"Bearer {token}"}
-    data = {"name": f"Category {idx} ({ts})", "slug": f"cat-{idx}-{ts}"}
-
-    resp = await client.post(f"{BASE_URL}/api/blogs/categories/", json=data, headers=headers)
-    if resp.status_code == 201:
-        cat = resp.json()
-        cat_id = cat.get("id") or cat.get("_id")
-        print(f"  ✔ Category created: {data['name']} → {cat_id}")
-        return cat_id
-    print(f"  ✘ Category failed {resp.status_code}: {resp.text[:120]}")
-    return None
+    payload = {
+        "name": f"API Category {run_id}-{idx}-{ts}",
+        "slug": f"api-cat-{run_id}-{idx}-{ts}",
+    }
+    resp = await client.post(
+        f"{BASE_URL}/api/blogs/categories/",
+        json=payload,
+        headers=_auth_headers(token),
+    )
+    await _assert_status(resp, [201], f"Create category user={idx}")
+    data = resp.json()
+    category_id = str(data.get("id") or data.get("_id") or "")
+    if not category_id:
+        _fail(f"Category id missing for user {idx}")
+    return category_id
 
 
 async def create_blogs(
     client: httpx.AsyncClient,
     token: str,
     user_id: str,
-    user_name: str,
-    cat_id: Optional[str],
-    thumb_id: Optional[str],
-    section_img_id: Optional[str],
-) -> List[str]:
-    headers = {"Authorization": f"Bearer {token}"}
-    sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
-    topics = ["Python Patterns", "FastAPI Deep Dive", "AsyncIO Guide", "MongoDB with Beanie", "REST API Design"]
+    category_id: str,
+    thumb_attachment_id: Optional[str],
+    section_image_attachment_id: Optional[str],
+    run_id: str,
+    idx: int,
+) -> Dict[str, List[str]]:
+    blog_ids: List[str] = []
+    blog_slugs: List[str] = []
+    sem = asyncio.Semaphore(BLOG_CREATE_CONCURRENCY)
+    topics = ["FastAPI", "Beanie", "Redis Jobs", "MongoDB", "Auth", "Playlists", "Attachments"]
 
-    async def _one(idx: int) -> Optional[str]:
+    async def _create_one(blog_index: int) -> Optional[Dict[str, str]]:
         async with sem:
             topic = random.choice(topics)
-            ts = int(time.time() * 1000) + idx
-            slug = f"blog-{user_id[:8]}-{idx}-{ts}"
-            body = {
-                "title": f"Mastering {topic} — Part {idx + 1} by {user_name}",
-                "subtitle": "A practical, hands-on guide with real-world examples",
+            slug = f"api-blog-{run_id}-{idx}-{blog_index}-{uuid.uuid4().hex[:8]}"
+            payload = {
+                "title": f"{topic} Guide U{idx}B{blog_index}",
+                "subtitle": "High-volume API integration content",
                 "slug": slug,
-                "excerpt": f"Deep-dive into {topic}. Learn best practices and build production-ready code.",
-                "introduction": "This guide covers everything from first principles to advanced patterns.",
+                "excerpt": f"Generated for run {run_id}.",
+                "introduction": "Automated blog creation for integration test.",
                 "sections": [
-                    {"type": "text", "title": "Why This Matters", "content": f"Understanding {topic} is essential for modern backend development."},
-                    {"type": "bullets", "title": "Key Concepts", "items": ["Type hints", "Async/await", "Dependency injection", "Pydantic models"]},
-                    {"type": "code", "title": "Quick Example", "language": "python",
-                     "content": "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get('/')\nasync def root():\n    return {'message': 'Hello World'}"},
-                    {"type": "image", "title": "Architecture", "attachment": section_img_id, "caption": "System overview"},
-                    {"type": "note", "title": "Pro Tip", "content": "Always write tests alongside your code."},
+                    {
+                        "type": "text",
+                        "title": "Overview",
+                        "content": f"This is generated content for topic={topic}, user={idx}, blog={blog_index}.",
+                    },
+                    {
+                        "type": "bullets",
+                        "title": "Checklist",
+                        "items": ["Design schema", "Implement API", "Validate response", "Deploy safely"],
+                    },
+                    {
+                        "type": "code",
+                        "title": "Code Sample",
+                        "language": "python",
+                        "content": "async def ping():\n    return {'ok': True}",
+                    },
+                    {
+                        "type": "image",
+                        "title": "Attachment Section",
+                        "attachment": section_image_attachment_id,
+                        "caption": "Uploaded through /api/media/upload",
+                    },
+                    {
+                        "type": "note",
+                        "title": "Run Metadata",
+                        "content": f"run_id={run_id}, user={idx}, blog={blog_index}",
+                    },
                 ],
-                "conclusion": "Apply these concepts in your next project and level up your engineering skills.",
+                "conclusion": "Automated blog generation completed.",
                 "author": user_id,
-                "category": cat_id,
-                "thumbnail": thumb_id,
+                "category": category_id,
+                "thumbnail": thumb_attachment_id,
                 "isPublished": True,
                 "publishedDate": datetime.now(timezone.utc).isoformat(),
             }
-            resp = await client.post(f"{BASE_URL}/api/blogs/", json=body, headers=headers)
-            if resp.status_code == 201:
-                d = resp.json()
-                bid = d.get("id") or d.get("_id")
-                print(f"  ✔ Blog created: {body['title'][:60]}… → {bid}")
-                return bid
-            print(f"  ✘ Blog {idx} failed {resp.status_code}: {resp.text[:120]}")
-            return None
+            resp = await client.post(
+                f"{BASE_URL}/api/blogs/",
+                json=payload,
+                headers=_auth_headers(token),
+            )
+            await _assert_status(resp, [201], f"Create blog user={idx} blog={blog_index}")
+            data = resp.json()
+            blog_id = str(data.get("id") or data.get("_id") or "")
+            blog_slug = str(data.get("slug") or "")
+            if not blog_id or not blog_slug:
+                _fail(f"Blog response missing id/slug user={idx}, blog={blog_index}, data={data}")
+            return {"id": blog_id, "slug": blog_slug}
 
-    results = await asyncio.gather(*[_one(i) for i in range(BLOGS_PER_USER)])
-    return [r for r in results if r]
+    created = await asyncio.gather(*[_create_one(i) for i in range(BLOGS_PER_USER)])
+    for item in created:
+        if not item:
+            continue
+        blog_ids.append(item["id"])
+        blog_slugs.append(item["slug"])
+
+    return {"blog_ids": blog_ids, "blog_slugs": blog_slugs}
 
 
-async def create_playlists(client: httpx.AsyncClient, token: str, uid: str, blog_ids: List[str], thumb_id: Optional[str]):
-    if not blog_ids:
-        return
-    headers = {"Authorization": f"Bearer {token}"}
-    for i in range(2):
-        ts = int(time.time() * 1000)
-        selected_blogs = random.sample(blog_ids, k=min(3, len(blog_ids)))
-        data = {
-            "name": f"Playlist {i + 1} for User {uid[:5]}",
-            "slug": f"playlist-{uid[-5:]}-{i}-{ts}",
-            "description": "A curated collection of my best tech blogs.",
-            "thumbnail": thumb_id,
-            "blogs": selected_blogs,
+async def create_playlists(
+    client: httpx.AsyncClient,
+    token: str,
+    owner_id: str,
+    blog_ids: List[str],
+    playlist_thumb_attachment_id: Optional[str],
+    run_id: str,
+    idx: int,
+) -> List[str]:
+    playlist_ids: List[str] = []
+    for i in range(PLAYLISTS_PER_USER):
+        selected = random.sample(blog_ids, k=min(5, len(blog_ids))) if blog_ids else []
+        payload = {
+            "owner": owner_id,
+            "name": f"Playlist {run_id}-{idx}-{i}",
+            "slug": f"playlist-{run_id}-{idx}-{i}-{uuid.uuid4().hex[:8]}",
+            "description": "Generated playlist from automated API integration test.",
+            "thumbnail": playlist_thumb_attachment_id,
+            "blogs": selected,
             "is_public": True,
-            "owner": uid
         }
-        resp = await client.post(f"{BASE_URL}/api/playlists/", json=data, headers=headers)
-        if resp.status_code == 201:
-            print(f"  ✔ Playlist created: {data['name']}")
-        else:
-            print(f"  ✘ Playlist failed {resp.status_code}: {resp.text[:120]}")
+        resp = await client.post(
+            f"{BASE_URL}/api/playlists/",
+            json=payload,
+            headers=_auth_headers(token),
+        )
+        await _assert_status(resp, [201], f"Create playlist user={idx} playlist={i}")
+        data = resp.json()
+        playlist_id = str(data.get("id") or data.get("_id") or "")
+        if not playlist_id:
+            _fail(f"Playlist response missing id user={idx}, playlist={i}, data={data}")
+        playlist_ids.append(playlist_id)
+    return playlist_ids
 
 
-async def create_testimonial(client: httpx.AsyncClient, token: str, uid: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    testimonials = [
-        "This platform has completely transformed how I write blogs!",
-        "Incredible performance and beautiful UI. Highly recommended.",
-        "The best blogging framework I've ever used. Simply amazing.",
-        "Fastest API I've ever integrated with. Love the customizability."
-    ]
-    data = {
-        "user": uid,
-        "content": random.choice(testimonials)
+async def create_testimonial(client: httpx.AsyncClient, token: str, user_id: str, idx: int) -> None:
+    payload = {
+        "user": user_id,
+        "content": f"Automated testimonial from user {idx}. The platform flow works well.",
     }
-    resp = await client.post(f"{BASE_URL}/api/testimonials/", json=data, headers=headers)
-    if resp.status_code == 201:
-        print(f"  ✔ Testimonial created for user: {uid[:8]}")
-    else:
-        print(f"  ✘ Testimonial failed {resp.status_code}: {resp.text[:120]}")
+    resp = await client.post(
+        f"{BASE_URL}/api/testimonials/",
+        json=payload,
+        headers=_auth_headers(token),
+    )
+    await _assert_status(resp, [201], f"Create testimonial user={idx}")
 
 
-async def create_faqs(client: httpx.AsyncClient, token: str):
-    headers = {"Authorization": f"Bearer {token}"}
+async def create_global_faqs(client: httpx.AsyncClient, token: str, run_id: str) -> None:
     faqs = [
-        {"question": "How do I create a new blog post?", "answer": "Go to your dashboard, click 'New Blog', and start writing!"},
-        {"question": "Can I edit a published blog?", "answer": "Yes, you can edit your blogs anytime from the author portal."},
-        {"question": "How are views calculated?", "answer": "We use a smart 15-minute deduplication system to ensure accurate unique view counts."},
-        {"question": "What is a Playlist?", "answer": "A playlist is a curated collection of your favorite blogs that you can share with others!"}
+        {"question": f"[{run_id}] How to create a blog?", "answer": "Use POST /api/blogs/ with required fields."},
+        {"question": f"[{run_id}] How to upload image?", "answer": "Use POST /api/media/upload with multipart file."},
+        {"question": f"[{run_id}] How to create playlist?", "answer": "Use POST /api/playlists/ with blog ids."},
+        {"question": f"[{run_id}] How to use store page?", "answer": "Open /pages/store-test and submit key/value."},
     ]
-    for i, faq in enumerate(faqs):
-        resp = await client.post(f"{BASE_URL}/api/faqs/", json=faq, headers=headers)
-        if resp.status_code == 201:
-            print(f"  ✔ FAQ created: {faq['question']}")
-        else:
-            print(f"  ✘ FAQ failed {resp.status_code}: {resp.text[:120]}")
+    for faq in faqs:
+        resp = await client.post(f"{BASE_URL}/api/faqs/", json=faq, headers=_auth_headers(token))
+        await _assert_status(resp, [201], "Create FAQ")
 
 
-async def test_blog_list(client: httpx.AsyncClient):
-    """Verify list endpoint and basic pagination."""
-    resp = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=5")
-    assert resp.status_code == 200, f"Blog list failed: {resp.text}"
-    data = resp.json()
-    assert "results" in data, "Missing 'results' key in paginated response"
-    assert "total" in data, "Missing 'total' key in paginated response"
-    print(f"\n[Test] Blog list OK — total: {data['total']}, returned: {len(data['results'])}")
+async def verify_store_page_form(client: httpx.AsyncClient, run_id: str) -> None:
+    key = f"apitest_banner_{run_id}"
+    value = f"Store value from heavy run {run_id}"
+
+    post_resp = await client.post(
+        f"{BASE_URL}/pages/store-test/",
+        data={"key": key, "value": value},
+    )
+    await _assert_status(post_resp, [200], "Store page POST")
+    if value not in post_resp.text:
+        _fail("Store POST page does not contain saved value")
+
+    get_resp = await client.get(f"{BASE_URL}/pages/store-test/?key={key}")
+    await _assert_status(get_resp, [200], "Store page GET")
+    if value not in get_resp.text:
+        _fail("Store GET page does not render saved value")
 
 
-async def test_blog_detail(client: httpx.AsyncClient, slug: str):
-    """Verify detail endpoint returns correct fields."""
-    resp = await client.get(f"{BASE_URL}/api/blogs/{slug}")
-    assert resp.status_code == 200, f"Blog detail failed for slug={slug}: {resp.text}"
-    data = resp.json()
-    for key in ["id", "title", "slug", "author", "sections"]:
-        assert key in data, f"Missing key '{key}' in blog detail"
-    print(f"[Test] Blog detail OK — slug: {data['slug']}, sections: {len(data.get('sections', []))}")
+async def verify_counts_and_logs(run_id: str, run_emails: List[str]) -> None:
+    mongo = AsyncIOMotorClient(settings.MONGODB_URL)
+    try:
+        db = mongo[settings.DATABASE_NAME]
+        blog_count = await db["blogs"].count_documents({"slug": {"$regex": f"^api-blog-{run_id}-"}})
+        playlist_count = await db["playlists"].count_documents({"slug": {"$regex": f"^playlist-{run_id}-"}})
+        category_count = await db["blog_categories"].count_documents({"slug": {"$regex": f"^api-cat-{run_id}-"}})
+
+        expected_blogs = NUM_USERS * BLOGS_PER_USER
+        expected_playlists = NUM_USERS * PLAYLISTS_PER_USER
+        expected_categories = NUM_USERS
+
+        if blog_count < expected_blogs:
+            _fail(f"Blogs count mismatch. expected>={expected_blogs}, actual={blog_count}")
+        if playlist_count < expected_playlists:
+            _fail(f"Playlists count mismatch. expected>={expected_playlists}, actual={playlist_count}")
+        if category_count < expected_categories:
+            _fail(f"Categories count mismatch. expected>={expected_categories}, actual={category_count}")
+
+        # Each register triggers 2 default emails (welcome + welcome pack)
+        for email in run_emails:
+            email_docs = await db["email_delivery_logs"].find({"to_email": email}).to_list(20)
+            if len(email_docs) < 2:
+                _fail(f"Email logs missing for {email}. expected>=2, actual={len(email_docs)}")
+
+        _ok(
+            f"Verified DB counts and email logs. blogs={blog_count}, playlists={playlist_count}, "
+            f"categories={category_count}, users={len(run_emails)}"
+        )
+    finally:
+        mongo.close()
 
 
-async def test_category_list(client: httpx.AsyncClient):
-    resp = await client.get(f"{BASE_URL}/api/blogs/categories/?page=1&page_size=5")
-    assert resp.status_code == 200, f"Category list failed: {resp.text}"
-    data = resp.json()
-    print(f"[Test] Category list OK — total: {data.get('total')}")
+async def verify_public_list_endpoints(client: httpx.AsyncClient) -> None:
+    blogs = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=10")
+    await _assert_status(blogs, [200], "List blogs")
+    categories = await client.get(f"{BASE_URL}/api/blogs/categories/?page=1&page_size=10")
+    await _assert_status(categories, [200], "List categories")
+    playlists = await client.get(f"{BASE_URL}/api/playlists/?page=1&page_size=10")
+    await _assert_status(playlists, [200], "List playlists")
 
 
-async def user_worker(i: int) -> List[str]:
-    """One full user flow: register → upload → create category → create blogs."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        auth = await register_and_login(client, i)
-        if not auth:
-            return []
+async def user_worker(index: int, run_id: str, sem: asyncio.Semaphore) -> Dict[str, Any]:
+    async with sem:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            auth = await register_and_login(client, run_id, index)
+            token = auth["token"]
+            user_id = auth["user_id"]
 
-        token = auth["access_token"]
-        me = await get_me(client, token)
-        if not me:
-            return []
+            # Profile image attachment
+            await upload_image(
+                client,
+                token,
+                file_path=PROFILE_IMAGE_PATH,
+                collection_name="users",
+                document_id=user_id,
+                field_name="profile_image",
+            )
 
-        uid = me.get("id") or me.get("_id")
-        uname = me.get("full_name", f"User {i}")
+            # Blog attachments
+            blog_thumb_id = await upload_image(
+                client,
+                token,
+                file_path=IMAGE_PATH,
+                collection_name="blogs",
+                field_name="thumbnail",
+            )
+            blog_section_attachment_id = await upload_image(
+                client,
+                token,
+                file_path=IMAGE_PATH,
+                collection_name="blogs",
+                field_name="sections",
+            )
 
-        # Upload profile image
-        prof_id = await upload_image(client, token, PROFILE_IMAGE_PATH, collection="users", doc_id=uid, field="profile_image")
+            # Playlist attachment
+            playlist_thumb_id = await upload_image(
+                client,
+                token,
+                file_path=PLAYLIST_IMAGE_PATH,
+                collection_name="playlists",
+                field_name="thumbnail",
+            )
 
-        # Upload blog thumbnail
-        thumb_id = await upload_image(client, token, IMAGE_PATH, collection="blogs", field="thumbnail")
+            category_id = await create_category(client, token, run_id, index)
+            blog_data = await create_blogs(
+                client,
+                token=token,
+                user_id=user_id,
+                category_id=category_id,
+                thumb_attachment_id=blog_thumb_id,
+                section_image_attachment_id=blog_section_attachment_id,
+                run_id=run_id,
+                idx=index,
+            )
 
-        # Upload section image (via picsum URL)
-        section_url = f"https://picsum.photos/seed/{random.randint(1, 99999)}/800/600"
-        section_img_id = await upload_image(client, token, url=section_url, collection="blogs", field="content")
+            playlist_ids = await create_playlists(
+                client,
+                token=token,
+                owner_id=user_id,
+                blog_ids=blog_data["blog_ids"],
+                playlist_thumb_attachment_id=playlist_thumb_id,
+                run_id=run_id,
+                idx=index,
+            )
 
-        # Create category + blogs
-        cat_id = await create_category(client, token, i)
-        slugs_raw = await create_blogs(client, token, uid, uname, cat_id, thumb_id, section_img_id)
-        
-        # Create Playlists and Testimonial
-        if slugs_raw:
-            await create_playlists(client, token, uid, slugs_raw, thumb_id)
-        
-        # Only ~20% of users leave a testimonial to simulate real-world usage
-        if random.random() < 0.2:
-            await create_testimonial(client, token, uid)
-            
-        return slugs_raw
+            if random.random() < TESTIMONIAL_PROBABILITY:
+                await create_testimonial(client, token, user_id, index)
 
-
-async def clear_database():
-    print("[DB] Attempting to wipe database via API...")
-    async with httpx.AsyncClient(timeout=30.0) as http_client:
-        try:
-            resp = await http_client.post(f"{BASE_URL}/admin/api/wipe", json={
-                "email": "admin@test.com",
-                "password": "password123",
-                "create_admin_if_none": True
-            })
-            if resp.status_code == 200:
-                print(f"[DB] Wiped database successfully via API. Preserved Admin: {resp.json().get('preserved_admin')}")
-                return
-            else:
-                print(f"[DB] Wipe API request failed ({resp.status_code}): {resp.text}")
-        except httpx.RequestError as e:
-            print(f"[DB] Could not reach wipe endpoint (is the server running?): {e}")
-
-    # Fallback to direct MongoDB drop if API fails/unreachable
-    print("[DB] Falling back to direct database drop...")
-    from backbone.core.settings import settings
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await client.drop_database(settings.DATABASE_NAME)
-    print(f"[DB] Dropped database '{settings.DATABASE_NAME}' directly.")
+            return {
+                "email": auth["email"],
+                "user_id": user_id,
+                "category_id": category_id,
+                "blog_ids": blog_data["blog_ids"],
+                "blog_slugs": blog_data["blog_slugs"],
+                "playlist_ids": playlist_ids,
+            }
 
 
-async def main():
-    print("=" * 60)
-    print("  Backbone FastAPI — Blog Seed & Test Runner")
-    print("=" * 60)
+async def main() -> None:
+    _require_assets()
+    run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
-    # Check required files
-    missing = [p for p in [IMAGE_PATH, PROFILE_IMAGE_PATH] if not os.path.exists(p)]
-    if missing:
-        print(f"[ERROR] Missing image files: {missing}")
-        return
+    _banner("Backbone Heavy Integration Test")
+    print(f"BASE_URL={BASE_URL}")
+    print(f"DATABASE={settings.DATABASE_NAME}")
+    print(
+        "CONFIG: "
+        f"users={NUM_USERS}, blogs_per_user={BLOGS_PER_USER}, playlists_per_user={PLAYLISTS_PER_USER}, "
+        f"user_concurrency={USER_WORKER_CONCURRENCY}, blog_concurrency={BLOG_CREATE_CONCURRENCY}"
+    )
 
-    await clear_database()
+    await clear_database_if_enabled()
 
-    # Run user workers with a concurrency limit
-    all_slugs: List[str] = []
-    
-    worker_sem = asyncio.Semaphore(5)
-    async def bounded_worker(idx):
-        async with worker_sem:
-            return await user_worker(idx)
-            
-    results = await asyncio.gather(*[bounded_worker(i) for i in range(NUM_USERS)])
-    for slugs in results:
-        all_slugs.extend(slugs)
-        
-    # Generate FAQs globally using the very first user's token (or admin)
-    print("\n[Seed] Generating FAQs...")
-    async def global_content_seeder():
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            auth = await client.post(f"{BASE_URL}/api/auth/login", json={"email": f"user0_{int(time.time() - 1000)}@test.com", "password": "password123"})
-            # Fallback to authenticating just to create FAQs
-            if auth.status_code != 200:
-                auth = await register_and_login(client, 9999)
-            if auth and "access_token" in auth:
-                await create_faqs(client, auth["access_token"])
-    
-    await global_content_seeder()
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        await health_check(client)
 
-    print(f"\n[Seed] Done. Created {len(all_slugs)} blogs across {NUM_USERS} users.")
+    worker_sem = asyncio.Semaphore(USER_WORKER_CONCURRENCY)
+    results = await asyncio.gather(*[user_worker(i, run_id, worker_sem) for i in range(NUM_USERS)])
 
-    # --- API Tests ---
-    print("\n--- Running API Tests ---")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        await test_blog_list(client)
-        await test_category_list(client)
-        if all_slugs:
-            # Test detail using one of the created blog slugs
-            slug = all_slugs[0]
-            resp = await client.get(f"{BASE_URL}/api/blogs/?page=1&page_size=1")
-            if resp.status_code == 200:
-                results_list = resp.json().get("results", [])
-                if results_list:
-                    real_slug = results_list[0].get("slug") or results_list[0].get("id")
-                    if real_slug:
-                        await test_blog_detail(client, real_slug)
+    all_emails = [r["email"] for r in results]
+    total_blogs = sum(len(r["blog_ids"]) for r in results)
+    total_playlists = sum(len(r["playlist_ids"]) for r in results)
+    _ok(f"Seeded users={len(results)}, blogs={total_blogs}, playlists={total_playlists}")
 
-    print("\n✅ All tests passed!")
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        if CREATE_GLOBAL_FAQS and results:
+            # Create FAQs using first user's token
+            first_email = results[0]["email"]
+            first_auth = await client.post(
+                f"{BASE_URL}/api/auth/login",
+                json={"email": first_email, "password": "password123"},
+            )
+            await _assert_status(first_auth, [200], "Re-login first user for FAQ creation")
+            await create_global_faqs(client, first_auth.json()["access_token"], run_id)
+            _ok("Global FAQs created")
+
+        await verify_public_list_endpoints(client)
+        await verify_store_page_form(client, run_id)
+
+    await verify_counts_and_logs(run_id, all_emails)
+    _banner("All Tests Passed")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except APITestFailure as exc:
+        print(f"\n[FAIL] {exc}")
+        raise SystemExit(1)
+    except Exception as exc:
+        print(f"\n[UNEXPECTED ERROR] {exc}")
+        raise SystemExit(1)

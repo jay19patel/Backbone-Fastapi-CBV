@@ -23,7 +23,16 @@ from .core.config import BackboneConfig
 from .core.settings import Settings, settings
 
 # ── Core Models ──────────────────────────────────────────────────────────
-from .core.models import EventDocument, LogEntry, PasswordResetToken, Session, TaskLog, User
+from .core.models import (
+    EventDocument,
+    LogEntry,
+    PasswordResetToken,
+    Session,
+    TaskLog,
+    User,
+    EmailDeliveryLog,
+    BackboneStore,
+)
 
 # ── Signals ──────────────────────────────────────────────────────────────
 from .core.signals import Signal, signals
@@ -76,7 +85,7 @@ from .schemas import PaginatedResponse, TokenResponse, UserOut
 from .auth.router import AuthRouter
 
 # ── Common Services & Utils ──────────────────────────────────────────────
-from .common.services import CacheService, background_task
+from .common.services import CacheService, background_task, background_internal_task
 from .common.utils import PasswordManager, TokenManager, logger
 from .common.exceptions import (
     BackboneException,
@@ -89,6 +98,12 @@ from .common.exceptions import (
 
 # ── Admin ────────────────────────────────────────────────────────────────
 from .admin import admin_site
+from .email_sender import email_sender, EmailSender
+from .db import db, BackboneDB
+
+# Convenient alias for explicit store usage patterns:
+#   await backbone.db_store.get("my_key")
+db_store = db
 
 __all__ = [
     # Configuration
@@ -102,6 +117,8 @@ __all__ = [
     "EventDocument",
     "TaskLog",
     "PasswordResetToken",
+    "EmailDeliveryLog",
+    "BackboneStore",
     # Signals
     "signals",
     "Signal",
@@ -146,6 +163,12 @@ __all__ = [
     "TokenManager",
     "CacheService",
     "background_task",
+    "background_internal_task",
+    "email_sender",
+    "EmailSender",
+    "db",
+    "db_store",
+    "BackboneDB",
     "logger",
     "BackboneException",
     "NotFoundException",

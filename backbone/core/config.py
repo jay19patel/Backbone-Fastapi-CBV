@@ -46,8 +46,26 @@ class BackboneConfig:
             self.config.validate_runtime()
         
         # Default Core Models
-        from .models import User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken
-        core_models = [User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken]
+        from .models import (
+            User,
+            Session,
+            LogEntry,
+            TaskLog,
+            Attachment,
+            PasswordResetToken,
+            EmailDeliveryLog,
+            BackboneStore,
+        )
+        core_models = [
+            User,
+            Session,
+            LogEntry,
+            TaskLog,
+            Attachment,
+            PasswordResetToken,
+            EmailDeliveryLog,
+            BackboneStore,
+        ]
         
         # Ensures core models are loaded first to safely resolve Beanie links
         self.document_models = core_models.copy()
@@ -74,6 +92,7 @@ class BackboneConfig:
 
         # Task Queue
         self.task_queue = TaskQueue(self.redis_client)
+        self.internal_task_queue = TaskQueue(self.redis_client, queue_name="backbone_internal_tasks")
 
         # Auth Router
         self.auth_router = AuthRouter(config=self.config, prefix="/api/auth")
@@ -118,8 +137,26 @@ class BackboneConfig:
 
         # Register Models with Admin Site
         # Register Models with Admin Site
-        from .models import User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken
-        core_models_set = {User, Session, LogEntry, TaskLog, Attachment, PasswordResetToken}
+        from .models import (
+            User,
+            Session,
+            LogEntry,
+            TaskLog,
+            Attachment,
+            PasswordResetToken,
+            EmailDeliveryLog,
+            BackboneStore,
+        )
+        core_models_set = {
+            User,
+            Session,
+            LogEntry,
+            TaskLog,
+            Attachment,
+            PasswordResetToken,
+            EmailDeliveryLog,
+            BackboneStore,
+        }
         
         for model in self.document_models:
             category = "Core Models" if model in core_models_set else "Custom Models"
@@ -241,6 +278,12 @@ class BackboneConfig:
             logger.info("Starting %s task worker(s)", worker_count)
             for i in range(worker_count):
                 worker = TaskWorker(self.task_queue, worker_name=f"Worker-{i+1}")
+                asyncio.create_task(worker.run())
+
+            internal_worker_count = getattr(self.config, "INTERNAL_WORKER_COUNT", 1)
+            logger.info("Starting %s internal task worker(s)", internal_worker_count)
+            for i in range(internal_worker_count):
+                worker = TaskWorker(self.internal_task_queue, worker_name=f"Internal-Worker-{i+1}")
                 asyncio.create_task(worker.run())
 
         logger.info("Application online and ready")

@@ -6,6 +6,7 @@ import logging
 import importlib
 import inspect
 import time
+import traceback
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
@@ -168,6 +169,7 @@ class TaskQueue:
             func_path = f"{func.__module__}:{func.__name__}"
         else:
             func_path = func
+        max_retries = int(kwargs.pop("max_retries", 3))
 
         if not self.enabled:
             logger.warning("TaskQueue disabled. Executing synchronously.")
@@ -180,7 +182,15 @@ class TaskQueue:
         task_log = None
         if not no_log:
             try:
-                task_log = TaskLog(task_id="pending", function_name=func_path, status="queued")
+                task_log = TaskLog(
+                    task_id="pending",
+                    function_name=func_path,
+                    status="queued",
+                    metadata={
+                        "queue_name": self.queue_name,
+                        "max_retries": max_retries,
+                    },
+                )
                 await task_log.insert()
                 task_id = str(task_log.id)
                 task_log.task_id = task_id
@@ -195,7 +205,8 @@ class TaskQueue:
             "kwargs": kwargs,
             "no_log": no_log,
             "retry_count": 0,
-            "max_retries": kwargs.pop("max_retries", 3)
+            "max_retries": max_retries,
+            "queue_name": self.queue_name,
         }
         try:
             await self.redis.rpush(self.queue_name, json.dumps(task_data, default=str))
@@ -205,6 +216,7 @@ class TaskQueue:
             if task_log:
                 task_log.status = "failed"
                 task_log.error_message = f"Redis Error: {e}"
+                task_log.error_traceback = traceback.format_exc()
                 await task_log.save()
             return None
 
@@ -244,6 +256,12 @@ class TaskWorker:
                     if task_log:
                         task_log.status = "processing"
                         task_log.started_at = datetime.now(timezone.utc)
+                        task_log.metadata = {
+                            **(task_log.metadata or {}),
+                            "queue_name": task_data.get("queue_name", self.queue.queue_name),
+                            "retry_count": task_data.get("retry_count", 0),
+                            "max_retries": task_data.get("max_retries", 3),
+                        }
                         await task_log.save()
             except Exception as exc:
                 logger.warning(f"Failed to load task log {task_id}: {exc}")
@@ -259,6 +277,8 @@ class TaskWorker:
                 task_log.status = "completed"
                 task_log.completed_at = datetime.now(timezone.utc)
                 task_log.execution_time_s = round(time.time() - start_time, 2)
+                task_log.error_message = None
+                task_log.error_traceback = None
                 await task_log.save()
         except Exception as e:
             logger.error(f"Task failed {task_id}: {e}")
@@ -280,6 +300,13 @@ class TaskWorker:
                     if task_log:
                         task_log.status = f"retrying ({retry_count})"
                         task_log.error_message = f"Attempt {retry_count-1} failed: {e}"
+                        task_log.error_traceback = traceback.format_exc()
+                        task_log.metadata = {
+                            **(task_log.metadata or {}),
+                            "retry_count": retry_count,
+                            "max_retries": max_retries,
+                            "queue_name": task_data.get("queue_name", self.queue.queue_name),
+                        }
                         await task_log.save()
                     return
                 except Exception as re:
@@ -288,6 +315,8 @@ class TaskWorker:
             if task_log:
                 task_log.status = "failed"
                 task_log.error_message = str(e)
+                task_log.error_traceback = traceback.format_exc()
+                task_log.execution_time_s = round(time.time() - start_time, 2)
                 await task_log.save()
 
 # ── Background Task Helper ──────────────────────────────────────────────────
@@ -299,4 +328,22 @@ async def background_task(func: Union[Callable, str], *args, **kwargs):
         return await BackboneConfig.get_instance().task_queue.enqueue(func, *args, **kwargs)
     except Exception as e:
         logger.error(f"Failed to enqueue task: {e}")
+        return None
+
+
+async def background_internal_task(func: Union[Callable, str], *args, **kwargs):
+    """
+    Enqueue internal framework tasks without creating TaskLog entries.
+    Uses the dedicated internal queue.
+    """
+    try:
+        from ..core.config import BackboneConfig
+        return await BackboneConfig.get_instance().internal_task_queue.enqueue(
+            func,
+            *args,
+            no_log=True,
+            **kwargs,
+        )
+    except Exception as e:
+        logger.error(f"Failed to enqueue internal task: {e}")
         return None

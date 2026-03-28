@@ -86,6 +86,19 @@ class AuthRouter:
                 user_dict["is_staff"] = False
             
                 new_user = await self.user_repository.create(user_dict)
+
+                try:
+                    from ..email_sender import email_sender
+
+                    login_url = str(request.base_url).rstrip("/") + "/login"
+                    await email_sender.queue_registration_emails(
+                        to_email=new_user.email,
+                        full_name=new_user.full_name,
+                        login_url=login_url,
+                    )
+                except Exception:
+                    logger.exception("Failed to queue registration emails for user=%s", new_user.email)
+
                 return self._serialise_user(new_user)
             except HTTPException:
                 raise

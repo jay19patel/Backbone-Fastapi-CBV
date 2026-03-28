@@ -3,16 +3,15 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
 import httpx
 import os
 import mimetypes
+import base64
 
 from backbone.generic.views import GenericCustomApiView
 from backbone.core.permissions import AllowAny
 from backbone.core.models import Attachment
 from backbone.core.media import (
-    process_attachment_upload, 
-    _is_cloudinary_configured, 
-    _upload_to_cloudinary, 
-    _save_to_local
+    process_attachment_upload,
 )
+from backbone.common.services import background_internal_task
 
 class MediaView(GenericCustomApiView):
     schema = Attachment
@@ -32,7 +31,7 @@ class MediaView(GenericCustomApiView):
             document_id: Optional[str] = Form(None),
             field_name: Optional[str] = Form(None)
         ):
-            await view._resolve_context(request)
+            await view.resolve_context(request)
             return await view.handle_upload(
                 request, 
                 file=file, 
@@ -103,7 +102,7 @@ class MediaView(GenericCustomApiView):
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
 
-        # 3. Create Attachment and upload synchronously
+        # 3. Create Attachment record and process in internal background worker
         try:
             attachment = Attachment(
                 filename=filename,
@@ -116,52 +115,27 @@ class MediaView(GenericCustomApiView):
             await attachment.insert()
 
             attachment_id = str(attachment.id)
-            subfolder = collection_name or "general"
-            ext = os.path.splitext(filename)[1]
-            if not ext: ext = mimetypes.guess_extension(content_type) or ".jpg"
-            if ext == ".jpe": ext = ".jpg"
+            encoded_payload = base64.b64encode(file_bytes).decode("utf-8")
+            internal_task_id = await background_internal_task(
+                process_attachment_upload,
+                attachment_id,
+                encoded_payload,
+            )
 
-            # Upload directly
-            if _is_cloudinary_configured():
-                file_url = await _upload_to_cloudinary(
-                    file_bytes, subfolder, attachment_id, content_type
-                )
-            else:
-                local_filename = f"{attachment_id}{ext}"
-                file_url = await _save_to_local(file_bytes, subfolder, local_filename)
-
-            # Update attachment with result
-            attachment.file_path = file_url
-            attachment.status = "completed"
-            size_mb = round(len(file_bytes) / (1024 * 1024), 2)
-            attachment.size = size_mb
-            await attachment.save()
-
-            # Automatic linking
-            if attachment.collection_name and attachment.document_id and attachment.field_name:
-                from backbone.core.config import BackboneConfig
-                config = BackboneConfig.get_instance()
-                target_model = None
-                for model in config.document_models:
-                    if getattr(model.Settings, "name", None) == attachment.collection_name:
-                        target_model = model
-                        break
-                if target_model:
-                    doc = await target_model.get(attachment.document_id)
-                    if doc:
-                        setattr(doc, attachment.field_name, attachment)
-                        await doc.save()
-
-            # Build response URL
-            if file_url.startswith("http"):
-                response_url = file_url
-            else:
-                response_url = f"{request.base_url}{file_url.lstrip('/')}"
+            # Internal worker never creates TaskLog entries.
+            # If Redis worker is disabled, task runs synchronously and this may already be completed.
+            attachment = await Attachment.get(attachment_id)
+            response_status = attachment.status if attachment else "pending"
+            file_url = attachment.file_path if attachment else None
+            response_url = None
+            if file_url:
+                response_url = file_url if file_url.startswith("http") else f"{request.base_url}{file_url.lstrip('/')}"
 
             return {
                 "id": attachment_id,
-                "status": "completed",
-                "message": "Upload successful",
+                "task_id": internal_task_id,
+                "status": response_status,
+                "message": "Upload accepted and processing in background task.",
                 "filename": filename,
                 "url": response_url
             }

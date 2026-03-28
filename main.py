@@ -1,13 +1,7 @@
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from backbone import (
-    BackboneConfig,
-    Settings,
-    background_task
-)
-from backbone.core.rate_limit import RateLimit
-import os
+from fastapi import FastAPI
+
+from backbone import BackboneConfig
+from backbone.core.settings import settings
 
 # Schemas
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
@@ -23,29 +17,33 @@ from api.playlists import router as playlists_router
 from pages.contact import router as pages_router
 from backbone.auth.pages import router as auth_pages_router
 
-# --------------------------------------------------------------------------
-# Application Setup & Dependencies
-# --------------------------------------------------------------------------
-from backbone.core.settings import settings
 
+# --------------------------------------------------------------------------
+# Application Setup
+# --------------------------------------------------------------------------
 app = FastAPI(title="Modular Backbone Framework")
 
-
 models_to_register = [
-    Blog, BlogCategory, BlogLike, BlogView,
-    FAQ, Testimonial, Contact, Playlist
+    Blog,
+    BlogCategory,
+    BlogLike,
+    BlogView,
+    FAQ,
+    Testimonial,
+    Contact,
+    Playlist,
 ]
 
 BackboneConfig(
-    app=app, 
-    config=settings, 
-    document_models=models_to_register
+    app=app,
+    config=settings,
+    document_models=models_to_register,
 )
+
 
 # --------------------------------------------------------------------------
 # Register Routers
 # --------------------------------------------------------------------------
-# Use standard naming conventions for APIs
 app.include_router(users_router, prefix="/api")
 app.include_router(blogs_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
@@ -53,6 +51,7 @@ app.include_router(content_router, prefix="/api")
 app.include_router(playlists_router, prefix="/api")
 app.include_router(pages_router, prefix="/pages")
 app.include_router(auth_pages_router, prefix="/pages")
+
 
 @app.get("/")
 async def root():

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_TTL: int = 300
     WORKER_COUNT: int = 2
+    INTERNAL_WORKER_COUNT: int = 2
 
     # Rate Limiting Settings
     RATE_LIMIT_ENABLED: bool = True
@@ -36,6 +37,18 @@ class Settings(BaseSettings):
 
     # Cloudinary Settings
     CLOUDINARY_URL: str = ""
+    
+    # Email Settings
+    EMAIL_ENABLED: bool = True
+    EMAIL_HOST: str = "smtp.gmail.com"
+    EMAIL_PORT: int = 587
+    EMAIL_USE_TLS: bool = True
+    EMAIL_USE_SSL: bool = False
+    EMAIL_USERNAME: str = ""
+    EMAIL_PASSWORD: str = ""
+    EMAIL_FROM_EMAIL: str = "no-reply@example.com"
+    EMAIL_FROM_NAME: str = "Backbone"
+    EMAIL_TIMEOUT_SECONDS: int = 30
 
     @property
     def cors_origins_list(self) -> list:
