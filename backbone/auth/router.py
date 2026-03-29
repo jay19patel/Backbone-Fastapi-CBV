@@ -15,6 +15,7 @@ from ..schemas import (
     TokenResponse, UserOut, UserUpdate,
 )
 from ..common.utils import PasswordManager, TokenManager
+from .hooks import register_auth_hooks
 
 logger = logging.getLogger("backbone.auth")
 
@@ -28,6 +29,8 @@ class AuthRouter:
         
         self.session_repository = BeanieRepository(db_instance)
         self.session_repository.initialize(Session)
+
+        register_auth_hooks()
         
         self._register_routes()
     
@@ -85,19 +88,7 @@ class AuthRouter:
                 user_dict["is_active"] = True
                 user_dict["is_staff"] = False
             
-                new_user = await self.user_repository.create(user_dict)
-
-                try:
-                    from ..email_sender import email_sender
-
-                    login_url = str(request.base_url).rstrip("/") + "/login"
-                    await email_sender.queue_registration_emails(
-                        to_email=new_user.email,
-                        full_name=new_user.full_name,
-                        login_url=login_url,
-                    )
-                except Exception:
-                    logger.exception("Failed to queue registration emails for user=%s", new_user.email)
+                new_user = await self.user_repository.create(user_dict, request=request)
 
                 return self._serialise_user(new_user)
             except HTTPException:
@@ -225,7 +216,7 @@ class AuthRouter:
                         "is_staff": False,
                         "is_google_account": True,
                     }
-                    user = await self.user_repository.create(new_user_data)
+                    user = await self.user_repository.create(new_user_data, request=request)
 
                 # After creating/fetching user, ensure is_google_account is True and update picture if needed
                 needs_save = False

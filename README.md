@@ -12,6 +12,11 @@ Backbone provides:
 - email queue + PDF attachment support
 - singleton key-value store (`backbone.db_store`)
 
+Core internal model names:
+- `Task` (background task tracking)
+- `Email` (email delivery tracking)
+- `Store` (singleton key/value storage)
+
 The app entrypoint is `main.py`.
 
 ---
@@ -142,6 +147,68 @@ class BlogView(GenericCrudView):
         return {"status": "published", "id": pk}
 ```
 
+### Model hooks (create/update/delete/field change)
+
+Backbone supports model-level hooks using signal helpers.
+
+```python
+from backbone import on_create, on_update, on_delete, on_field_change
+from backbone.core.models import User
+
+@on_create(User)
+async def user_created(instance, **kwargs):
+    print("created", instance.id)
+
+@on_update(User)
+async def user_updated(instance, changed_fields=None, **kwargs):
+    print("updated", changed_fields or {})
+
+@on_delete(User)
+async def user_deleted(instance, **kwargs):
+    print("deleted", instance.id)
+
+@on_field_change(User, fields=["email", "full_name"])
+async def profile_changed(instance, changed_fields=None, matched_fields=None, **kwargs):
+    print("matched", matched_fields)
+```
+
+Notes:
+- `changed_fields` format is `{field_name: (old_value, new_value)}`
+- use `on_field_change(..., require_all=True)` if all listed fields must change together
+
+### Hook trigger timing (important)
+
+- `on_create(Model)`: triggers after successful document insert (`Insert` event).
+- `on_update(Model)`: triggers after successful update/save/replace (`Update`, `Save`, `Replace` events).
+- `on_delete(Model)`: triggers only on hard delete (`document.delete()`).
+- `on_field_change(Model, fields=[...])`: triggers on update flow when monitored field(s) changed.
+
+### Event order on update
+
+- Backbone first computes `changed_fields`.
+- Then `on_field_change` is emitted.
+- Then `on_update` is emitted.
+
+### Soft delete vs hard delete
+
+- Generic `DELETE` APIs use soft delete by default (`is_deleted=True`, `deleted_at=...`).
+- Soft delete behaves as an update, so `on_field_change` and `on_update` fire.
+- `on_delete` does not fire for soft delete.
+- `on_delete` fires only when hard delete is used.
+
+### Which hook fires for common API actions
+
+- `POST /resource`: `on_create`
+- `PATCH /resource/{id}`: `on_field_change` (if fields matched), then `on_update`
+- `DELETE /resource/{id}` (default soft): `on_field_change`, then `on_update`
+- Hard delete path: `on_delete`
+
+### Registration best practice
+
+- Register hooks once during app startup/import.
+- Keep registration idempotent (Backbone helpers already deduplicate by handler name).
+- Place app-specific hook registration in a dedicated module (example: `backbone/auth/hooks.py`).
+
 ---
 
 ## 5. Background Jobs (Important)
@@ -151,10 +218,10 @@ Backbone has two queue patterns:
 1. **Logged queue**  
    Use `background_task(...)`  
    - queue: `backbone_tasks`
-   - creates `task_logs` entries (`TaskLog`)
+   - creates `task_logs` entries (`Task` model)
    - good for business jobs where visibility is needed
 
-2. **Internal queue (no TaskLog entry)**  
+2. **Internal queue (no Task entry)**  
    Use `background_internal_task(...)`  
    - queue: `backbone_internal_tasks`
    - no `task_logs` creation
@@ -178,7 +245,7 @@ Supports:
 
 Flow:
 1. creates `Attachment` doc with `pending`
-2. enqueues internal background task (no TaskLog)
+2. enqueues internal background task (no Task entry)
 3. worker stores file (Cloudinary or local `/media/...`)
 4. updates attachment status (`completed`/`failed`)
 5. auto-links attachment to target document field when `collection_name`, `document_id`, `field_name` are provided
@@ -202,7 +269,7 @@ Main capabilities:
 - optional plain text fallback
 - file attachments (`file_path` or `content_base64`)
 - template-to-PDF attachment generation (ReportLab)
-- delivery status logging in `email_delivery_logs`
+- delivery status logging via `Email` model
 
 Collections used:
 - `email_delivery_logs`
@@ -252,7 +319,7 @@ For Gmail SMTP:
 
 ## 8. Singleton Key-Value Store (`backbone.db_store`)
 
-Backbone provides a single document store in MongoDB collection `backbone_store`.
+Backbone provides a single document store via `Store` model (MongoDB collection `backbone_store`).
 
 Use cases:
 - API keys

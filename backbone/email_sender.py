@@ -22,8 +22,8 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
-from .common.services import background_task
-from .core.models import EmailDeliveryLog
+from .common.services import background_internal_task
+from .core.models import Email
 from .core.settings import settings
 
 logger = logging.getLogger("backbone.email")
@@ -203,7 +203,7 @@ class EmailSender:
         attachments = attachments or []
         pdf_attachments = pdf_attachments or []
 
-        email_log = EmailDeliveryLog(
+        email_log = Email(
             to_email=to_email,
             subject=subject,
             template_name=template_name,
@@ -220,9 +220,13 @@ class EmailSender:
         if not settings.EMAIL_ENABLED:
             return str(email_log.id)
 
-        task_id = await background_task(process_email_delivery_task, str(email_log.id), max_retries=max_retries)
+        task_id = await background_internal_task(
+            process_email_delivery_task,
+            str(email_log.id),
+            max_retries=max_retries,
+        )
         if task_id is None:
-            refreshed = await EmailDeliveryLog.get(str(email_log.id))
+            refreshed = await Email.get(str(email_log.id))
             if refreshed and refreshed.status == "queued":
                 refreshed.status = "failed"
                 refreshed.error_message = "Failed to enqueue email background task."
@@ -266,9 +270,9 @@ class EmailSender:
 
 
 async def process_email_delivery_task(email_log_id: str) -> None:
-    email_log = await EmailDeliveryLog.get(email_log_id)
+    email_log = await Email.get(email_log_id)
     if not email_log:
-        logger.warning("EmailDeliveryLog not found for id=%s", email_log_id)
+        logger.warning("Email not found for id=%s", email_log_id)
         return
 
     if not settings.EMAIL_ENABLED:

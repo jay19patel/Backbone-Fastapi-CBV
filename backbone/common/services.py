@@ -16,7 +16,7 @@ from beanie import PydanticObjectId, Link
 from bson import ObjectId
 from pydantic import BaseModel
 
-from ..core.models import TaskLog
+from ..core.models import Task
 from ..core.settings import settings
 
 logger = logging.getLogger("backbone.services")
@@ -182,7 +182,7 @@ class TaskQueue:
         task_log = None
         if not no_log:
             try:
-                task_log = TaskLog(
+                task_log = Task(
                     task_id="pending",
                     function_name=func_path,
                     status="queued",
@@ -196,7 +196,7 @@ class TaskQueue:
                 task_log.task_id = task_id
                 await task_log.save()
             except Exception as e:
-                logger.error(f"Failed to create TaskLog: {e}")
+                logger.error(f"Failed to create Task entry: {e}")
 
         task_data = {
             "id": task_id,
@@ -252,7 +252,7 @@ class TaskWorker:
         if not no_log:
             try:
                 if ObjectId.is_valid(task_id):
-                    task_log = await TaskLog.get(task_id)
+                    task_log = await Task.get(task_id)
                     if task_log:
                         task_log.status = "processing"
                         task_log.started_at = datetime.now(timezone.utc)
@@ -333,7 +333,7 @@ async def background_task(func: Union[Callable, str], *args, **kwargs):
 
 async def background_internal_task(func: Union[Callable, str], *args, **kwargs):
     """
-    Enqueue internal framework tasks without creating TaskLog entries.
+    Enqueue internal framework tasks without creating Task entries.
     Uses the dedicated internal queue.
     """
     try:

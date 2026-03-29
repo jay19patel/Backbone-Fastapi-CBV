@@ -26,6 +26,42 @@ class BlogPostView(GenericCrudView):
     lookup_field = "slug"
     filter_fields = ["slug", "author.$id", "category.name", "category.$id", "featured"]
 
+    @staticmethod
+    def _extract_blog_id(blog: Any) -> Optional[str]:
+        if isinstance(blog, dict):
+            return str(blog.get("id") or blog.get("_id") or "")
+        value = getattr(blog, "id", None) or getattr(blog, "_id", None)
+        return str(value or "")
+
+    async def _is_liked_by_user(self, request: Request, blog_id: str, user: Optional[User]) -> bool:
+        if not user or not blog_id:
+            return False
+        try:
+            like_repo = get_repo(BlogLike, request)
+            existing_like = await like_repo.get_one({
+                "user.$id": PydanticObjectId(user.id),
+                "blog.$id": PydanticObjectId(blog_id),
+                "is_deleted": False,
+            })
+            return bool(existing_like)
+        except Exception:
+            return False
+
+    async def after_retrieve(
+        self,
+        instance: dict,
+        request: Request,
+        user: Any,
+    ) -> dict:
+        instance = await super().after_retrieve(instance, request, user)
+        blog_id = self._extract_blog_id(instance)
+
+        if isinstance(instance, dict):
+            instance["likes"] = int(instance.get("likes") or 0)
+            instance["is_liked"] = await self._is_liked_by_user(request, blog_id, user)
+
+        return instance
+
 
     @action(detail=True, methods=["post"], tags=["Blogs"])
     async def like(
@@ -47,8 +83,9 @@ class BlogPostView(GenericCrudView):
         if not blog:
             raise HTTPException(status_code=404, detail="Blog not found")
             
-        blog_id = str(blog.id) if hasattr(blog, "id") else blog.get("id")
-        from beanie import PydanticObjectId
+        blog_id = self._extract_blog_id(blog)
+        if not blog_id:
+            raise HTTPException(status_code=500, detail="Blog ID resolution failed")
         from bson import ObjectId
         
         # Check if user already liked this blog
@@ -63,28 +100,24 @@ class BlogPostView(GenericCrudView):
         if existing_like:
             # Unlike: Remove from BlogLike
             await like_repo.delete({"id": existing_like["id"]}, soft=False)
-            await blog_collection.update_one(
-                {"_id": ObjectId(blog_id)},
-                {"$inc": {"likes": -1}}
-            )
             status = "unliked"
-            likes_diff = -1
         else:
             # Like: Create BlogLike
             await like_repo.create({
                 "user": str(current_user.id),
                 "blog": str(blog_id)
             })
-            await blog_collection.update_one(
-                {"_id": ObjectId(blog_id)},
-                {"$inc": {"likes": 1}}
-            )
             status = "liked"
-            likes_diff = 1
-        
-        # Get updated count
-        current_likes = blog.get('likes', 0) if isinstance(blog, dict) else getattr(blog, 'likes', 0)
-        total_likes = max(0, (current_likes or 0) + likes_diff)
+
+        # Recalculate true like count for consistency and persist it on blog.
+        total_likes = await like_repo.count({
+            "blog.$id": PydanticObjectId(blog_id),
+            "is_deleted": False,
+        })
+        await blog_collection.update_one(
+            {"_id": ObjectId(blog_id)},
+            {"$set": {"likes": int(total_likes)}}
+        )
         
         return {
             "message": "Toggle success", 

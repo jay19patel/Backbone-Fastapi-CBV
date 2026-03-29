@@ -132,7 +132,7 @@ class LogEntry(Document):
             IndexModel([("created_at", DESCENDING)])
         ]
 
-class TaskLog(Document):
+class Task(Document):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of the task recording")
     task_id: str = Field(description="Unique identifier for the background task")
     function_name: str = Field(description="Name of the function executed by the task")
@@ -153,7 +153,7 @@ class TaskLog(Document):
             IndexModel([("created_at", DESCENDING)])
         ]
 
-class EmailDeliveryLog(Document):
+class Email(Document):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the email job record was created")
     queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the email was queued for sending")
     started_at: Optional[datetime] = Field(default=None, description="Timestamp when sending started")
@@ -184,7 +184,7 @@ class EmailDeliveryLog(Document):
             IndexModel([("created_at", DESCENDING)]),
         ]
 
-class BackboneStore(Document):
+class Store(Document):
     scope: str = Field(default="global", description="Singleton scope identifier")
     values: Dict[str, Any] = Field(default_factory=dict, description="Flexible key/value map")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the store document was created")
@@ -196,6 +196,11 @@ class BackboneStore(Document):
             IndexModel([("scope", ASCENDING)], unique=True),
             IndexModel([("updated_at", DESCENDING)]),
         ]
+
+# Backward-compatible aliases
+TaskLog = Task
+EmailDeliveryLog = Email
+BackboneStore = Store
 
 class PasswordResetToken(Document):
     user_id: str = Field(description="ID of the user requesting a password reset")

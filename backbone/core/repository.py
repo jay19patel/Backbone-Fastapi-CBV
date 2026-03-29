@@ -33,8 +33,6 @@ from bson.dbref import DBRef
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from .signals import signals
-
 logger = logging.getLogger("backbone.repository")
 
 T = TypeVar("T", bound=BaseModel)
@@ -97,7 +95,7 @@ class AbstractRepository(Protocol[T]):
         """Fetch a single document matching the query."""
         ...
 
-    async def create(self, data: Dict[str, Any]) -> Any:
+    async def create(self, data: Dict[str, Any], request: Any = None) -> Any:
         """Create a new document and return it."""
         ...
 
@@ -804,7 +802,7 @@ class BeanieRepository(Generic[T]):
             dumped["id"] = str(dumped.pop("_id"))
         return self._sanitize(dumped)
 
-    async def create(self, data: Dict[str, Any]) -> Any:
+    async def create(self, data: Dict[str, Any], request: Any = None) -> Any:
         """
         Create a new document in the database.
 

@@ -122,7 +122,7 @@ class MediaView(GenericCustomApiView):
                 encoded_payload,
             )
 
-            # Internal worker never creates TaskLog entries.
+            # Internal worker never creates Task entries.
             # If Redis worker is disabled, task runs synchronously and this may already be completed.
             attachment = await Attachment.get(attachment_id)
             response_status = attachment.status if attachment else "pending"

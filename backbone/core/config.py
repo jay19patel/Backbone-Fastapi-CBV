@@ -50,21 +50,21 @@ class BackboneConfig:
             User,
             Session,
             LogEntry,
-            TaskLog,
+            Task,
             Attachment,
             PasswordResetToken,
-            EmailDeliveryLog,
-            BackboneStore,
+            Email,
+            Store,
         )
         core_models = [
             User,
             Session,
             LogEntry,
-            TaskLog,
+            Task,
             Attachment,
             PasswordResetToken,
-            EmailDeliveryLog,
-            BackboneStore,
+            Email,
+            Store,
         ]
         
         # Ensures core models are loaded first to safely resolve Beanie links
@@ -141,21 +141,21 @@ class BackboneConfig:
             User,
             Session,
             LogEntry,
-            TaskLog,
+            Task,
             Attachment,
             PasswordResetToken,
-            EmailDeliveryLog,
-            BackboneStore,
+            Email,
+            Store,
         )
         core_models_set = {
             User,
             Session,
             LogEntry,
-            TaskLog,
+            Task,
             Attachment,
             PasswordResetToken,
-            EmailDeliveryLog,
-            BackboneStore,
+            Email,
+            Store,
         }
         
         for model in self.document_models:

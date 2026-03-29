@@ -18,6 +18,10 @@ Usage:
     router.include_router(BlogView.as_router("/blogs"))
 """
 
+import asyncio
+import inspect
+from datetime import datetime, timezone
+
 # ── Configuration ────────────────────────────────────────────────────────
 from .core.config import BackboneConfig
 from .core.settings import Settings, settings
@@ -28,14 +32,27 @@ from .core.models import (
     LogEntry,
     PasswordResetToken,
     Session,
-    TaskLog,
+    Task,
     User,
-    EmailDeliveryLog,
-    BackboneStore,
+    Email,
+    Store,
+    TaskLog,          # Backward-compatible alias
+    EmailDeliveryLog, # Backward-compatible alias
+    BackboneStore,    # Backward-compatible alias
 )
 
 # ── Signals ──────────────────────────────────────────────────────────────
 from .core.signals import Signal, signals
+from .hooks import (
+    on_create,
+    on_update,
+    on_delete,
+    on_field_change,
+    register_create_hook,
+    register_update_hook,
+    register_delete_hook,
+    register_field_change_hook,
+)
 
 # ── Repository ───────────────────────────────────────────────────────────
 from .core.repository import BeanieRepository
@@ -105,6 +122,44 @@ from .db import db, BackboneDB
 #   await backbone.db_store.get("my_key")
 db_store = db
 
+
+async def _insert_log_entry(level: str, message: str, module: str, function: str, line: int, extra: dict):
+    try:
+        await LogEntry(
+            level=level.upper(),
+            message=message,
+            module=module,
+            function=function,
+            line=line,
+            extra=extra or None,
+            created_at=datetime.now(timezone.utc),
+        ).insert()
+    except Exception:
+        pass
+
+
+def log(message: str, level: str = "info", **extra):
+    """
+    Public DB log helper.
+    Inserts a LogEntry document directly (with `extra` payload).
+    """
+    frame = inspect.currentframe()
+    caller = frame.f_back if frame else None
+    module = caller.f_globals.get("__name__", "backbone.log") if caller else "backbone.log"
+    function = caller.f_code.co_name if caller else "unknown"
+    line = caller.f_lineno if caller else 0
+    payload = str(message)
+    extra_payload = dict(extra) if extra else {}
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_insert_log_entry(level, payload, module, function, line, extra_payload))
+    except RuntimeError:
+        try:
+            asyncio.run(_insert_log_entry(level, payload, module, function, line, extra_payload))
+        except Exception:
+            pass
+
 __all__ = [
     # Configuration
     "BackboneConfig",
@@ -115,13 +170,21 @@ __all__ = [
     "Session",
     "LogEntry",
     "EventDocument",
-    "TaskLog",
+    "Task",
     "PasswordResetToken",
-    "EmailDeliveryLog",
-    "BackboneStore",
+    "Email",
+    "Store",
     # Signals
     "signals",
     "Signal",
+    "on_create",
+    "on_update",
+    "on_delete",
+    "on_field_change",
+    "register_create_hook",
+    "register_update_hook",
+    "register_delete_hook",
+    "register_field_change_hook",
     # Repository
     "BeanieRepository",
     # Permissions
@@ -162,6 +225,7 @@ __all__ = [
     "PasswordManager",
     "TokenManager",
     "CacheService",
+    "log",
     "background_task",
     "background_internal_task",
     "email_sender",

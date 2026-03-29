@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from pymongo.errors import DuplicateKeyError
 
-from .core.models import BackboneStore
+from .core.models import Store
 
 
 class BackboneDB:
@@ -26,21 +26,21 @@ class BackboneDB:
         if "." in key or key.startswith("$"):
             raise ValueError("Store key cannot contain '.' and cannot start with '$'.")
 
-    async def _ensure_store(self) -> BackboneStore:
-        store = await BackboneStore.find_one(BackboneStore.scope == self.scope)
+    async def _ensure_store(self) -> Store:
+        store = await Store.find_one(Store.scope == self.scope)
         if store:
             return store
 
         now = datetime.now(timezone.utc)
         try:
-            store = BackboneStore(scope=self.scope, values={}, created_at=now, updated_at=now)
+            store = Store(scope=self.scope, values={}, created_at=now, updated_at=now)
             await store.insert()
             return store
         except DuplicateKeyError:
             # Another request created it concurrently.
             pass
 
-        store = await BackboneStore.find_one(BackboneStore.scope == self.scope)
+        store = await Store.find_one(Store.scope == self.scope)
         if not store:
             raise RuntimeError("Failed to initialize Backbone singleton store.")
         return store
@@ -54,7 +54,7 @@ class BackboneDB:
         self._validate_key(key)
         await self._ensure_store()
         now = datetime.now(timezone.utc)
-        collection = BackboneStore.get_pymongo_collection()
+        collection = Store.get_pymongo_collection()
         await collection.update_one(
             {"scope": self.scope},
             {"$set": {f"values.{key}": value, "updated_at": now}},
@@ -74,7 +74,7 @@ class BackboneDB:
         for key, value in mapping.items():
             set_payload[f"values.{key}"] = value
 
-        collection = BackboneStore.get_pymongo_collection()
+        collection = Store.get_pymongo_collection()
         await collection.update_one(
             {"scope": self.scope},
             {"$set": set_payload},
@@ -86,7 +86,7 @@ class BackboneDB:
         self._validate_key(key)
         await self._ensure_store()
         now = datetime.now(timezone.utc)
-        collection = BackboneStore.get_pymongo_collection()
+        collection = Store.get_pymongo_collection()
         result = await collection.update_one(
             {"scope": self.scope},
             {"$unset": {f"values.{key}": ""}, "$set": {"updated_at": now}},
