@@ -601,13 +601,15 @@ async def api_wipe_database(payload: ApiWipeRequest):
 # ── Store & Settings ──────────────────────────────────────────────────────────
 
 SENSITIVE_KEYS = {
-    "secret_key", "password", "email_password", "google_client_secret",
+    "secret_key", "password", "email_password", "google_client_secret", "google_client_id",
     "cloudinary_url", "redis_url", "mongodb_url", "token", "api_key",
-    "private_key", "hashed_password", "client_secret", "email_username",
+    "private_key", "hashed_password", "client_secret"
 }
 
 def _is_sensitive(key: str) -> bool:
     k = key.lower()
+    if "expire" in k or "username" in k:
+        return False
     return any(s in k for s in SENSITIVE_KEYS)
 
 def _mask_value(value) -> str:
