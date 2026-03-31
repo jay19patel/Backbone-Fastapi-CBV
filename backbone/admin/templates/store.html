@@ -191,12 +191,10 @@
                     </td>
                     <td class="px-6 py-3.5">
                         {% if entry.is_sensitive %}
-                        <span class="value-cell text-slate-600 masked-value"
-                            title="Click to reveal"
-                            onclick="this.classList.toggle('revealed')">
-                            {{ entry.value if entry.value else '—' }}
+                        <span class="value-cell text-slate-400 tracking-widest">{{ entry.value if entry.value else '—' }}</span>
+                        <span class="ml-2 inline-flex items-center gap-1 text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full font-bold">
+                            <i class="fas fa-lock"></i> masked
                         </span>
-                        <span class="text-xs text-slate-400 ml-2 italic">(click to reveal)</span>
                         {% else %}
                         <span class="value-cell text-slate-600">
                             {% if entry.value == "" or entry.value is none %}
@@ -310,7 +308,10 @@
                     </td>
                     <td class="px-6 py-3.5 text-right">
                         <div class="flex items-center gap-2 justify-end">
-                            <button onclick="openEditModal('{{ entry.scope }}', '{{ entry.key }}', {{ entry.value | tojson }})"
+                            <button onclick="openEditModal(this)"
+                                data-scope="{{ entry.scope }}"
+                                data-key="{{ entry.key }}"
+                                data-value='{{ entry.value | tojson }}'
                                 class="h-7 w-7 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors flex items-center justify-center text-xs"
                                 title="Edit">
                                 <i class="fas fa-pencil-alt"></i>
@@ -496,7 +497,11 @@
         document.getElementById('entryModal').classList.remove('hidden');
     }
 
-    function openEditModal(scope, key, value) {
+    function openEditModal(btn) {
+        const scope = btn.getAttribute('data-scope');
+        const key = btn.getAttribute('data-key');
+        const value = JSON.parse(btn.getAttribute('data-value'));
+
         editingScope = scope;
         editingKey = key;
         document.getElementById('modalTitle').textContent = 'Edit Store Entry';

@@ -189,8 +189,8 @@
         <span class="text-xs text-slate-400" id="visibleCount">Showing {{ entries | length }} settings</span>
         <span class="text-xs text-slate-400 italic">
             <i class="fas fa-info-circle mr-1"></i>
-            Showing <span class="font-bold text-amber-600">{{ entries | selectattr('from_env') | list | length }}</span> from .env,
-            <span class="font-bold text-slate-500">{{ entries | rejectattr('from_env') | list | length }}</span> defaults
+            Showing <span class="font-bold text-amber-600">{{ env_count }}</span> from .env,
+            <span class="font-bold text-slate-500">{{ default_count }}</span> defaults
         </span>
     </div>
 </div>

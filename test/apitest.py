@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import random
 import sys
@@ -38,6 +39,15 @@ CLEAR_DATABASE_BEFORE_RUN = True
 CREATE_GLOBAL_FAQS = True
 TESTIMONIAL_PROBABILITY = 0.25
 
+# ── Blog JSON Seeding ────────────────────────────────────────────────────────
+# When True: reads blog.json and creates NUM_BLOGS_FROM_JSON blogs.
+# Each blog has the same content — only title changes (#1, #2, ...).
+# BLOGS_PER_USER is ignored when SEED_FROM_JSON=True.
+SEED_FROM_JSON = True
+NUM_BLOGS_FROM_JSON = 5           # ← how many to generate
+BLOG_JSON_PATH = os.path.join(CURRENT_DIR, "blog.json")
+# ────────────────────────────────────────────────────────────────────────────
+
 # Files
 IMAGE_PATH = os.path.join(CURRENT_DIR, "blog.png")
 PROFILE_IMAGE_PATH = os.path.join(CURRENT_DIR, "profile.png")
@@ -47,6 +57,13 @@ PLAYLIST_IMAGE_PATH = os.path.join(CURRENT_DIR, "playlist.png")
 class APITestFailure(RuntimeError):
     pass
 
+
+def _load_blog_json() -> dict:
+    """Load blog.json template for JSON-based seeding."""
+    if not os.path.exists(BLOG_JSON_PATH):
+        raise APITestFailure(f"blog.json not found at: {BLOG_JSON_PATH}")
+    with open(BLOG_JSON_PATH, encoding="utf-8") as f:
+        return json.load(f)
 
 def _banner(text: str) -> None:
     print(f"\n{'=' * 78}\n{text}\n{'=' * 78}")
@@ -197,11 +214,11 @@ async def register_and_login(client: httpx.AsyncClient, run_id: str, idx: int) -
     }
 
 
-async def create_category(client: httpx.AsyncClient, token: str, run_id: str, idx: int) -> str:
+async def create_category(client: httpx.AsyncClient, token: str, run_id: str, idx: int, name: Optional[str] = None, slug: Optional[str] = None) -> str:
     ts = int(time.time() * 1000)
     payload = {
-        "name": f"API Category {run_id}-{idx}-{ts}",
-        "slug": f"api-cat-{run_id}-{idx}-{ts}",
+        "name": name or f"API Category {run_id}-{idx}-{ts}",
+        "slug": slug or f"api-cat-{run_id}-{idx}-{ts}",
     }
     resp = await client.post(
         f"{BASE_URL}/api/blogs/categories/",
@@ -229,68 +246,118 @@ async def create_blogs(
     blog_ids: List[str] = []
     blog_slugs: List[str] = []
     sem = asyncio.Semaphore(BLOG_CREATE_CONCURRENCY)
-    topics = ["FastAPI", "Beanie", "Redis Jobs", "MongoDB", "Auth", "Playlists", "Attachments"]
 
-    async def _create_one(blog_index: int) -> Optional[Dict[str, str]]:
-        async with sem:
-            topic = random.choice(topics)
-            slug = f"api-blog-{run_id}-{idx}-{blog_index}-{uuid.uuid4().hex[:8]}"
-            payload = {
-                "title": f"{topic} Guide U{idx}B{blog_index}",
-                "subtitle": "High-volume API integration content",
-                "slug": slug,
-                "excerpt": f"Generated for run {run_id}.",
-                "introduction": "Automated blog creation for integration test.",
-                "sections": [
-                    {
-                        "type": "text",
-                        "title": "Overview",
-                        "content": f"This is generated content for topic={topic}, user={idx}, blog={blog_index}.",
-                    },
-                    {
-                        "type": "bullets",
-                        "title": "Checklist",
-                        "items": ["Design schema", "Implement API", "Validate response", "Deploy safely"],
-                    },
-                    {
-                        "type": "code",
-                        "title": "Code Sample",
-                        "language": "python",
-                        "content": "async def ping():\n    return {'ok': True}",
-                    },
-                    {
-                        "type": "image",
-                        "title": "Attachment Section",
-                        "attachment": section_image_attachment_id,
-                        "caption": "Uploaded through /api/media/upload",
-                    },
-                    {
-                        "type": "note",
-                        "title": "Run Metadata",
-                        "content": f"run_id={run_id}, user={idx}, blog={blog_index}",
-                    },
-                ],
-                "conclusion": "Automated blog generation completed.",
-                "author": user_id,
-                "category": category_id,
-                "thumbnail": thumb_attachment_id,
-                "isPublished": True,
-                "publishedDate": datetime.now(timezone.utc).isoformat(),
-            }
-            resp = await client.post(
-                f"{BASE_URL}/api/blogs/",
-                json=payload,
-                headers=_auth_headers(token),
-            )
-            await _assert_status(resp, [201], f"Create blog user={idx} blog={blog_index}")
-            data = resp.json()
-            blog_id = str(data.get("id") or data.get("_id") or "")
-            blog_slug = str(data.get("slug") or "")
-            if not blog_id or not blog_slug:
-                _fail(f"Blog response missing id/slug user={idx}, blog={blog_index}, data={data}")
-            return {"id": blog_id, "slug": blog_slug}
+    # ── JSON-based seeding (from blog.json) ─────────────────────────────────
+    if SEED_FROM_JSON:
+        template = _load_blog_json()
+        base_title = template["title"]
+        count = NUM_BLOGS_FROM_JSON
 
-    created = await asyncio.gather(*[_create_one(i) for i in range(BLOGS_PER_USER)])
+        async def _create_from_json(blog_index: int) -> Optional[Dict[str, str]]:
+            async with sem:
+                title = f"{base_title}" if blog_index == 1 else f"{base_title} #{blog_index}"
+                # Use a predictable slug for the first/main blog
+                if blog_index == 1:
+                    slug = template.get("category_slug", "tech") + "-" + template.get("title", "guide").lower().replace(":", "").replace(" ", "-")
+                else:
+                    slug = f"fastapi-vs-django-{run_id}-{idx}-{blog_index}-{uuid.uuid4().hex[:8]}"
+                
+                payload = {
+                    "title": title,
+                    "subtitle": template.get("subtitle", ""),
+                    "slug": slug,
+                    "excerpt": template.get("excerpt", ""),
+                    "introduction": template.get("introduction", ""),
+                    "sections": template.get("sections", []),
+                    "conclusion": template.get("conclusion", ""),
+                    "author": user_id,
+                    "category": category_id,
+                    "thumbnail": thumb_attachment_id,
+                    "isPublished": True,
+                    "publishedDate": datetime.now(timezone.utc).isoformat(),
+                }
+                resp = await client.post(
+                    f"{BASE_URL}/api/blogs/",
+                    json=payload,
+                    headers=_auth_headers(token),
+                )
+                await _assert_status(resp, [201], f"Create JSON blog user={idx} blog={blog_index}")
+                data = resp.json()
+                blog_id = str(data.get("id") or data.get("_id") or "")
+                blog_slug = str(data.get("slug") or "")
+                if not blog_id or not blog_slug:
+                    _fail(f"Blog response missing id/slug user={idx}, blog={blog_index}, data={data}")
+                _ok(f"Blog #{blog_index}: \"{title}\"")
+                return {"id": blog_id, "slug": blog_slug}
+
+        created = await asyncio.gather(*[_create_from_json(i) for i in range(1, count + 1)])
+
+    # ── Original random-topic seeding ────────────────────────────────────────
+    else:
+        topics = ["FastAPI", "Beanie", "Redis Jobs", "MongoDB", "Auth", "Playlists", "Attachments"]
+        count = BLOGS_PER_USER
+
+        async def _create_one(blog_index: int) -> Optional[Dict[str, str]]:
+            async with sem:
+                topic = random.choice(topics)
+                slug = f"api-blog-{run_id}-{idx}-{blog_index}-{uuid.uuid4().hex[:8]}"
+                payload = {
+                    "title": f"{topic} Guide U{idx}B{blog_index}",
+                    "subtitle": "High-volume API integration content",
+                    "slug": slug,
+                    "excerpt": f"Generated for run {run_id}.",
+                    "introduction": "Automated blog creation for integration test.",
+                    "sections": [
+                        {
+                            "type": "text",
+                            "title": "Overview",
+                            "content": f"This is generated content for topic={topic}, user={idx}, blog={blog_index}.",
+                        },
+                        {
+                            "type": "bullets",
+                            "title": "Checklist",
+                            "items": ["Design schema", "Implement API", "Validate response", "Deploy safely"],
+                        },
+                        {
+                            "type": "code",
+                            "title": "Code Sample",
+                            "language": "python",
+                            "content": "async def ping():\n    return {'ok': True}",
+                        },
+                        {
+                            "type": "image",
+                            "title": "Attachment Section",
+                            "attachment": section_image_attachment_id,
+                            "caption": "Uploaded through /api/media/upload",
+                        },
+                        {
+                            "type": "note",
+                            "title": "Run Metadata",
+                            "content": f"run_id={run_id}, user={idx}, blog={blog_index}",
+                        },
+                    ],
+                    "conclusion": "Automated blog generation completed.",
+                    "author": user_id,
+                    "category": category_id,
+                    "thumbnail": thumb_attachment_id,
+                    "isPublished": True,
+                    "publishedDate": datetime.now(timezone.utc).isoformat(),
+                }
+                resp = await client.post(
+                    f"{BASE_URL}/api/blogs/",
+                    json=payload,
+                    headers=_auth_headers(token),
+                )
+                await _assert_status(resp, [201], f"Create blog user={idx} blog={blog_index}")
+                data = resp.json()
+                blog_id = str(data.get("id") or data.get("_id") or "")
+                blog_slug = str(data.get("slug") or "")
+                if not blog_id or not blog_slug:
+                    _fail(f"Blog response missing id/slug user={idx}, blog={blog_index}, data={data}")
+                return {"id": blog_id, "slug": blog_slug}
+
+        created = await asyncio.gather(*[_create_one(i) for i in range(count)])
+
     for item in created:
         if not item:
             continue
@@ -382,11 +449,28 @@ async def verify_counts_and_logs(run_id: str, run_emails: List[str]) -> None:
     mongo = AsyncIOMotorClient(settings.MONGODB_URL)
     try:
         db = mongo[settings.DATABASE_NAME]
-        blog_count = await db["blogs"].count_documents({"slug": {"$regex": f"^api-blog-{run_id}-"}})
-        playlist_count = await db["playlists"].count_documents({"slug": {"$regex": f"^playlist-{run_id}-"}})
-        category_count = await db["blog_categories"].count_documents({"slug": {"$regex": f"^api-cat-{run_id}-"}})
+        # Blog slug prefix differs between JSON mode and random mode
+        if SEED_FROM_JSON:
+            template = _load_blog_json()
+            # Deterministic slug for #1 + random ones for the rest
+            main_slug = template.get("category_slug", "tech") + "-" + template.get("title", "guide").lower().replace(":", "").replace(" ", "-")
+            blog_slug_pattern = f"(^{main_slug}$|^fastapi-vs-django-{run_id}-)"
+            expected_blogs = NUM_USERS * NUM_BLOGS_FROM_JSON
+        else:
+            blog_slug_pattern = f"^api-blog-{run_id}-"
+            expected_blogs = NUM_USERS * BLOGS_PER_USER
 
-        expected_blogs = NUM_USERS * BLOGS_PER_USER
+        template = _load_blog_json() if SEED_FROM_JSON else {}
+        custom_cat_slug = template.get("category_slug")
+        
+        blog_count = await db["blogs"].count_documents({"slug": {"$regex": blog_slug_pattern}})
+        playlist_count = await db["playlists"].count_documents({"slug": {"$regex": f"^playlist-{run_id}-"}})
+        
+        if custom_cat_slug:
+            category_count = await db["blog_categories"].count_documents({"slug": custom_cat_slug})
+        else:
+            category_count = await db["blog_categories"].count_documents({"slug": {"$regex": f"^api-cat-{run_id}-"}})
+
         expected_playlists = NUM_USERS * PLAYLISTS_PER_USER
         expected_categories = NUM_USERS
 
@@ -462,7 +546,15 @@ async def user_worker(index: int, run_id: str, sem: asyncio.Semaphore) -> Dict[s
                 field_name="thumbnail",
             )
 
-            category_id = await create_category(client, token, run_id, index)
+            template = _load_blog_json() if SEED_FROM_JSON else {}
+            category_id = await create_category(
+                client, 
+                token, 
+                run_id, 
+                index,
+                name=template.get("category_name"),
+                slug=template.get("category_slug")
+            )
             blog_data = await create_blogs(
                 client,
                 token=token,

@@ -53,6 +53,20 @@ class BlogSectionYoutube(BlogSectionBase):
     videoTitle: Optional[str] = None
     description: Optional[str] = None
 
+class BlogSectionFlowchartStep(BaseModel):
+    id: str
+    title: str
+    description: str
+    color: Optional[str] = "blue"
+    branches: Optional[List['BlogSectionFlowchartStep']] = None
+
+class BlogSectionFlowchart(BlogSectionBase):
+    type: Literal["flowchart"] = "flowchart"
+    steps: List[BlogSectionFlowchartStep]
+
+# Resolve recursive references
+BlogSectionFlowchartStep.model_rebuild()
+
 BlogSection = Union[
     BlogSectionText,
     BlogSectionBullets,
@@ -61,7 +75,8 @@ BlogSection = Union[
     BlogSectionLinks,
     BlogSectionImage,
     BlogSectionCode,
-    BlogSectionYoutube
+    BlogSectionYoutube,
+    BlogSectionFlowchart
 ]
 
 from backbone.core.fields import Bool

@@ -790,17 +790,23 @@ async def store_delete_entry(payload: StoreDeleteRequest, user: Optional[User] =
     return {"status": "ok", "scope": scope, "key": key}
 
 
-@router.get("/Config", response_class=HTMLResponse)
+@router.get("/config", response_class=HTMLResponse)
 async def config_list_page(request: Request, user: Optional[User] = Depends(get_admin_user)):
     if not user:
         return RedirectResponse(url="/admin/login")
+
+    entries = _get_config_entries()
+    env_count = sum(1 for e in entries if e.get("from_env"))
+    default_count = len(entries) - env_count
 
     return templates.TemplateResponse("config_list.html", {
         "request": request,
         "models": admin_site.get_registered_models(),
         "user": user,
         "now": datetime.now(timezone.utc),
-        "entries": _get_config_entries(),
+        "entries": entries,
+        "env_count": env_count,
+        "default_count": default_count,
     })
 
 
