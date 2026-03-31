@@ -22,7 +22,7 @@ from backbone.core.settings import settings
 # ---------------------------------------------------------------------------
 # Test Config (edit directly here)
 # ---------------------------------------------------------------------------
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = "https://api-bloger-menia.vercel.app"
 REQUEST_TIMEOUT = 90
 
 # Heavy seed config (50 * 50 = 2500 blogs)

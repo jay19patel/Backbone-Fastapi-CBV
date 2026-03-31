@@ -31,77 +31,9 @@ class GenerateBlogResponse(BaseModel):
 
 # --- Mock Database / Session Store ---
 _sessions = {}
+_blog_states = {}
 
-# --- Helper: Generate Mock Content ---
-def generate_mock_blog(prompt: str) -> BlogPromptState:
-    """Generate a rich, structured blog state using shared schemas."""
-    topic = prompt.strip().title()
-    
-    return BlogPromptState(
-        title=f"The Future of {topic}: A 2026 Perspective",
-        subtitle=f"How {topic} is evolving in the age of AI and distributed systems.",
-        excerpt=f"Discover the core principles and cutting-edge trends that are reshaping {topic} today.",
-        image="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=2072",
-        category="Technology",
-        tags=[topic.split()[0].lower(), "future", "architecture", "2026"],
-        content={
-            "introduction": f"In this deep dive, we explore the intricate layers of {topic}. As we head into 2026, the complexity of these systems necessitates a more structured and automated approach.",
-            "sections": [
-                {
-                    "type": "text",
-                    "title": f"Why {topic} Matters Now",
-                    "content": f"The integration of machine learning and real-time data processing has transformed {topic} from a static field into a dynamic, high-performance ecosystem."
-                },
-                {
-                    "type": "flowchart",
-                    "title": f"Standard {topic} Architecture Flow",
-                    "steps": [
-                        {
-                            "id": "step-1",
-                            "title": "Data Ingestion",
-                            "description": "Raw data enters the system through high-throughput streams.",
-                            "color": "blue",
-                            "branches": []
-                        },
-                        {
-                            "id": "step-2",
-                            "title": "Processing Engine",
-                            "description": "Choose the appropriate processing layer based on latency requirements.",
-                            "color": "indigo",
-                            "branches": [
-                                {
-                                    "id": "branch-1",
-                                    "title": "Batch Processing",
-                                    "description": "High throughput, higher latency for historical analysis.",
-                                    "color": "violet"
-                                },
-                                {
-                                    "id": "branch-2",
-                                    "title": "Stream Processing",
-                                    "description": "Real-time, ultra-low latency for instant feedback.",
-                                    "color": "purple"
-                                }
-                            ]
-                        },
-                        {
-                            "id": "step-3",
-                            "title": "System Storage",
-                            "description": "Final persistent state layer.",
-                            "color": "violet",
-                            "branches": []
-                        }
-                    ]
-                },
-                {
-                    "type": "code",
-                    "title": "Implementation Snippet",
-                    "language": "python",
-                    "content": f"def process_{topic.lower().replace(' ', '_')}(data):\n    # Core logic for handling {topic}\n    results = analyze(data)\n    return results"
-                }
-            ],
-            "conclusion": f"Building for the future requires a deep understanding of {topic}. By leveraging modern architectural patterns, we can ensure our systems are both scalable and resilient."
-        }
-    )
+from api.ai_blog import generate_or_edit_blog
 
 # --- Endpoints ---
 
@@ -115,9 +47,27 @@ async def generate_chat(request: GenerateBlogRequest):
     # Add user message
     _sessions[session_id].append({"role": "user", "content": request.message})
     
-    # Generate Mock Response
-    blog_state = generate_mock_blog(request.message)
-    assistant_message = f"I've generated a draft for your blog: **{blog_state.title}**. You can see the structure populated in the form below, including a detailed flowchart and code examples."
+    prev_state = _blog_states.get(session_id)
+    
+    try:
+        # Generate or Edit using AI Graph
+        blog_state, chat_msg = generate_or_edit_blog(
+            prompt=request.message,
+            session_id=session_id,
+            previous_state=prev_state.model_dump() if prev_state else None
+        )
+        
+        # Save to session (if there's a new blog state)
+        if blog_state:
+            _blog_states[session_id] = blog_state
+        
+        if chat_msg:
+            assistant_message = chat_msg
+        else:
+            assistant_message = f"I've updated the draft for your blog: **{blog_state.title}**. You can see the structure populated in the form below."
+    except Exception as e:
+        blog_state = prev_state
+        assistant_message = f"I encountered an error generating the blog: {str(e)}"
     
     _sessions[session_id].append({"role": "assistant", "content": assistant_message})
     
@@ -142,4 +92,6 @@ async def save_chat_blog(request: Dict[str, str]):
 async def delete_session(session_id: str):
     if session_id in _sessions:
         del _sessions[session_id]
+    if session_id in _blog_states:
+        del _blog_states[session_id]
     return {"status": "success"}
