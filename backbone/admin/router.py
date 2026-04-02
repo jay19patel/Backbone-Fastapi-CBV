@@ -1164,15 +1164,68 @@ async def model_update_handle(
         raise HTTPException(status_code=404, detail="Model not found")
     
     model = config["model"]
-    item = await model.find_one({"_id": pk})
+    item = None
+    fetch_error = None
+    
+    try:
+        item = await model.get(pk)
+    except Exception as e:
+        fetch_error = str(e)
+
     if not item:
         from bson import ObjectId
         try:
             item = await model.find_one({"_id": ObjectId(pk)})
-        except: pass
+        except Exception as e:
+            if not fetch_error:
+                fetch_error = str(e)
         
     if not item:
-        raise HTTPException(status_code=404, detail="Record not found")
+        # Check if the record actually exists in DB but failed validation
+        from bson import ObjectId
+        try:
+            # Try as ObjectId first, then as string
+            raw_pkt = ObjectId(pk) if len(str(pk)) == 24 else pk
+            raw_item = await model.get_pymongo_collection().find_one({"_id": raw_pkt})
+            if not raw_item and isinstance(raw_pkt, ObjectId):
+                raw_item = await model.get_pymongo_collection().find_one({"_id": str(pk)})
+            
+            if raw_item:
+                # ── Transparent Repair logic ──
+                import json
+                repaired = False
+                for field_name, field_info in get_model_fields(model).items():
+                    is_list = "list" in str(field_info.annotation).lower()
+                    if is_list and field_name in raw_item:
+                        val = raw_item[field_name]
+                        # Case 1: Field is a string that looks like a JSON array
+                        if isinstance(val, str) and (val.startswith('[') or val.startswith('{')):
+                             try:
+                                raw_item[field_name] = json.loads(val)
+                                repaired = True
+                             except: pass
+                        # Case 2: Field is a list containing one string that looks like a JSON array
+                        elif isinstance(val, list) and len(val) == 1 and isinstance(val[0], str) and (val[0].startswith('[') or val[0].startswith('{')):
+                             try:
+                                raw_item[field_name] = json.loads(val[0])
+                                repaired = True
+                             except: pass
+                
+                if repaired:
+                    try:
+                        item = model(**raw_item)
+                    except Exception as e2:
+                        fetch_error = f"Repair attempted but still failed: {str(e2)}"
+                
+                if not item:
+                    raise HTTPException(status_code=400, detail=f"ValidationError on record load: {fetch_error}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Re-raise as 400 with the error detail so we can see what actually happened
+            raise HTTPException(status_code=400, detail=f"Database lookup error: {str(e)}")
+            
+        raise HTTPException(status_code=404, detail="Record not found in the database. Please ensure the ID is correct.")
 
     form_data = await request.form()
     update_data = {}
@@ -1190,20 +1243,42 @@ async def model_update_handle(
             if is_list:
                 if not val or (len(val) == 1 and not val[0]):
                     val = []
+                else:
+                    import json
+                    parsed_val = []
+                    for v in val:
+                        if isinstance(v, str) and (v.startswith('[') or v.startswith('{')):
+                            try:
+                                parsed_v = json.loads(v)
+                                if isinstance(parsed_v, list):
+                                    parsed_val.extend(parsed_v)
+                                else:
+                                    parsed_val.append(parsed_v)
+                            except Exception:
+                                parsed_val.append(v)
+                        else:
+                            parsed_val.append(v)
+                    val = parsed_val
             elif not val and field.annotation != bool:
-                continue
+                if is_link:
+                    val = None
+                else:
+                    if field.annotation == str:
+                        val = ""
+                    else:
+                        val = None
 
             if field.annotation == bool:
                 val = val.lower() == "true" if isinstance(val, str) else bool(val)
             elif field.annotation == int and not is_list:
-                try: val = int(val)
+                try: val = int(val) if val is not None and val != "" else None
                 except: pass
             elif field.annotation == float and not is_list:
-                try: val = float(val)
+                try: val = float(val) if val is not None and val != "" else None
                 except: pass
 
             if model_name == "User" and key == "hashed_password" and val:
-                from ..utils import PasswordManager
+                from ..common.utils import PasswordManager
                 if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
 
@@ -1229,6 +1304,11 @@ async def model_update_handle(
                             except: pass
 
             update_data[key] = val
+        else:
+            if field.annotation == bool:
+                update_data[key] = False
+            elif is_list:
+                update_data[key] = []
 
     try:
         if hasattr(item, "updated_at"):
@@ -1239,7 +1319,19 @@ async def model_update_handle(
         await item.set(update_data)
         return RedirectResponse(url=f"/admin/{model_name}/{pk}", status_code=status.HTTP_303_SEE_OTHER)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Try to provide a cleaner error message for Pydantic/Beanie validation errors
+        error_msg = str(e)
+        if "validation" in error_msg.lower():
+            if hasattr(e, "errors"):
+                # Pydantic 2 specific error formatting
+                try:
+                    formatted_errs = [f"{err['loc'][-1]}: {err['msg']}" for err in e.errors()]
+                    error_msg = "; ".join(formatted_errs)
+                except:
+                    pass
+        raise HTTPException(status_code=400, detail=f"Update validation failed: {error_msg}")
 
 @router.get("/{model_name}/{pk}/delete")
 async def model_delete_handle(

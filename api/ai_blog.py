@@ -1,6 +1,7 @@
 from __future__ import annotations
 import operator
 import os
+import urllib.parse
 from typing import TypedDict, List, Optional, Literal, Annotated, Dict, Any, Tuple
 
 from pydantic import BaseModel, Field
@@ -12,15 +13,30 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from schemas.blogs import (
     BlogSection, BlogSectionText, BlogSectionBullets, BlogSectionTable,
     BlogSectionNote, BlogSectionLinks, BlogSectionImage, BlogSectionCode,
-    BlogSectionYoutube, BlogSectionFlowchart, BlogSectionFlowchartStep
+    BlogSectionYoutube, BlogSectionFlowchart, BlogSectionFlowchartStep,
+    BlogPromptState
 )
-from api.chat import BlogPromptState
-from dotenv import load_dotenv
-load_dotenv()
+from backbone.core.settings import settings
 
 # Instantiated lazily to prevent uvicorn boot crash if API key is missing
 def get_llm():
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+    provider = settings.LLM_PROVIDER
+    if not provider:
+        provider = "google" if settings.is_production else "ollama"
+
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+        return ChatOllama(
+            model=settings.DEVELOPMENT_LLM_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+            temperature=0.7
+        )
+    else:
+        return ChatGoogleGenerativeAI(
+            model=settings.PRODUCTION_LLM_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=0.7
+        )
 
 # --- 1. Schemas ---
 
@@ -171,10 +187,19 @@ def fanout(state: WorkflowState):
 
 WORKER_SYSTEM = """You are a technical writer generating ONE specific block/task of a blog post.
 You must output a List of valid BlogSection Pydantic models.
-Use rich media sections like 'text', 'bullets', 'code', 'note', 'flowchart' depending on what is most effective for the task.
+Use a diverse mix of rich media sections. You MUST use 'table', 'flowchart', and 'image' sections when they add visual value or organize data.
 
-For example, you could return a Text section followed by a Code section or a Flowchart.
-Use high-quality technical formatting.
+Available Section Types:
+1. 'text': Standard markdown paragraphs.
+2. 'bullets': A list of points (returns items).
+3. 'code': Code examples with language specified.
+4. 'note': Callouts or important warnings.
+5. 'table': Use for comparisons or structured data. Requires 'headers' (list of strings) and 'rows' (list of lists of strings).
+6. 'flowchart': Use for processes, roadmaps, or step-by-step guides. Requires 'steps' with id, title, description, color, and optional nested 'branches'.
+7. 'image': Use to insert relevant images. Requires 'imageUrl' (use this format: 'https://image.pollinations.ai/prompt/{encoded_detailed_description}?width=1280&height=720&nologo=true') and an optional 'description' or 'caption'. Replace {encoded_detailed_description} with a highly detailed, URL-encoded visual description of what the image should show, relevant to the blog topic!
+
+For example, if explaining a comparison, output a 'text' followed by a 'table'. If explaining a process, use a 'flowchart'. If explaining a visual concept, use an 'image'.
+Be creative and ensure high-quality technical formatting.
 """
 
 def worker_node(payload: dict) -> dict:
@@ -208,13 +233,16 @@ def reducer_node(state: WorkflowState) -> dict:
     for s_list in ordered_sections:
         flat_sections.extend(s_list)
         
+    encoded_title = urllib.parse.quote(f"{plan.title} {plan.category} high quality modern technical illustration")
+    dynamic_cover = f"https://image.pollinations.ai/prompt/{encoded_title}?width=1280&height=720&nologo=true"
+
     final_state = BlogPromptStateStructured(
         title=plan.title,
         subtitle=plan.subtitle,
         excerpt=plan.excerpt,
         category=plan.category,
         tags=plan.tags,
-        image="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=2072", # Placeholder or call Gemini here
+        image=dynamic_cover,
         content=BlogContentSchema(
             introduction=plan.introduction,
             sections=flat_sections,

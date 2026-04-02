@@ -310,8 +310,11 @@
                 {% if name in field_links %}
                 <div id="search-container-{{ name }}" class="relative search-container">
                     <input type="text" placeholder="Search to select {{ name|nice_title }}..."
-                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
                         readonly onclick="this.removeAttribute('readonly')">
+                    <button type="button" class="clear-btn absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-red-500 z-10" style="display: none;" title="Clear selection">
+                        <i class="fas fa-times-circle text-lg"></i>
+                    </button>
                     <input type="hidden" name="{{ name }}" required>
 
                     <div class="search-results-dropdown">

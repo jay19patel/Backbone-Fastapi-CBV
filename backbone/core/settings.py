@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     EMAIL_FROM_NAME: str = "Backbone"
     EMAIL_TIMEOUT_SECONDS: int = 30
 
+    # LLM Settings
+    LLM_PROVIDER: str = "" # Set in .env to override (ollama | google)
+    DEVELOPMENT_LLM_MODEL: str = "llama3.1:8b"
+    PRODUCTION_LLM_MODEL: str = "gemini-2.0-flash"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    GOOGLE_API_KEY: str = ""
+
     @property
     def cors_origins_list(self) -> list:
         return [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]

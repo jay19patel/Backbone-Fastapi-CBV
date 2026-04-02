@@ -25,7 +25,7 @@ from backbone.core.settings import settings
 BASE_URL = "http://127.0.0.1:8000"
 REQUEST_TIMEOUT = 90
 
-# Heavy seed config (50 * 50 = 2500 blogs)
+# Heavy seed config (50 * 50 = 2500 blogs)dekho p
 NUM_USERS = 1
 BLOGS_PER_USER = 1
 PLAYLISTS_PER_USER = 1

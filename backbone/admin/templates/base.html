@@ -340,11 +340,25 @@
             const prevBtn = dropdown.querySelector('.prev-btn');
             const nextBtn = dropdown.querySelector('.next-btn');
             const pageInfo = dropdown.querySelector('.page-info');
+            const clearBtn = container.querySelector('.clear-btn');
 
             let currentPage = 1;
             let totalPages = 1;
             let searchTerm = '';
             let debounceTimer;
+
+            if (clearBtn) {
+                if (hidden.value || input.value) clearBtn.style.display = 'block';
+                clearBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    hidden.value = '';
+                    hidden.disabled = false;
+                    input.value = '';
+                    input.focus();
+                    clearBtn.style.display = 'none';
+                    dropdown.style.display = 'none';
+                };
+            }
 
             function updateDropdown() {
                 const url = `/admin/api/search/${modelName}?q=${encodeURIComponent(searchTerm)}&page=${currentPage}`;
@@ -380,8 +394,10 @@
 
             function selectItem(id, label) {
                 hidden.value = id;
+                hidden.disabled = false;
                 input.value = label;
                 dropdown.style.display = 'none';
+                if (clearBtn) clearBtn.style.display = 'block';
             }
 
             input.addEventListener('focus', () => {
