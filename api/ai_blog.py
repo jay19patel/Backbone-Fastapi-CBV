@@ -20,23 +20,11 @@ from backbone.core.settings import settings
 
 # Instantiated lazily to prevent uvicorn boot crash if API key is missing
 def get_llm():
-    provider = settings.LLM_PROVIDER
-    if not provider:
-        provider = "google" if settings.is_production else "ollama"
-
-    if provider == "ollama":
-        from langchain_ollama import ChatOllama
-        return ChatOllama(
-            model=settings.DEVELOPMENT_LLM_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0.7
-        )
-    else:
-        return ChatGoogleGenerativeAI(
-            model=settings.PRODUCTION_LLM_MODEL,
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature=0.7
-        )
+    return ChatGoogleGenerativeAI(
+        model=settings.PRODUCTION_LLM_MODEL,
+        google_api_key=settings.GOOGLE_API_KEY,
+        temperature=0.7
+    )
 
 # --- 1. Schemas ---
 
@@ -186,20 +174,76 @@ def fanout(state: WorkflowState):
 
 
 WORKER_SYSTEM = """You are a technical writer generating ONE specific block/task of a blog post.
-You must output a List of valid BlogSection Pydantic models.
-Use a diverse mix of rich media sections. You MUST use 'table', 'flowchart', and 'image' sections when they add visual value or organize data.
+You must output a List of valid JSON objects corresponding to BlogSection types.
+Use a diverse mix of rich media sections. You MUST prioritize 'text', 'table', and 'flowchart' sections.
 
-Available Section Types:
-1. 'text': Standard markdown paragraphs.
-2. 'bullets': A list of points (returns items).
-3. 'code': Code examples with language specified.
-4. 'note': Callouts or important warnings.
-5. 'table': Use for comparisons or structured data. Requires 'headers' (list of strings) and 'rows' (list of lists of strings).
-6. 'flowchart': Use for processes, roadmaps, or step-by-step guides. Requires 'steps' with id, title, description, color, and optional nested 'branches'.
-7. 'image': Use to insert relevant images. Requires 'imageUrl' (use this format: 'https://image.pollinations.ai/prompt/{encoded_detailed_description}?width=1280&height=720&nologo=true') and an optional 'description' or 'caption'. Replace {encoded_detailed_description} with a highly detailed, URL-encoded visual description of what the image should show, relevant to the blog topic!
+Strict JSON Output Format Requirements:
+Each section MUST be a JSON object containing a "type" key mapping to one of the allowed types.
+Here are the exact expected schemas for the sections:
 
-For example, if explaining a comparison, output a 'text' followed by a 'table'. If explaining a process, use a 'flowchart'. If explaining a visual concept, use an 'image'.
-Be creative and ensure high-quality technical formatting.
+1. Text Section:
+{
+  "title": "Optional Heading (can be omitted)",
+  "type": "text",
+  "content": "Detailed paragraphs of markdown text explaining the topic clearly."
+}
+
+2. Bullets Section:
+{
+  "title": "Optional Heading",
+  "type": "bullets",
+  "items": ["First key point", "Second key point", "Third key point"]
+}
+
+3. Code Section:
+{
+  "title": "Optional Heading",
+  "type": "code",
+  "language": "python",
+  "content": "def example():\n    pass"
+}
+
+4. Note/Callout Section:
+{
+  "title": "Optional Heading",
+  "type": "note",
+  "content": "Important warning, tip, or callout text goes here."
+}
+
+5. Table Section:
+{
+  "title": "Comparison of Systems",
+  "type": "table",
+  "headers": ["Feature", "Option A", "Option B"],
+  "rows": [
+      ["Speed", "Fast", "Slow"],
+      ["Cost", "Free", "Paid"]
+  ]
+}
+
+6. Flowchart Section:
+{
+  "title": "Architecture Flow",
+  "type": "flowchart",
+  "steps": [
+    {
+      "id": "step1",
+      "title": "Start Process",
+      "description": "Initialization phase description",
+      "color": "blue",
+      "branches": []
+    }
+  ]
+}
+
+CRITICAL INSTRUCTIONS: 
+1. DO NOT ever use or output the 'image' type. It is strictly forbidden.
+2. You MUST strictly use the exact JSON structures listed above. Do not hallucinate random properties.
+3. You MUST explicitly include the "type" key string in every section object.
+4. Completely fill out the content. Never output empty strings, empty arrays, or blank sections.
+
+For example, if explaining a comparison, output an object with type='text' followed by an object with type='table'. 
+Be creative, accurate, and ensure high-quality technical formatting and explicit code snippets.
 """
 
 def worker_node(payload: dict) -> dict:
@@ -233,8 +277,10 @@ def reducer_node(state: WorkflowState) -> dict:
     for s_list in ordered_sections:
         flat_sections.extend(s_list)
         
-    encoded_title = urllib.parse.quote(f"{plan.title} {plan.category} high quality modern technical illustration")
-    dynamic_cover = f"https://image.pollinations.ai/prompt/{encoded_title}?width=1280&height=720&nologo=true"
+    import uuid
+    # Using picsum.photos for a stable, high-quality placeholder image instead of fragile AI generation
+    seed = urllib.parse.quote(plan.title.replace(" ", "")[:15] or str(uuid.uuid4())[:8])
+    dynamic_cover = f"https://picsum.photos/seed/{seed}/1280/720"
 
     final_state = BlogPromptStateStructured(
         title=plan.title,
