@@ -1,79 +1,55 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from backbone import GenericCrud, AllowAny, BeanieRepository
-from backbone.core.dependencies import get_current_user, get_optional_user
-from backbone.core.models import User
+from fastapi import APIRouter, Request
+from typing import Any
+from backbone.generic.views import GenericCrudView
+from backbone.core.permissions import AllowAny
 from schemas.playlists import Playlist
-from schemas.blogs import Blog
-from typing import List, Optional
-from beanie import PydanticObjectId
-from backbone.generic.views import GenericSubResource
 
-class PlaylistRepository(BeanieRepository[Playlist]):
-    async def get_all(self, *args, **kwargs):
-        results = await super().get_all(*args, **kwargs)
-        for res in results:
-            blogs = res.get("blogs", [])
-            res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
-            res["total_views"] = sum(b.get("views", 0) for b in blogs if isinstance(b, dict))
-            res["total_likes"] = sum(b.get("likes", 0) for b in blogs if isinstance(b, dict))
-        return results
+class PlaylistView(GenericCrudView):
+    schema = Playlist
+    search_fields = ["name", "description"]
+    list_fields = ["id", "owner", "name", "slug", "description", "thumbnail", "is_public", "created_at", "blogs"]
+    fetch_links = True
+    permission_classes = [AllowAny]
+    lookup_field = "slug"
+    filter_fields = ["slug", "owner.$id", "is_public"]
 
-    async def get_one(self, *args, **kwargs):
-        res = await super().get_one(*args, **kwargs)
-        if res:
-            blogs = res.get("blogs", [])
-            res["blog_count"] = len(blogs) if isinstance(blogs, list) else 0
-            res["total_views"] = sum(b.get("views", 0) for b in blogs if isinstance(b, dict))
-            res["total_likes"] = sum(b.get("likes", 0) for b in blogs if isinstance(b, dict))
-        return res
-
-# Repository Instance
-playlist_repo = PlaylistRepository()
-
-playlist_crud = GenericCrud(
-    schema=Playlist,
-    repository=playlist_repo,
-    prefix="/playlists",
-    tags=["Playlists"],
-    search_fields=["name", "description"],
-    list_fields=["id", "name", "slug", "owner", "thumbnail", "is_public", "blogs", "blog_count", "total_views", "total_likes"],
-    fetch_links=True,
-    permission_classes=[AllowAny],
-    filter_fields=["owner.$id", "is_public", "slug", "blogs.$id"],
-    lookup_field="slug"
-)
-
-# Create a new router to control route order
-router = APIRouter()
-
-def get_repo(model, request: Request = None) -> BeanieRepository:
-    from backbone import BackboneConfig
-    db = None
-    if request and hasattr(request.app.state, "backbone_config"):
-        db = request.app.state.backbone_config.database
-    else:
-        try:
-            db = BackboneConfig.get_instance().database
-        except:
-            pass
+    async def _enhance_playlist_stats(self, instance: dict) -> dict:
+        total_views = 0
+        total_likes = 0
+        if "blogs" in instance and isinstance(instance["blogs"], list):
+            for blog in instance["blogs"]:
+                if isinstance(blog, dict):
+                    total_views += int(blog.get("views", 0) or 0)
+                    total_likes += int(blog.get("likes", 0) or 0)
+                elif hasattr(blog, 'views'):
+                    total_views += int(getattr(blog, "views", 0) or 0)
+                    total_likes += int(getattr(blog, "likes", 0) or 0)
+            instance["blog_count"] = len(instance["blogs"])
+        else:
+            instance["blog_count"] = 0
             
-    repo = BeanieRepository(db)
-    repo.initialize(model)
-    return repo
+        instance["total_views"] = total_views
+        instance["total_likes"] = total_likes
+        
+        # Optionally remove the full blogs array from the list view to keep payload light
+        # but keep it in retrieve. Actually we will leave it as is or remove it in list.
+        return instance
 
-playlist_blogs = GenericSubResource(
-    schema=Playlist,
-    repository=playlist_repo,
-    array_field="blogs",
-    target_id_param="blog_id",
-    prefix="/playlists",
-    tags=["Playlists"],
-    lookup_field="slug"
-)
-router.include_router(playlist_blogs.router)
+    async def after_retrieve(self, instance: dict, request: Request, user: Any) -> dict:
+        instance = await super().after_retrieve(instance, request, user)
+        instance = await self._enhance_playlist_stats(instance)
+        return instance
 
-# Include generic routing AFTER custom specific routes
-router.include_router(playlist_crud.router)
+    async def after_list(self, instances: list, request: Request, user: Any) -> list:
+        instances = await super().after_list(instances, request, user)
+        enhanced_instances = []
+        for instance in instances:
+            enhanced = await self._enhance_playlist_stats(instance)
+            # Remove heavy blogs array from list view to optimize payload
+            if "blogs" in enhanced:
+                del enhanced["blogs"]
+            enhanced_instances.append(enhanced)
+        return enhanced_instances
 
-class BlogRepository(BeanieRepository[Blog]):
-    pass
+router = APIRouter()
+router.include_router(PlaylistView.as_router("/playlists", tags=["Playlists"]))

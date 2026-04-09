@@ -1,12 +1,23 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Request, Response, Form, File, UploadFile
-from ..utils import PasswordManager, TokenManager
-from ..schemas import UserOut, TokenResponse, LoginSchema, GoogleLoginSchema, RegisterSchema, UserUpdate
-from ..core.models import User, Session
-from ..core.dependencies import get_current_user, oauth2_scheme
-from ..core.rate_limit import RateLimit
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+"""backbone.auth.router — Authentication endpoints."""
+
+import logging
+
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from bson import ObjectId
+
+from ..core.dependencies import get_current_user
+from ..core.models import Attachment, User, Session
 from ..core.repository import BeanieRepository
+from ..schemas import (
+    GoogleLoginSchema, LoginSchema, RegisterSchema,
+    TokenResponse, UserOut, UserUpdate,
+)
+from ..common.utils import PasswordManager, TokenManager
+from .hooks import register_auth_hooks
+
+logger = logging.getLogger("backbone.auth")
 
 class AuthRouter:
     def __init__(self, config: Any, db_instance: Any = None, prefix: str = "/auth", tags: list = ["Auth"]):
@@ -18,6 +29,8 @@ class AuthRouter:
         
         self.session_repository = BeanieRepository(db_instance)
         self.session_repository.initialize(Session)
+
+        register_auth_hooks()
         
         self._register_routes()
     
@@ -28,6 +41,31 @@ class AuthRouter:
         if self.session_repository.db is None:
             self.session_repository.db = config.database
 
+    async def _resolve_profile_image(self, user: User) -> User:
+        profile_image = getattr(user, "profile_image", None)
+        if not profile_image:
+            return user
+
+        attachment_id = None
+        if hasattr(profile_image, "ref"):
+            attachment_id = profile_image.ref.id
+        elif isinstance(profile_image, dict):
+            attachment_id = profile_image.get("id") or profile_image.get("_id")
+        elif isinstance(profile_image, str) and ObjectId.is_valid(profile_image):
+            attachment_id = ObjectId(profile_image)
+
+        if not attachment_id:
+            user.profile_image = None
+            return user
+
+        attachment = await Attachment.get(attachment_id)
+        user.profile_image = attachment
+        return user
+
+    @staticmethod
+    def _serialise_user(user: User) -> UserOut:
+        return UserOut(**user.model_dump(by_alias=True))
+
     def _register_routes(self):
         @self.router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
         async def register(
@@ -35,8 +73,11 @@ class AuthRouter:
             user_data: RegisterSchema
         ):
             try:
+                from .service import AuthService
+
                 await self._resolve_repos(request)
-                existing_user = await self.user_repository.get_one({"email": user_data.email})
+                auth_service = AuthService(request)
+                existing_user = await auth_service.get_user_by_email(user_data.email)
                 if existing_user:
                     raise HTTPException(status_code=400, detail="Email already registered")
             
@@ -47,17 +88,14 @@ class AuthRouter:
                 user_dict["is_active"] = True
                 user_dict["is_staff"] = False
             
-                new_user = await self.user_repository.create(user_dict)
-                # Verify return type
-                if isinstance(new_user, dict):
-                    print("DEBUG: create returned dict")
-                    return UserOut(**new_user)
-                return UserOut(**new_user.model_dump(by_alias=True))
-            except Exception as e:
-                import traceback
-                with open("error_trace.log", "w") as f:
-                    f.write(traceback.format_exc())
-                raise e
+                new_user = await self.user_repository.create(user_dict, request=request)
+
+                return self._serialise_user(new_user)
+            except HTTPException:
+                raise
+            except Exception:
+                logger.exception("Registration failed")
+                raise
 
         @self.router.post("/login", response_model=TokenResponse)
         async def login(
@@ -98,11 +136,11 @@ class AuthRouter:
                     "refresh_token": session_data["refresh_token"],
                     "token_type": "bearer"
                 }
-            except Exception as e:
-                import traceback
-                with open("error_trace.log", "a") as f:
-                    f.write(f"\n--- Login Error ---\n{traceback.format_exc()}")
-                raise e
+            except HTTPException:
+                raise
+            except Exception:
+                logger.exception("Login failed")
+                raise
 
         @self.router.post("/google/login", response_model=TokenResponse)
         async def google_login(
@@ -112,6 +150,7 @@ class AuthRouter:
         ):
             try:
                 import httpx
+                await self._resolve_repos(request)
                 
                 # Retrieve configured Client ID and Secret
                 backbone_config = request.app.state.backbone_config
@@ -160,10 +199,10 @@ class AuthRouter:
                 auth_service = AuthService(request)
                 
                 # Check if user already exists
-                user_doc = await self.user_repository.get_one({"email": email})
+                user = await auth_service.get_user_by_email(email)
                 
                 # Create user if they don't exist
-                if not user_doc:
+                if not user:
                     # Provide a random secure password for OAuth users because it's required by the model
                     import secrets
                     random_password = secrets.token_urlsafe(32)
@@ -177,26 +216,7 @@ class AuthRouter:
                         "is_staff": False,
                         "is_google_account": True,
                     }
-                    user_doc = await self.user_repository.create(new_user_data)
-                    
-                # Ensure the user object is a fully hydrated Beanie Document, not a raw dict.
-                if isinstance(user_doc, dict):
-                    # Re-fetch as a proper Model since raw dict might have un-hydrated string IDs for Links
-                    try:
-                        from bson import ObjectId
-                        doc_id = user_doc.get("_id") or user_doc.get("id")
-                        user = await User.get(ObjectId(doc_id))
-                        if not user:
-                            # Fallback if get fails somehow
-                            if "profile_image" in user_doc and isinstance(user_doc["profile_image"], str):
-                                del user_doc["profile_image"] # Drop the invalid string ref
-                            user = User(**user_doc)
-                    except Exception:
-                        if "profile_image" in user_doc and isinstance(user_doc["profile_image"], str):
-                            del user_doc["profile_image"]
-                        user = User(**user_doc)
-                else:
-                    user = user_doc
+                    user = await self.user_repository.create(new_user_data, request=request)
 
                 # After creating/fetching user, ensure is_google_account is True and update picture if needed
                 needs_save = False
@@ -253,11 +273,9 @@ class AuthRouter:
 
             except HTTPException:
                 raise
-            except Exception as e:
-                import traceback
-                with open("error_trace.log", "a") as f:
-                    f.write(f"\n--- Google Login Error ---\n{traceback.format_exc()}")
-                raise HTTPException(status_code=500, detail=str(e))
+            except Exception:
+                logger.exception("Google login failed")
+                raise HTTPException(status_code=500, detail="Google login failed")
                 
         @self.router.post("/refresh")
         async def refresh(
@@ -268,13 +286,15 @@ class AuthRouter:
             refresh_token = request.cookies.get("refresh_token")
             if not refresh_token:
                 raise HTTPException(status_code=401, detail="No refresh token")
-            
+
             payload = TokenManager.verify_token(refresh_token)
             if not payload:
                 raise HTTPException(status_code=401, detail="Invalid refresh token")
-            
+
             sid = payload.get("sid")
-            session = await self.session_repository.get_one({"id": sid, "is_active": True})
+            from .service import AuthService
+            auth_service = AuthService(request)
+            session = await auth_service.get_active_session(sid)
             if not session or session.refresh_token != refresh_token:
                 raise HTTPException(status_code=401, detail="Session expired or invalid")
             
@@ -302,12 +322,13 @@ class AuthRouter:
                             await auth_service.logout(sid)
                 except Exception:
                     pass # Ignore verification failures on logout
-                    
+
+            cookie_opts = request.app.state.backbone_config.cookie_settings
             response.delete_cookie(
                 key="refresh_token",
                 httponly=True,
-                secure=request.app.state.backbone_config.config.cookie_settings.get("secure", False),
-                samesite=request.app.state.backbone_config.config.cookie_settings.get("samesite", "lax")
+                secure=cookie_opts.get("secure", False),
+                samesite=cookie_opts.get("samesite", "lax")
             )
             return {"detail": "Logged out successfully"}
 
@@ -316,37 +337,11 @@ class AuthRouter:
             user: User = Depends(get_current_user)
         ):
             try:
-                # Manual hydration of Links since fetch_all_links triggers a Motor/Python 3.13 incompatibility
-                if user.profile_image:
-                    from ..core.models import Attachment
-                    from bson import ObjectId
-                    
-                    # Link objects have `.ref.id`
-                    if hasattr(user.profile_image, "ref"):
-                        attachment_doc = await Attachment.get(user.profile_image.ref.id)
-                        if attachment_doc:
-                            user.profile_image = attachment_doc
-                    # In case it's already an Attachment or dict
-                    elif isinstance(user.profile_image, dict) and "id" in user.profile_image:
-                        attachment_doc = await Attachment.get(ObjectId(user.profile_image["id"]))
-                        if attachment_doc:
-                            user.profile_image = attachment_doc
-                    # In case Motor returned a raw string ID for the ref
-                    elif isinstance(user.profile_image, str):
-                        try:
-                            attachment_doc = await Attachment.get(ObjectId(user.profile_image))
-                            if attachment_doc:
-                                user.profile_image = attachment_doc
-                            else:
-                                user.profile_image = None
-                        except:
-                            user.profile_image = None
-                return UserOut(**user.model_dump(by_alias=True))
-            except Exception as e:
-                import traceback
-                with open("get_me_error.log", "w") as f:
-                    f.write(traceback.format_exc())
-                raise e
+                user = await self._resolve_profile_image(user)
+                return self._serialise_user(user)
+            except Exception:
+                logger.exception("Get user profile failed")
+                raise
 
         @self.router.patch("/me", response_model=UserOut)
         async def update_me(
@@ -363,42 +358,17 @@ class AuthRouter:
                     user.bio = user_data.bio
                 
                 if user_data.profile_image:
-                    from ..core.models import Attachment
                     try:
                         attachment = await Attachment.get(user_data.profile_image)
                         if attachment:
                             user.profile_image = attachment
-                    except Exception as e:
-                        print(f"Failed to fetch profile image attachment: {e}")
+                    except Exception:
+                        logger.warning("Failed to fetch profile image attachment '%s'", user_data.profile_image)
                 
                 await user.save()
-                
-                # Manual hydration of Links since fetch_all_links triggers a Motor/Python 3.13 incompatibility
-                if user.profile_image:
-                    from ..core.models import Attachment
-                    from bson import ObjectId
-                    
-                    if hasattr(user.profile_image, "ref"):
-                        attachment_doc = await Attachment.get(user.profile_image.ref.id)
-                        if attachment_doc:
-                            user.profile_image = attachment_doc
-                    elif isinstance(user.profile_image, dict) and "id" in user.profile_image:
-                        attachment_doc = await Attachment.get(ObjectId(user.profile_image["id"]))
-                        if attachment_doc:
-                            user.profile_image = attachment_doc
-                    elif isinstance(user.profile_image, str):
-                        try:
-                            attachment_doc = await Attachment.get(ObjectId(user.profile_image))
-                            if attachment_doc:
-                                user.profile_image = attachment_doc
-                            else:
-                                user.profile_image = None
-                        except:
-                            user.profile_image = None
-                            
-                return UserOut(**user.model_dump(by_alias=True))
-            except Exception as e:
-                import traceback
-                with open("update_me_error.log", "w") as f:
-                    f.write(traceback.format_exc())
-                raise e
+
+                user = await self._resolve_profile_image(user)
+                return self._serialise_user(user)
+            except Exception:
+                logger.exception("Update user profile failed")
+                raise

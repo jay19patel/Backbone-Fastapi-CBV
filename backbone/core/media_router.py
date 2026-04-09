@@ -1,30 +1,29 @@
-import os
-import base64
-import httpx
-import mimetypes
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Body, Request
-from pydantic import BaseModel
 from typing import Optional, Any
-from backbone.generic.views import GenericCustomApi
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
+import httpx
+import os
+import mimetypes
+import base64
+
+from backbone.generic.views import GenericCustomApiView
 from backbone.core.permissions import AllowAny
 from backbone.core.models import Attachment
-from backbone.core.media import process_attachment_upload, _is_cloudinary_configured, _upload_to_cloudinary, _save_to_local
-from backbone.utils.tasks import background_task
+from backbone.core.media import (
+    process_attachment_upload,
+)
+from backbone.common.services import background_internal_task
 
-class MediaRouter(GenericCustomApi):
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("schema", Attachment)
-        kwargs.setdefault("prefix", "/media")
-        kwargs.setdefault("tags", ["Media"])
-        kwargs.setdefault("endpoint", "/upload")
-        # We need to explicitly allow form-data passing, so we'll override the post method completely
-        super().__init__(*args, **kwargs)
+class MediaView(GenericCustomApiView):
+    schema = Attachment
+    permission_classes = [AllowAny]
+
+    @classmethod
+    def as_router(cls, prefix: str = "/media", tags: list = ["Media"], **kwargs) -> APIRouter:
+        router = APIRouter(prefix=prefix, tags=tags, **kwargs)
+        view = cls()
         
-    def _register_custom_routes(self):
-        # Override the default _register_custom_routes because GenericCustomApi expects a JSON Body 
-        # and we need to accept Form data + UploadFile for standard HTML file uploads
-        @self.router.post(self.endpoint, tags=self.router.tags)
-        async def custom_post(
+        @router.post("/upload")
+        async def upload_media(
             request: Request,
             file: Optional[UploadFile] = File(None),
             url: Optional[str] = Form(None),
@@ -32,10 +31,27 @@ class MediaRouter(GenericCustomApi):
             document_id: Optional[str] = Form(None),
             field_name: Optional[str] = Form(None)
         ):
-            await self._resolve_context(request)
-            return await self.post(request, file=file, url=url, collection_name=collection_name, document_id=document_id, field_name=field_name)
+            await view.resolve_context(request)
+            return await view.handle_upload(
+                request, 
+                file=file, 
+                url=url, 
+                collection_name=collection_name, 
+                document_id=document_id, 
+                field_name=field_name
+            )
+        
+        return router
 
-    async def post(self, request: Request, file: Optional[UploadFile] = None, url: Optional[str] = None, collection_name: Optional[str] = None, document_id: Optional[str] = None, field_name: Optional[str] = None) -> Any:
+    async def handle_upload(
+        self, 
+        request: Request, 
+        file: Optional[UploadFile] = None, 
+        url: Optional[str] = None, 
+        collection_name: Optional[str] = None, 
+        document_id: Optional[str] = None, 
+        field_name: Optional[str] = None
+    ) -> Any:
         if not file and not url:
             raise HTTPException(status_code=400, detail="Either 'file' or 'url' must be provided.")
             
@@ -86,7 +102,7 @@ class MediaRouter(GenericCustomApi):
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
 
-        # 3. Create Attachment and upload synchronously
+        # 3. Create Attachment record and process in internal background worker
         try:
             attachment = Attachment(
                 filename=filename,
@@ -99,59 +115,31 @@ class MediaRouter(GenericCustomApi):
             await attachment.insert()
 
             attachment_id = str(attachment.id)
-            subfolder = collection_name or "general"
-            ext = os.path.splitext(filename)[1]
-            if not ext: ext = mimetypes.guess_extension(content_type) or ".jpg"
-            if ext == ".jpe": ext = ".jpg"
+            encoded_payload = base64.b64encode(file_bytes).decode("utf-8")
+            internal_task_id = await background_internal_task(
+                process_attachment_upload,
+                attachment_id,
+                encoded_payload,
+            )
 
-            # Upload directly (synchronous — works on serverless too)
-            if _is_cloudinary_configured():
-                file_url = await _upload_to_cloudinary(
-                    file_bytes, subfolder, attachment_id, content_type
-                )
-            else:
-                local_filename = f"{attachment_id}{ext}"
-                file_url = await _save_to_local(file_bytes, subfolder, local_filename)
-                # Convert local path to full URL
-                file_url_response = f"{request.base_url}{file_url.lstrip('/')}"
-
-            # Update attachment with result
-            attachment.file_path = file_url
-            attachment.status = "completed"
-            size_mb = round(len(file_bytes) / (1024 * 1024), 2)
-            attachment.size = size_mb
-            await attachment.save()
-
-            # Automatic linking (run in background if Redis available, else inline)
-            if attachment.collection_name and attachment.document_id and attachment.field_name:
-                from backbone.core.config import BackboneConfig
-                config = BackboneConfig.get_instance()
-                target_model = None
-                for model in config.document_models:
-                    if getattr(model.Settings, "name", None) == attachment.collection_name:
-                        target_model = model
-                        break
-                if target_model:
-                    doc = await target_model.get(attachment.document_id)
-                    if doc:
-                        setattr(doc, attachment.field_name, attachment)
-                        await doc.save()
-
-            # Build response URL
-            if file_url.startswith("http"):
-                response_url = file_url
-            else:
-                response_url = f"{request.base_url}{file_url.lstrip('/')}"
+            # Internal worker never creates Task entries.
+            # If Redis worker is disabled, task runs synchronously and this may already be completed.
+            attachment = await Attachment.get(attachment_id)
+            response_status = attachment.status if attachment else "pending"
+            file_url = attachment.file_path if attachment else None
+            response_url = None
+            if file_url:
+                response_url = file_url if file_url.startswith("http") else f"{request.base_url}{file_url.lstrip('/')}"
 
             return {
                 "id": attachment_id,
-                "status": "completed",
-                "message": "Upload successful",
+                "task_id": internal_task_id,
+                "status": response_status,
+                "message": "Upload accepted and processing in background task.",
                 "filename": filename,
                 "url": response_url
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to process upload: {str(e)}")
 
-media_api = MediaRouter()
-router = media_api.router
+router = MediaView.as_router()

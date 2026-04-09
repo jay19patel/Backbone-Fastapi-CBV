@@ -1,208 +1,153 @@
 from fastapi import APIRouter, HTTPException, Query, Request, Depends
-from backbone import GenericCrud, AllowAny, BeanieRepository
+from backbone import GenericCrudView, AllowAny, BeanieRepository
 from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
 from backbone.core.models import User
 from backbone.core.dependencies import get_optional_user, get_current_user
 from beanie import PydanticObjectId
-from typing import List, Optional
+from typing import List, Optional, Any
 import random
 
-# Router for Blog Categories
-blog_category_crud = GenericCrud(
-    schema=BlogCategory,
-    prefix="/blogs/categories",
-    tags=["Blog Categories"],
-    search_fields=["name", "slug"],
-    permission_classes=[AllowAny]
-)
+from backbone.generic.views import GenericCrudView, GenericStatsView
+from backbone.generic.action import action
 
-# Router for Blogs
-blog_crud = GenericCrud(
-    schema=Blog,
-    prefix="/blogs",
-    tags=["Blogs"],
-    search_fields=["title", "subtitle", "excerpt", "introduction"],
-    list_fields=["id", "title", "slug", "thumbnail", "author", "category", "created_at", "views", "likes"],
-    fetch_links=True,
-    permission_classes=[AllowAny],
-    lookup_field="slug",
-    filter_fields=["slug", "author.$id", "category.name", "category.$id", "featured"]
-)
+# ── View Classes ────────────────────────────────────────────────────────────
 
-router = APIRouter()
+class BlogCategoryView(GenericCrudView):
+    schema = BlogCategory
+    search_fields = ["name", "slug"]
+    permission_classes = [AllowAny]
 
-from backbone.generic.views import GenericStats
+class BlogPostView(GenericCrudView):
+    schema = Blog
+    search_fields = ["title", "subtitle", "excerpt", "introduction"]
+    list_fields = ["id", "title", "slug", "thumbnail", "author", "category", "created_at", "views", "likes"]
+    fetch_links = True
+    permission_classes = [AllowAny]
+    lookup_field = "slug"
+    filter_fields = ["slug", "author.$id", "category.name", "category.$id", "featured"]
 
-blog_stats = GenericStats(
-    schema=Blog,
-    prefix="/blogs/stats",
-    tags=["Blogs"],
-    stats_config=[
+    @staticmethod
+    def _extract_blog_id(blog: Any) -> Optional[str]:
+        if isinstance(blog, dict):
+            return str(blog.get("id") or blog.get("_id") or "")
+        value = getattr(blog, "id", None) or getattr(blog, "_id", None)
+        return str(value or "")
+
+    async def _is_liked_by_user(self, request: Request, blog_id: str, user: Optional[User]) -> bool:
+        if not user or not blog_id:
+            return False
+        try:
+            like_repo = get_repo(BlogLike, request)
+            existing_like = await like_repo.get_one({
+                "user.$id": PydanticObjectId(user.id),
+                "blog.$id": PydanticObjectId(blog_id),
+                "is_deleted": False,
+            })
+            return bool(existing_like)
+        except Exception:
+            return False
+
+    async def after_retrieve(
+        self,
+        instance: dict,
+        request: Request,
+        user: Any,
+    ) -> dict:
+        instance = await super().after_retrieve(instance, request, user)
+        blog_id = self._extract_blog_id(instance)
+
+        if isinstance(instance, dict):
+            instance["likes"] = int(instance.get("likes") or 0)
+            instance["is_liked"] = await self._is_liked_by_user(request, blog_id, user)
+
+        return instance
+
+
+    @action(detail=True, methods=["post"], tags=["Blogs"])
+    async def like(
+        self,
+        request: Request,
+        pk: str,
+        current_user: Optional[User] = Depends(get_optional_user)
+    ):
+        """Toggle like for a blog. Supports both ID and Slug."""
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required to like a blog")
+
+        blog_repo = get_repo(Blog, request)
+        blog = await blog_repo.get_one({
+            "$or": [{"slug": pk}, {"id": pk}],
+            "is_deleted": False
+        })
+        
+        if not blog:
+            raise HTTPException(status_code=404, detail="Blog not found")
+            
+        blog_id = self._extract_blog_id(blog)
+        if not blog_id:
+            raise HTTPException(status_code=500, detail="Blog ID resolution failed")
+        from bson import ObjectId
+        
+        # Check if user already liked this blog
+        like_repo = get_repo(BlogLike, request)
+        existing_like = await like_repo.get_one({
+            "user.$id": PydanticObjectId(current_user.id),
+            "blog.$id": PydanticObjectId(blog_id)
+        })
+        
+        blog_collection = Blog.get_pymongo_collection()
+        
+        if existing_like:
+            # Unlike: Remove from BlogLike
+            await like_repo.delete({"id": existing_like["id"]}, soft=False)
+            status = "unliked"
+        else:
+            # Like: Create BlogLike
+            await like_repo.create({
+                "user": str(current_user.id),
+                "blog": str(blog_id)
+            })
+            status = "liked"
+
+        # Recalculate true like count for consistency and persist it on blog.
+        total_likes = await like_repo.count({
+            "blog.$id": PydanticObjectId(blog_id),
+            "is_deleted": False,
+        })
+        await blog_collection.update_one(
+            {"_id": ObjectId(blog_id)},
+            {"$set": {"likes": int(total_likes)}}
+        )
+        
+        return {
+            "message": "Toggle success", 
+            "status": status,
+            "total_likes": total_likes
+        }
+
+class BlogStats(GenericStatsView):
+    schema = Blog
+    stats_config = [
         {"name": "blogs_published", "model": Blog, "type": "count", "filters": {"is_deleted": False, "isPublished": True}},
         {"name": "total_categories", "model": BlogCategory, "type": "count", "filters": {"is_deleted": False}},
         {"name": "total_views", "model": BlogView, "type": "count", "filters": {"is_deleted": False}},
         {"name": "total_likes", "model": BlogLike, "type": "count", "filters": {"is_deleted": False}},
         {"name": "active_users", "model": User, "type": "count", "filters": {"is_deleted": False, "is_active": True}}
     ]
-)
-router.include_router(blog_category_crud.router)
-router.include_router(blog_stats.router)
 
-# --- Custom Blog Detail with Section Attachment Resolution ---
-@router.get("/blogs/{slug}", tags=["Blogs"])
-async def get_blog_detail(
-    slug: str,
-    request: Request,
-    user = Depends(get_optional_user)
-):
-    """
-    Fetch a blog by slug/id, resolving author, category, thumbnail, and
-    image section attachments.
-    """
-    from bson import ObjectId
-    from backbone.core.url_utils import get_media_url
-    from backbone.core.models import Attachment
+# ── Router Initialization ───────────────────────────────────────────────────
 
-    # --- Step 1: Fetch blog with author/category/thumbnail resolved via aggregation ---
-    collection = Blog.get_pymongo_collection()
+router = APIRouter()
 
-    try:
-        slug_as_oid = ObjectId(slug) if len(slug) == 24 else None
-    except Exception:
-        slug_as_oid = None
+# Register View Routers
+router.include_router(BlogCategoryView.as_router("/blogs/categories", tags=["Blog Categories"]))
+router.include_router(BlogStats.as_router("/blogs/stats", tags=["Blogs"]))
 
-    match_q = {"slug": slug, "is_deleted": {"$ne": True}}
-    if slug_as_oid:
-        match_q = {"$or": [{"slug": slug}, {"_id": slug_as_oid}], "is_deleted": {"$ne": True}}
-
-    pipeline = [
-        {"$match": match_q},
-        # Resolve author
-        {"$lookup": {
-            "from": "users",
-            "let": {"aid": {"$ifNull": ["$author.$id", "$author.id", "$author"]}},
-            "pipeline": [
-                {"$match": {"$expr": {"$eq": ["$_id", "$$aid"]}}},
-                {"$project": {"id": "$_id", "_id": 0, "full_name": 1, "email": 1, "username": 1, "headline": 1}}
-            ],
-            "as": "author"
-        }},
-        {"$unwind": {"path": "$author", "preserveNullAndEmptyArrays": True}},
-        # Resolve category
-        {"$lookup": {
-            "from": "blog_categories",
-            "let": {"cid": {"$ifNull": ["$category.$id", "$category.id", "$category"]}},
-            "pipeline": [
-                {"$match": {"$expr": {"$eq": ["$_id", "$$cid"]}}},
-                {"$project": {"id": "$_id", "_id": 0, "name": 1, "slug": 1}}
-            ],
-            "as": "category"
-        }},
-        {"$unwind": {"path": "$category", "preserveNullAndEmptyArrays": True}},
-        # Resolve thumbnail
-        {"$lookup": {
-            "from": "attachments",
-            "let": {"tid": {"$ifNull": ["$thumbnail.$id", "$thumbnail.id", "$thumbnail"]}},
-            "pipeline": [
-                {"$match": {"$expr": {"$eq": ["$_id", "$$tid"]}}},
-                {"$project": {"id": "$_id", "_id": 0, "file_path": 1, "filename": 1, "content_type": 1}}
-            ],
-            "as": "thumbnail"
-        }},
-        {"$unwind": {"path": "$thumbnail", "preserveNullAndEmptyArrays": True}},
-        {"$project": {"embedding": 0}},
-    ]
-
-    results = await collection.aggregate(pipeline).to_list(length=1)
-
-    if not results:
-        raise HTTPException(status_code=404, detail="Blog not found")
-
-    doc = results[0]
-    doc["id"] = str(doc.pop("_id"))
-
-    # --- Step 2: Resolve section attachment IDs in Python ---
-    att_id_to_section_idx = {}  # attachment_id_str -> list of section indices
-    for i, section in enumerate(doc.get("sections", [])):
-        if section.get("type") != "image":
-            continue
-        raw = section.get("attachment")
-        if not raw:
-            continue
-
-        # Normalize: could be a plain string ID, a dict with $id (DBRef), or a dict with id
-        if isinstance(raw, str) and len(raw) == 24:
-            att_id_str = raw
-        elif isinstance(raw, dict):
-            oid = raw.get("$id") or raw.get("id")
-            att_id_str = str(oid) if oid else None
-        else:
-            att_id_str = None
-
-        if att_id_str:
-            att_id_to_section_idx.setdefault(att_id_str, []).append(i)
-
-    if att_id_to_section_idx:
-        # Fetch all referenced attachments in one query
-        try:
-            oid_list = [ObjectId(aid) for aid in att_id_to_section_idx.keys()]
-            att_collection = Attachment.get_pymongo_collection()
-            att_docs = await att_collection.find(
-                {"_id": {"$in": oid_list}},
-                {"file_path": 1, "filename": 1, "content_type": 1, "size": 1}
-            ).to_list(length=len(oid_list))
-
-            for att_doc in att_docs:
-                att_id_str = str(att_doc["_id"])
-                att_data = {
-                    "id": att_id_str,
-                    "file_path": att_doc.get("file_path", ""),
-                    "filename": att_doc.get("filename", ""),
-                    "content_type": att_doc.get("content_type", ""),
-                    "size": att_doc.get("size"),
-                }
-                # Prepend base URL if needed
-                fp = att_data["file_path"]
-                if fp and fp.startswith("/media/"):
-                    att_data["file_path"] = get_media_url(fp)
-
-                # Assign back to each section that references this attachment
-                for idx in att_id_to_section_idx.get(att_id_str, []):
-                    doc["sections"][idx]["attachment"] = att_data
-        except Exception as e:
-            print(f"Warning: could not resolve section attachments: {e}")
-
-    # --- Step 3: Serialize thumbnail file_path ---
-    if isinstance(doc.get("thumbnail"), dict):
-        fp = doc["thumbnail"].get("file_path", "")
-        if fp and fp.startswith("/media/"):
-            doc["thumbnail"]["file_path"] = get_media_url(fp)
-
-    # --- Step 4: Sanitize remaining ObjectIds to strings ---
-    def sanitize(obj):
-        if isinstance(obj, dict):
-            return {k: sanitize(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [sanitize(i) for i in obj]
-        elif isinstance(obj, ObjectId):
-            return str(obj)
-        return obj
-
-    doc = sanitize(doc)
-
-    # Emit view signal (non-blocking)
-    from backbone.core.signals import signals
-    try:
-        await signals.on_view.emit(doc, model_class=Blog, request=request, user=user)
-    except Exception:
-        pass
-
-    return doc
+# Generic CRUD included LAST to handle both List and Detail (resolved via get_object)
+router.include_router(BlogPostView.as_router("/blogs", tags=["Blogs"]))
 
 
-# Generic Blogs CRUD handles listing, detail, creation, update, deletion
-# This includes /blogs/ (GET, POST), /blogs/{slug} (PATCH, DELETE)
-router.include_router(blog_crud.router)
+# Standard generic routes are registered above via as_router()
 
 class BlogRepository(BeanieRepository[Blog]):
     pass
@@ -226,69 +171,7 @@ def get_repo(model, request: Request = None) -> BeanieRepository:
     return repo
 
 
-@router.post("/blogs/{blog_id_or_slug}/like/", tags=["Blogs"])
-async def like_blog(
-    request: Request,
-    blog_id_or_slug: str,
-    current_user: Optional[User] = Depends(get_optional_user)
-):
-    """Toggle like for a blog. Supports both ID and Slug."""
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required to like a blog")
 
-    blog_repo = get_repo(Blog, request)
-    blog = await blog_repo.get_one({
-        "$or": [{"slug": blog_id_or_slug}, {"id": blog_id_or_slug}],
-        "is_deleted": False
-    })
-    
-    if not blog:
-        raise HTTPException(status_code=404, detail="Blog not found")
-        
-    blog_id = blog.get("id")
-    from beanie import PydanticObjectId
-    from bson import ObjectId
-    
-    # Check if user already liked this blog
-    like_repo = get_repo(BlogLike, request)
-    existing_like = await like_repo.get_one({
-        "user.$id": PydanticObjectId(current_user.id),
-        "blog.$id": PydanticObjectId(blog_id)
-    })
-    
-    blog_collection = Blog.get_pymongo_collection()
-    
-    if existing_like:
-        # Unlike: Remove from BlogLike
-        await like_repo.delete({"id": existing_like["id"]}, soft=False)
-        await blog_collection.update_one(
-            {"_id": ObjectId(blog_id)},
-            {"$inc": {"likes": -1}}
-        )
-        status = "unliked"
-        likes_diff = -1
-    else:
-        # Like: Create BlogLike
-        await like_repo.create({
-            "user": str(current_user.id),
-            "blog": str(blog_id)
-        })
-        await blog_collection.update_one(
-            {"_id": ObjectId(blog_id)},
-            {"$inc": {"likes": 1}}
-        )
-        status = "liked"
-        likes_diff = 1
-    
-    # Get updated count
-    current_likes = blog.get('likes', 0) if isinstance(blog, dict) else getattr(blog, 'likes', 0)
-    total_likes = max(0, (current_likes or 0) + likes_diff)
-    
-    return {
-        "message": "Toggle success", 
-        "status": status,
-        "total_likes": total_likes
-    }
 
 # --- Signal Listeners for Analytics ---
 
@@ -319,15 +202,58 @@ async def handle_blog_view(instance: dict, **kwargs):
         # Same user as author, do not increment views
         return
         
-    # Create a BlogView document in MongoDB and increment Blog counter
+    global _recent_views_cache
+    if '_recent_views_cache' not in globals():
+        _recent_views_cache = {}
+        
+    try:
+        request = kwargs.get("request")
+        ip_address = request.client.host if request and hasattr(request, "client") and request.client else None
+    except Exception:
+        ip_address = None
+        
+    import time
+    now_ts = time.time()
+    
+    # Clean up cache every ~1000 requests loosely (prevent memory leak)
+    if len(_recent_views_cache) > 10000:
+        _recent_views_cache.clear()
+        
+    cache_key = f"{blog_id}:{current_user_id or ip_address or 'unknown'}"
+    
+    last_view_time = _recent_views_cache.get(cache_key)
+    if last_view_time and (now_ts - last_view_time) < (15 * 60): # 15 minutes
+        return
+        
+    _recent_views_cache[cache_key] = now_ts
+
+    # Deduplicate recent views (15 minutes) in Database (for multi-worker sync)
     try:
         from schemas.blogs import BlogView
         from bson import ObjectId
-        
-        request = kwargs.get("request")
-        ip_address = request.client.host if request and hasattr(request, "client") and request.client else None
+        from datetime import datetime, timezone, timedelta
         
         view_repo = get_repo(BlogView, request)
+        
+        # Check if a view was recorded recently (15 minutes window)
+        time_threshold = datetime.now(timezone.utc) - timedelta(minutes=15)
+        query = {
+            "blog.$id": ObjectId(blog_id),
+            "created_at": {"$gte": time_threshold}
+        }
+        
+        if current_user_id:
+            query["user.$id"] = ObjectId(current_user_id)
+        elif ip_address:
+            query["ip_address"] = ip_address
+        else:
+            query["ip_address"] = "unknown"
+            
+        recent_view = await BlogView.get_pymongo_collection().find_one(query)
+        if recent_view:
+            return  # Skip incrementing, already viewed recently
+
+        # Create a BlogView document in MongoDB and increment Blog counter
         await view_repo.create({
             "user": str(current_user_id) if current_user_id else None,
             "blog": str(blog_id),
@@ -341,6 +267,13 @@ async def handle_blog_view(instance: dict, **kwargs):
     except Exception as e:
         print(f"Analytics Error (View Count): {e}")
 
-# Register the signal listener
+# Register the signal listener safely to prevent duplication across module reloads
 from backbone.core.signals import signals
+
+# Remove old handlers with the same name to prevent duplicates
+signals.on_view._handlers[Blog] = [
+    h for h in signals.on_view._handlers.get(Blog, []) 
+    if getattr(h, "__name__", "") != "handle_blog_view"
+]
+
 signals.on_view.connect(Blog, handle_blog_view)

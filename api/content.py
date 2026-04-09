@@ -1,36 +1,28 @@
-from backbone.generic.views import GenericCrud
-from backbone.core.permissions import AllowAny
-from schemas.content import FAQ, Testimonial, ContactMessage
 from fastapi import APIRouter
+from backbone.generic.views import GenericCrudView
+from backbone.core.permissions import AllowAny
+from schemas.content import FAQ, Testimonial, Contact
 
-router = APIRouter(tags=["Content"])
+class FAQView(GenericCrudView):
+    schema = FAQ
+    search_fields = ["question", "answer"]
+    list_fields = ["id", "question", "answer", "created_at"]
+    permission_classes = [AllowAny]
 
-# Register FAQ - CRUD
-faq_router = GenericCrud(
-    schema=FAQ,
-    prefix="/faqs",
-    tags=["FAQ"],
-    permission_classes=[AllowAny],
-    use_auth=False
-)
-router.include_router(faq_router.router)
+class TestimonialView(GenericCrudView):
+    schema = Testimonial
+    search_fields = ["content"]
+    list_fields = ["id", "user", "content", "created_at"]
+    fetch_links = True
+    permission_classes = [AllowAny]
 
-# Register Testimonial - CRUD
-testimonial_router = GenericCrud(
-    schema=Testimonial,
-    prefix="/testimonials",
-    tags=["Testimonial"],
-    permission_classes=[AllowAny],
-    use_auth=False
-)
-router.include_router(testimonial_router.router)
+class ContactView(GenericCrudView):
+    schema = Contact
+    search_fields = ["name", "email", "subject"]
+    list_fields = ["id", "name", "email", "subject", "message", "created_at"]
+    permission_classes = [AllowAny]
 
-# Register ContactMessage - CRUD
-contact_router = GenericCrud(
-    schema=ContactMessage,
-    prefix="/contact",
-    tags=["Contact"],
-    permission_classes=[AllowAny],
-    use_auth=False
-)
-router.include_router(contact_router.router, prefix="/content")
+router = APIRouter()
+router.include_router(ContactView.as_router("/content/contact", tags=["Contact"]))
+router.include_router(FAQView.as_router("/faqs", tags=["FAQs"]))
+router.include_router(TestimonialView.as_router("/testimonials", tags=["Testimonials"]))

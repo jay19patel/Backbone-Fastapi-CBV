@@ -1,7 +1,7 @@
 [project]
-name = "backend"
+name = "backbone-fastapi"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backbone FastAPI — Class-based views, DRF-style permissions, auto-admin for MongoDB."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -10,8 +10,13 @@ dependencies = [
     "cloudinary>=1.44.1",
     "email-validator>=2.3.0",
     "fastapi>=0.128.0",
+    "google-genai>=1.69.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
+    "langchain-community>=0.4.1",
+    "langchain-ollama>=0.2.0",
+    "langchain-google-genai>=4.2.1",
+    "langgraph>=1.1.4",
     "motor>=3.7.1",
     "passlib>=1.7.4",
     "pydantic-settings>=2.12.0",
@@ -21,5 +26,11 @@ dependencies = [
     "python-multipart>=0.0.22",
     "python-slugify>=8.0.4",
     "redis>=5.0.1",
+    "reportlab>=4.2.2",
+    "tavily-python>=0.7.23",
     "uvicorn>=0.40.0",
 ]
+
+# ── Dev server commands ──────────────────────────────────────────────────────
+# New structure (recommended):  uv run uvicorn app.main:app --reload
+# Legacy (backward compat):     uv run uvicorn main:app --reload

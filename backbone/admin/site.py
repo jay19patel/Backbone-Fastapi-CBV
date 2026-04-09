@@ -19,6 +19,7 @@ class AdminSite:
 
     def __init__(self):
         self._registry: Dict[str, Dict[str, Any]] = {}
+        self._page_registry: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
     def get_instance(cls) -> "AdminSite":
@@ -49,6 +50,26 @@ class AdminSite:
         Return the configuration for a specific registered model.
         """
         return self._registry.get(model_name)
+
+    def register_page(
+        self,
+        *,
+        name: str,
+        path: str,
+        methods: List[str],
+        description: str = "",
+        category: str = "Framework Pages",
+    ) -> None:
+        self._page_registry[name] = {
+            "name": name,
+            "path": path,
+            "methods": methods,
+            "description": description,
+            "category": category,
+        }
+
+    def get_registered_pages(self) -> List[Dict[str, Any]]:
+        return list(self._page_registry.values())
 
 # Global singleton
 admin_site = AdminSite.get_instance()

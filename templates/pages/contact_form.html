@@ -1,0 +1,77 @@
+{% extends "pages/base_public.html" %}
+
+{% block content %}
+<section class="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+    <div class="rounded-[2rem] border border-indigo-100 bg-white/90 p-6 shadow-xl shadow-slate-200/70 sm:p-8">
+        <span class="inline-flex rounded-full bg-indigo-50 px-4 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-indigo-700">Contact Page</span>
+        <h1 class="mt-5 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Talk to the Blogermenia team without building a separate API page first.</h1>
+        <p class="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
+            This page is rendered directly through Backbone template views. It keeps the same light indigo visual direction as the existing website and stays usable on mobile.
+        </p>
+
+        <div class="mt-8 grid gap-4 sm:grid-cols-3">
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Flow</p>
+                <p class="mt-2 text-sm font-semibold text-slate-900">HTML form to MongoDB</p>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Theme</p>
+                <p class="mt-2 text-sm font-semibold text-slate-900">Light, existing-site aligned</p>
+            </div>
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Admin</p>
+                <p class="mt-2 text-sm font-semibold text-slate-900">Shows in Backbone pages list</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="rounded-[2rem] border border-slate-200 bg-white/95 p-6 shadow-xl shadow-slate-200/80 sm:p-8">
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold text-slate-900">Send a message</h2>
+            <p class="mt-2 text-sm text-slate-500">Use this as a simple production-friendly starting point for HTML-driven pages.</p>
+        </div>
+
+        {% if submitted and success %}
+        <div class="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {{ message_text }}
+        </div>
+        {% endif %}
+
+        {% if submitted and error %}
+        <div class="mb-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="post" class="space-y-4">
+            <div class="grid gap-4 sm:grid-cols-2">
+                <label class="block">
+                    <span class="mb-2 block text-sm font-semibold text-slate-700">Name</span>
+                    <input type="text" name="name" value="{{ form_values.name }}" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" placeholder="Your full name">
+                </label>
+                <label class="block">
+                    <span class="mb-2 block text-sm font-semibold text-slate-700">Email</span>
+                    <input type="email" name="email" value="{{ form_values.email }}" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" placeholder="you@example.com">
+                </label>
+            </div>
+
+            <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">Subject</span>
+                <input type="text" name="subject" value="{{ form_values.subject }}" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" placeholder="How can we help?">
+            </label>
+
+            <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">Message</span>
+                <textarea name="message" rows="6" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" placeholder="Write your message here">{{ form_values.message }}</textarea>
+            </label>
+
+            <div class="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-xs leading-6 text-slate-500">Submitted records are visible on the contact listing page for review and testing.</p>
+                <button type="submit" class="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:from-indigo-700 hover:to-violet-700">
+                    Submit contact
+                </button>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

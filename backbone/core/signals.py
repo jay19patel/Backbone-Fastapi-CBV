@@ -1,7 +1,6 @@
 from typing import Callable, List, Dict, Any, Type, Optional
 from collections import defaultdict
 import asyncio
-import inspect
 
 class Signal:
     """
@@ -16,6 +15,14 @@ class Signal:
         """Connect a handler to this signal for a specific model class."""
         if handler not in self._handlers[model_class]:
             self._handlers[model_class].append(handler)
+
+    def disconnect(self, model_class: Type, handler: Callable) -> bool:
+        """Disconnect a handler from this signal for a specific model class."""
+        handlers = self._handlers.get(model_class, [])
+        if handler in handlers:
+            handlers.remove(handler)
+            return True
+        return False
 
     async def emit(self, instance: Any, model_class: Optional[Type] = None, **kwargs):
         """Emit the signal to all handlers registered for the instance's class."""

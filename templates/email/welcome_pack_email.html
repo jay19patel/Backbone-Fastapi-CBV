@@ -1,0 +1,11 @@
+{% extends "email/base_email.html" %}
+{% block title %}Your Welcome Pack{% endblock %}
+{% block heading %}Your Welcome Pack Is Ready{% endblock %}
+{% block content %}
+<p>Hello {{ full_name }},</p>
+<p>We attached your onboarding PDF in this email so you can keep setup steps and publishing tips handy.</p>
+<p>Open the attachment and follow the checklist to complete your account setup quickly.</p>
+<p>
+    <a class="button" href="{{ login_url }}">Open Blogermenia</a>
+</p>
+{% endblock %}

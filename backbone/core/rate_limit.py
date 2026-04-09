@@ -124,7 +124,7 @@ class RateLimit:
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
-            from ..utils import TokenManager
+            from ..common.utils import TokenManager
             payload = TokenManager.decode_token(token)
             if payload and "sub" in payload:
                 identifier = f"user:{payload['sub']}"

@@ -95,53 +95,126 @@
                 <input type="number" name="{{ name }}" step="any" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% elif link_model and value is mapping and value.id %}
-                {% if link_model == 'Attachment' and value.file_path %}
-                <a href="/admin/{{ link_model }}/{{ value.id }}"
-                    class="block w-64 overflow-hidden rounded-xl border border-slate-200 hover:border-indigo-400 transition-colors shadow-sm bg-white">
-                    <img src="{{ value.file_path }}" alt="Attachment"
-                        class="w-full h-40 object-cover border-b border-slate-100">
-                    <div
-                        class="p-3 bg-slate-50 text-xs flex justify-between items-center text-slate-600 truncate font-medium">
-                        <span>{{ value.filename or 'Attachment' }}</span>
-                        <i class="fas fa-external-link-alt text-slate-400"></i>
-                    </div>
-                </a>
-                {% else %}
-                <a href="/admin/{{ link_model }}/{{ value.id }}"
-                    class="block p-4 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm font-medium text-indigo-700">
-                            {{ value.name or value.title or value.email or value.full_name or value.id }}
-                        </span>
-                        <span
-                            class="text-[10px] uppercase font-bold text-indigo-400 bg-white px-2 py-1 rounded-md border border-indigo-100 shadow-sm flex items-center shadow-sm">
-                            {{ link_model }} <i class="fas fa-arrow-right ml-1"></i>
-                        </span>
-                    </div>
-                </a>
-                {% endif %}
-                {% elif link_model and value is iterable and value is not string and value|length > 0 and value[0] is
-                mapping and value[0].id %}
+                <div class="relative group inline-block w-full" id="single-link-{{ name }}">
+                    {% if link_model == 'Attachment' and value.file_path %}
+                    <a href="/admin/{{ link_model }}/{{ value.id }}"
+                        class="block w-64 overflow-hidden rounded-xl border border-slate-200 hover:border-indigo-400 transition-colors shadow-sm bg-white">
+                        <img src="{{ value.file_path }}" alt="Attachment"
+                            class="w-full h-40 object-cover border-b border-slate-100">
+                        <div
+                            class="p-3 bg-slate-50 text-xs flex justify-between items-center text-slate-600 truncate font-medium">
+                            <span>{{ value.filename or 'Attachment' }}</span>
+                            <i class="fas fa-external-link-alt text-slate-400"></i>
+                        </div>
+                    </a>
+                    {% else %}
+                    <a href="/admin/{{ link_model }}/{{ value.id }}"
+                        class="block p-4 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm font-medium text-indigo-700">
+                                {{ value.name or value.title or value.email or value.full_name or value.id }}
+                            </span>
+                            <span
+                                class="text-[10px] uppercase font-bold text-indigo-400 bg-white px-2 py-1 rounded-md border border-indigo-100 shadow-sm flex items-center shadow-sm">
+                                {{ link_model }} <i class="fas fa-arrow-right ml-1"></i>
+                            </span>
+                        </div>
+                    </a>
+                    {% endif %}
+                    <button type="button" onclick="document.getElementById('single-link-{{ name }}').style.display='none'; document.getElementById('remove-single-{{ name }}').disabled=false; document.getElementById('search-container-{{ name }}').style.display='block';" 
+                            class="absolute -top-2 -right-2 bg-slate-100 text-slate-400 rounded-full w-6 h-6 flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all z-10 cursor-pointer"
+                            title="Remove relation">
+                        <i class="fas fa-times text-xs"></i>
+                    </button>
+                    <!-- Submits empty string if they click remove, thus nullifying the field -->
+                    <input type="hidden" name="{{ name }}" value="" id="remove-single-{{ name }}" disabled>
+                </div>
+                <!-- Hidden search dropdown so they can pick a new relation after removing the current one -->
+                <div id="search-container-{{ name }}" class="relative search-container" style="display: none;">
+                    <input type="text" placeholder="Search to select {{ name|nice_title }}..." class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer" readonly onclick="this.removeAttribute('readonly')">
+                    <button type="button" class="clear-btn absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-red-500 z-10" style="display: none;" title="Clear selection">
+                        <i class="fas fa-times-circle text-lg"></i>
+                    </button>
+                    <input type="hidden" name="{{ name }}" id="search-input-{{ name }}" {% if value and value is mapping and value.id %}disabled{% endif %}>
+                    <div class="search-results-dropdown"><div class="results-list custom-scrollbar max-h-60 overflow-y-auto"></div><div class="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500"><button type="button" class="prev-btn px-3 py-1 bg-white border border-slate-200 rounded-lg disabled:opacity-50"><i class="fas fa-chevron-left"></i></button><span class="page-info">Page 1 of 1</span><button type="button" class="next-btn px-3 py-1 bg-white border border-slate-200 rounded-lg disabled:opacity-50"><i class="fas fa-chevron-right"></i></button></div></div>
+                </div>
+                <script>document.addEventListener('DOMContentLoaded', () => { window.initSearchableSelect('search-container-{{ name }}', '{{ link_model }}', '{{ name }}'); });</script>
+                {% elif link_model and value is iterable and value is not string and value|length > 0 and value[0] is mapping and value[0].id %}
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {% for rel_val in value %}
-                    <a href="/admin/{{ link_model }}/{{ rel_val.id }}"
-                        class="block p-3 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors flex items-center justify-between">
-                        <span class="text-sm font-medium text-indigo-700 truncate mr-2">
-                            {{ rel_val.name or rel_val.title or rel_val.email or rel_val.full_name or rel_val.id }}
-                        </span>
-                        <i class="fas fa-external-link-alt text-indigo-400 text-xs flex-shrink-0"></i>
-                    </a>
+                    <div class="relative group inline-block w-full" id="multi-link-{{ name }}-{{ loop.index }}">
+                        <a href="/admin/{{ link_model }}/{{ rel_val.id }}"
+                            class="block p-3 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors flex items-center justify-between">
+                            <span class="text-sm font-medium text-indigo-700 truncate mr-2">
+                                {{ rel_val.name or rel_val.title or rel_val.email or rel_val.full_name or rel_val.id }}
+                            </span>
+                            <i class="fas fa-external-link-alt text-indigo-400 text-xs flex-shrink-0"></i>
+                        </a>
+                        <button type="button" onclick="document.getElementById('multi-link-{{ name }}-{{ loop.index }}').style.display='none'; document.getElementById('keep-multi-{{ name }}-{{ loop.index }}').disabled=true;" 
+                            class="absolute -top-2 -right-2 bg-slate-100 text-slate-400 rounded-full w-6 h-6 flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all z-10 cursor-pointer"
+                            title="Remove relation">
+                            <i class="fas fa-times text-xs"></i>
+                        </button>
+                        <!-- Submit the existing IDs. Disabling it means this ID gets removed from the submitted array -->
+                        <input type="hidden" name="{{ name }}" value="{{ rel_val.id }}" id="keep-multi-{{ name }}-{{ loop.index }}">
+                    </div>
                     {% endfor %}
+                    <!-- Always submit one empty fallback so if they remove all items, it clears the list entirely rather than ignoring the absent array -->
+                    <input type="hidden" name="{{ name }}" value="">
                 </div>
+                {% elif link_model %}
+                <div id="search-container-{{ name }}" class="relative search-container">
+                    <input type="text" placeholder="Search to select {{ name|nice_title }}..."
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
+                        readonly onclick="this.removeAttribute('readonly')">
+                    <button type="button" class="clear-btn absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-red-500 z-10" style="display: none;" title="Clear selection">
+                        <i class="fas fa-times-circle text-lg"></i>
+                    </button>
+                    <input type="hidden" name="{{ name }}">
+
+                    <div class="search-results-dropdown">
+                        <div class="results-list custom-scrollbar max-h-60 overflow-y-auto">
+                            <!-- Results will be injected here -->
+                        </div>
+                        <div class="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500">
+                            <button type="button" class="prev-btn px-3 py-1 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <span class="page-info">Page 1 of 1</span>
+                            <button type="button" class="next-btn px-3 py-1 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <script>
+                    document.addEventListener('DOMContentLoaded', () => {
+                        window.initSearchableSelect('search-container-{{ name }}', '{{ link_model }}', '{{ name }}');
+                    });
+                </script>
                 {% elif value is mapping or (value is iterable and value is not string) or 'list' in f_type.lower() or
                 'dict' in f_type.lower() %}
                 <textarea name="{{ name }}" rows="4"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) if value is defined and value is not none else '' }}</textarea>
                 {% else %}
+                {% if name == 'size' and value %}
+                <div class="flex items-center gap-3">
+                    <span
+                        class="inline-flex items-center px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-bold font-mono">
+                        <i class="fas fa-hdd mr-2 text-indigo-400"></i>{{ value | filesize }}
+                    </span>
+                    <span class="text-xs text-slate-400 font-mono">({{ value }} bytes)</span>
+                </div>
+                {% else %}
                 <input type="text" name="{{ name }}" value="{{ value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% endif %}
                 {% endif %}
+                {% endif %}
+
+                {% set field_desc = field.description if field.description else 'Enter ' ~ (name|replace('_', ' ')) %}
+                <p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1 opacity-70"></i>{{ field_desc
+                    }}</p>
             </div>
             {% endif %}
             {% endfor %}
@@ -155,4 +228,33 @@
         </button>
     </div>
 </form>
+
+{# ── Read-only Audit / Record Info panel ── #}
+<div class="mt-6 bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="p-6 border-b border-slate-100 bg-slate-50/50">
+        <h2 class="text-sm font-bold text-slate-500 uppercase tracking-widest">
+            <i class="fas fa-info-circle mr-2 text-slate-400"></i>Record Info
+        </h2>
+    </div>
+    <div class="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for name in internal_fields %}
+        {% if item[name] is defined and item[name] is not none %}
+        <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{{ name|nice_title }}</p>
+            <p class="text-sm text-slate-700 font-mono break-all">
+                {% if item[name] is sameas true %}
+                <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">Yes</span>
+                {% elif item[name] is sameas false %}
+                <span
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">No</span>
+                {% else %}
+                {{ item[name] }}
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
 {% endblock %}

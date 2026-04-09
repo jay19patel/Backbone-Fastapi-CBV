@@ -1,10 +1,12 @@
 import os
 import base64
+import logging
+import mimetypes
 from pathlib import Path
-from typing import Optional, Any, Type
 from backbone.core.models import Attachment
 from backbone.core.config import BackboneConfig
-from beanie import Document, Link
+
+logger = logging.getLogger("backbone.media")
 
 # Define the base media directory relative to the project root (for local dev)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -67,7 +69,7 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
     try:
         attachment = await Attachment.get(attachment_id)
         if not attachment:
-            print(f"Attachment {attachment_id} not found.")
+            logger.warning("Attachment %s not found for processing.", attachment_id)
             return
 
         # Determine subfolder based on collection name
@@ -75,6 +77,8 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
 
         # Extract extension
         ext = os.path.splitext(attachment.filename)[1]
+        if not ext:
+            ext = mimetypes.guess_extension(attachment.content_type) or ".bin"
         filename = f"{attachment_id}{ext}"
 
         # Decode Base64 data
@@ -112,7 +116,13 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
                     # Update the specified field with the attachment link
                     setattr(doc, attachment.field_name, attachment)
                     await doc.save()
-                    print(f"Linked attachment {attachment_id} to {attachment.collection_name}:{attachment.document_id}.{attachment.field_name}")
+                    logger.info(
+                        "Linked attachment %s to %s:%s.%s",
+                        attachment_id,
+                        attachment.collection_name,
+                        attachment.document_id,
+                        attachment.field_name,
+                    )
 
         # Caching logic
         config = BackboneConfig.get_instance()
@@ -124,7 +134,7 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
                 await config.cache_service.delete(doc_cache_key)
 
     except Exception as e:
-        print(f"Error in core background upload task: {e}")
+        logger.exception("Error in background attachment upload for %s: %s", attachment_id, e)
         attachment = await Attachment.get(attachment_id)
         if attachment:
             attachment.status = "failed"

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Import Data | Backbone Admin{% endblock %}
+{% block header %}Import Data{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <div class="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+        <!-- Header -->
+        <div class="p-8 border-b border-slate-100 bg-gradient-to-r from-green-50 to-emerald-50">
+            <div class="flex items-center space-x-4">
+                <div
+                    class="h-14 w-14 bg-green-600 text-white rounded-2xl flex items-center justify-center text-2xl shadow-lg shadow-green-500/30">
+                    <i class="fas fa-file-import"></i>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-800">Import Database</h2>
+                    <p class="text-slate-500 text-sm mt-0.5">Upload a JSON export file to restore data</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-8">
+            <!-- Error -->
+            {% if error %}
+            <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start space-x-3">
+                <i class="fas fa-exclamation-circle text-red-500 mt-0.5"></i>
+                <p class="text-sm text-red-700 font-medium">{{ error }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Import Result Summary -->
+            {% if summary %}
+            <div class="mb-8 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-200 bg-green-50">
+                    <p class="text-sm font-bold text-green-700"><i class="fas fa-check-circle mr-2"></i>Import Complete
+                    </p>
+                </div>
+                <div class="divide-y divide-slate-100">
+                    {% for model_name, stats in summary.items() %}
+                    <div class="px-6 py-3 flex items-center justify-between">
+                        <span class="text-sm font-semibold text-slate-700">{{ model_name }}</span>
+                        {% if stats.inserted is defined %}
+                        <div class="flex items-center space-x-3">
+                            <span
+                                class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                                <i class="fas fa-plus mr-1"></i>{{ stats.inserted }} upserted
+                            </span>
+                            {% if stats.skipped > 0 %}
+                            <span
+                                class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                                <i class="fas fa-exclamation mr-1"></i>{{ stats.skipped }} failed
+                            </span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-xs text-slate-400 italic">{{ stats.status }}: {{ stats.reason }}</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Upload Form -->
+            <form action="/admin/import" method="POST" enctype="multipart/form-data">
+                <div class="mb-6">
+                    <label class="block text-sm font-bold text-slate-600 mb-3">Upload Export JSON File</label>
+                    <div id="dropZone"
+                        class="border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-2xl p-10 text-center cursor-pointer transition-colors bg-slate-50 hover:bg-indigo-50/50"
+                        onclick="document.getElementById('fileInput').click()">
+                        <i class="fas fa-cloud-upload-alt text-4xl text-slate-300 mb-4 block"></i>
+                        <p class="text-slate-600 font-semibold text-sm" id="fileLabel">Click to select or drag & drop a
+                            JSON file</p>
+                        <p class="text-slate-400 text-xs mt-1">backbone_export_*.json</p>
+                    </div>
+                    <input id="fileInput" type="file" name="file" accept=".json,application/json" class="hidden">
+                </div>
+
+                <div class="p-4 bg-amber-50 border border-amber-200 rounded-2xl mb-8">
+                    <p class="text-xs text-amber-700 font-semibold"><i
+                            class="fas fa-exclamation-triangle mr-2"></i>Existing documents with matching IDs will be
+                        replaced. New documents will be inserted.</p>
+                </div>
+
+                <div class="flex items-center justify-between pt-6 border-t border-slate-100">
+                    <a href="/admin" class="text-sm text-slate-500 hover:text-slate-700 font-medium">
+                        <i class="fas fa-arrow-left mr-1"></i> Back to Dashboard
+                    </a>
+                    <button type="submit" id="submitBtn" disabled
+                        class="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold shadow-lg shadow-green-500/20 transition-all inline-flex items-center space-x-2">
+                        <i class="fas fa-upload"></i>
+                        <span>Import Data</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    const input = document.getElementById('fileInput');
+    const label = document.getElementById('fileLabel');
+    const submit = document.getElementById('submitBtn');
+    const zone = document.getElementById('dropZone');
+
+    input.addEventListener('change', () => {
+        if (input.files.length) {
+            label.textContent = input.files[0].name;
+            label.classList.add('text-indigo-700');
+            submit.disabled = false;
+        }
+    });
+
+    // Drag & drop
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('border-indigo-400', 'bg-indigo-50'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('border-indigo-400', 'bg-indigo-50'));
+    zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('border-indigo-400', 'bg-indigo-50');
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+            label.textContent = file.name;
+            label.classList.add('text-indigo-700');
+            submit.disabled = false;
+        }
+    });
+</script>
+{% endblock %}

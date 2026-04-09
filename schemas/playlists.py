@@ -1,42 +1,23 @@
-from typing import List, Optional, Any
-from pydantic import Field, field_serializer
-from beanie import Link, before_event, Insert
+from typing import Optional, List
+from beanie import Link
+from pydantic import Field
 from pymongo import IndexModel, ASCENDING, DESCENDING
-from backbone.core.models import AuditDocument, User, slugify
-from .blogs import Blog
-import uuid
+from backbone.core.models import BackboneDocument, Attachment, User
+from backbone.core.fields import Name, Slug, Text, Thumbnail, Connect, Owner
+from schemas.blogs import Blog
 
-class Playlist(AuditDocument):
-    owner: Link[User]
-    name: str = Field(max_length=200)
-    slug: Optional[str] = Field(default=None, max_length=255)
-    description: Optional[str] = None
-    thumbnail: Optional[Link["Attachment"]] = None
-    
-    blogs: List[Link[Blog]] = Field(default_factory=list)
-    
-    is_public: bool = True
-
-    @before_event(Insert)
-    async def generate_slug(self):
-        if not self.slug or self.slug == "string": # "string" is default from some UI/Tools
-             base_slug = slugify(self.name)
-             entropy = str(uuid.uuid4())[:8]
-             self.slug = f"{base_slug}-{entropy}" if base_slug else entropy
-
-    @field_serializer('thumbnail')
-    def serialize_thumbnail(self, thumbnail: Any):
-        if not thumbnail:
-            return None
-        from backbone.core.url_utils import get_media_url
-        if hasattr(thumbnail, "to_ref"): return None
-        path = thumbnail.get("file_path") if isinstance(thumbnail, dict) else getattr(thumbnail, "file_path", str(thumbnail))
-        if path and path.startswith("/media/"):
-            return get_media_url(path)
-        return path
+class Playlist(BackboneDocument):
+    owner: Owner = Field(description="The user who created the playlist")
+    name: Name = Field(description="Name of the playlist")
+    slug: Slug(depend="name") = Field(default=None, description="URL-friendly identifier for the playlist")
+    description: Text = Field(default=None, description="Description of the playlist")
+    thumbnail: Thumbnail = Field(default=None, description="Cover image for the playlist")
+    blogs: List[Connect(Blog)] = Field(default_factory=list, description="List of blogs in this playlist")
+    is_public: bool = Field(default=True, description="Whether this playlist is public or not")
 
     class Settings:
         name = "playlists"
+        return_link_data = ["id", "name", "slug", "thumbnail", "owner"]
         indexes = [
             IndexModel([("slug", ASCENDING)], unique=True),
             IndexModel([("owner.id", ASCENDING)], unique=False),
@@ -44,5 +25,4 @@ class Playlist(AuditDocument):
         ]
 
 # Resolve forward references
-from backbone.core.models import Attachment
 Playlist.model_rebuild()
