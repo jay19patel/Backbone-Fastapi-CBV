@@ -11,8 +11,8 @@ class FAQView(GenericCrudView):
 
 class TestimonialView(GenericCrudView):
     schema = Testimonial
-    search_fields = ["content"]
-    list_fields = ["id", "user", "content", "created_at"]
+    search_fields = ["content", "author_name"]
+    list_fields = ["id", "user", "author_name", "content", "rating", "productImage", "created_at"]
     fetch_links = True
     permission_classes = [AllowAny]
 

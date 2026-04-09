@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backbone import (
     BackboneConfig,
@@ -11,17 +12,14 @@ from backbone import (
 from backbone.core.settings import settings
 
 # Schemas
-from schemas.blogs import Blog, BlogCategory, BlogLike, BlogView
+from schemas.shop import Category, Product, Order
 from schemas.content import FAQ, Testimonial, Contact
-from schemas.playlists import Playlist
 
 # Routers
 from api.users import router as users_router
-from api.blogs import router as blogs_router
+from api.shop import router as shop_router
 from backbone.core.media_router import router as media_router
 from api.content import router as content_router
-from api.playlists import router as playlists_router
-from api.chat import router as chat_router
 from pages.contact import router as pages_router
 from backbone.auth.pages import router as auth_pages_router
 
@@ -29,17 +27,24 @@ from backbone.auth.pages import router as auth_pages_router
 # --------------------------------------------------------------------------
 # Application Setup
 # --------------------------------------------------------------------------
-app = FastAPI(title="Modular Backbone Framework")
+app = FastAPI(title="Khushi Website Modular Backend")
+
+# Allow requests from the Next.js frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 models_to_register = [
-    Blog,
-    BlogCategory,
-    BlogLike,
-    BlogView,
+    Category,
+    Product,
+    Order,
     FAQ,
     Testimonial,
     Contact,
-    Playlist,
 ]
 
 BackboneConfig(
@@ -50,56 +55,56 @@ BackboneConfig(
 
 
 # --------------------------------------------------------------------------
-# Testing Hooks (Blog model)
+# Shop Hooks (Order model)
 # --------------------------------------------------------------------------
-def _blog_payload(instance: Blog) -> dict:
+def _order_payload(instance: Order) -> dict:
     return {
         "id": str(getattr(instance, "id", "") or ""),
-        "slug": getattr(instance, "slug", None),
-        "title": getattr(instance, "title", None),
-        "isPublished": getattr(instance, "isPublished", None),
-        "is_deleted": getattr(instance, "is_deleted", None),
+        "customer": getattr(instance, "customer_name", None),
+        "total": getattr(instance, "total_amount", None),
+        "status": getattr(instance, "status", None),
+        "items_count": len(getattr(instance, "items", [])),
     }
 
 
-@on_create(Blog)
-async def blog_on_create_hook(instance: Blog, **kwargs):
+@on_create(Order)
+async def order_on_create_hook(instance: Order, **kwargs):
     backbone_log(
-        "Blog hook triggered: on_create",
+        "Order placed: on_create",
         hook="on_create",
-        model="Blog",
-        payload=_blog_payload(instance),
+        model="Order",
+        payload=_order_payload(instance),
     )
 
 
-@on_update(Blog)
-async def blog_on_update_hook(instance: Blog, changed_fields=None, **kwargs):
+@on_update(Order)
+async def order_on_update_hook(instance: Order, changed_fields=None, **kwargs):
     backbone_log(
-        "Blog hook triggered: on_update",
+        "Order updated: on_update",
         hook="on_update",
-        model="Blog",
-        payload=_blog_payload(instance),
+        model="Order",
+        payload=_order_payload(instance),
         changed_fields=list((changed_fields or {}).keys()),
     )
 
 
-@on_delete(Blog)
-async def blog_on_delete_hook(instance: Blog, **kwargs):
+@on_delete(Order)
+async def order_on_delete_hook(instance: Order, **kwargs):
     backbone_log(
-        "Blog hook triggered: on_delete",
+        "Order deleted: on_delete",
         hook="on_delete",
-        model="Blog",
-        payload=_blog_payload(instance),
+        model="Order",
+        payload=_order_payload(instance),
     )
 
 
-@on_field_change(Blog, fields=["title", "excerpt", "isPublished", "is_deleted"])
-async def blog_on_field_change_hook(instance: Blog, changed_fields=None, matched_fields=None, **kwargs):
+@on_field_change(Order, fields=["status", "total_amount"])
+async def order_on_field_change_hook(instance: Order, changed_fields=None, matched_fields=None, **kwargs):
     backbone_log(
-        "Blog hook triggered: on_field_change",
+        "Order status or total changed: on_field_change",
         hook="on_field_change",
-        model="Blog",
-        payload=_blog_payload(instance),
+        model="Order",
+        payload=_order_payload(instance),
         matched_fields=matched_fields or [],
         changed_fields=list((changed_fields or {}).keys()),
     )
@@ -109,15 +114,13 @@ async def blog_on_field_change_hook(instance: Blog, changed_fields=None, matched
 # Register Routers
 # --------------------------------------------------------------------------
 app.include_router(users_router, prefix="/api")
-app.include_router(blogs_router, prefix="/api")
+app.include_router(shop_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
 app.include_router(content_router, prefix="/api")
-app.include_router(playlists_router, prefix="/api")
-app.include_router(chat_router, prefix="/api/chat", tags=["AI Chat"])
 app.include_router(pages_router, prefix="/pages")
 app.include_router(auth_pages_router, prefix="/pages")
 
 
 @app.get("/")
 async def root():
-    return {"message": "Blogermenia Backbone FastApi Server"}
+    return {"message": "Soul Craft Studio (Khushi Website) Backbone Backend"}
