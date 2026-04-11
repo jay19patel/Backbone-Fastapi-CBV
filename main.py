@@ -107,6 +107,32 @@ async def order_on_create_hook(instance: Order, **kwargs):
         model="Order",
         payload=_order_payload(instance),
     )
+    # Send order confirmation email with PDF invoice
+    try:
+        from backbone.email_sender import email_sender
+        from backbone.core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
+        
+        context = {
+            "order": instance,
+            "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
+            "current_year": datetime.now(timezone.utc).year,
+        }
+        
+        await email_sender.queue_email(
+            to_email=instance.customer_email,
+            subject=f"Order Confirmation - {instance.id}",
+            template_name="email/order_confirmation.html",
+            context=context,
+            pdf_attachments=[{
+                "template_name": "email/pdf/invoice.html",
+                "context": context,
+                "filename": f"invoice_{instance.id}.pdf",
+                "content_type": "application/pdf",
+            }]
+        )
+    except Exception as e:
+        backbone_log(f"Failed to send order confirmation: {e}", level="error")
 
 
 @on_update(Order)
@@ -130,16 +156,37 @@ async def order_on_delete_hook(instance: Order, **kwargs):
     )
 
 
-@on_field_change(Order, fields=["status", "total_amount"])
-async def order_on_field_change_hook(instance: Order, changed_fields=None, matched_fields=None, **kwargs):
+@on_field_change(Order, fields=["status"])
+async def order_on_status_change_hook(instance: Order, changed_fields=None, matched_fields=None, **kwargs):
     backbone_log(
-        "Order status or total changed: on_field_change",
+        "Order status changed: on_field_change",
         hook="on_field_change",
         model="Order",
         payload=_order_payload(instance),
         matched_fields=matched_fields or [],
         changed_fields=list((changed_fields or {}).keys()),
     )
+    # Send status update email
+    try:
+        from backbone.email_sender import email_sender
+        from backbone.core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
+        
+        context = {
+            "order": instance,
+            "new_status": instance.status,
+            "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
+            "current_year": datetime.now(timezone.utc).year,
+        }
+        
+        await email_sender.queue_email(
+            to_email=instance.customer_email,
+            subject=f"Order Status Updated: {instance.status}",
+            template_name="email/order_status_update.html",
+            context=context
+        )
+    except Exception as e:
+        backbone_log(f"Failed to send status update email: {e}", level="error")
 
 
 # --------------------------------------------------------------------------

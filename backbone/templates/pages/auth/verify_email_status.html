@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Email Verification - {{ site_name }}</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; height: 100vh; display: flex; align-items: center; justify-content: center; background: #f3f4f6; margin: 0; color: #1f2937; }
+        .card { background: white; padding: 48px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); max-width: 400px; text-align: center; }
+        .icon { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+        .icon-success { background: #dcfce7; color: #15803d; }
+        .icon-error { background: #fee2e2; color: #dc2626; }
+        h1 { font-size: 24px; font-weight: bold; margin-bottom: 12px; }
+        p { color: #6b7280; margin-bottom: 32px; }
+        .button { display: inline-block; padding: 12px 32px; background: #6366f1; color: white !important; text-decoration: none; border-radius: 8px; font-weight: 600; width: 100%; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        {% if success %}
+        <div class="icon icon-success">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width: 32px; height: 32px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+            </svg>
+        </div>
+        <h1>Email Verified!</h1>
+        <p>Thank you! Your email has been successfully verified. You can now use all features of {{ site_name }}.</p>
+        {% else %}
+        <div class="icon icon-error">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="width: 32px; height: 32px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </div>
+        <h1>Verification Failed</h1>
+        <p>
+            {% if reason == 'invalid_token' %}
+                The verification link is invalid or has expired.
+            {% elif reason == 'server_error' %}
+                A server error occurred. Please try again later.
+            {% else %}
+                We couldn't verify your email address.
+            {% endif %}
+        </p>
+        {% endif %}
+        
+        <a href="/" class="button">Go to Homepage</a>
+    </div>
+</body>
+</html>

@@ -247,37 +247,57 @@ class AuthService:
         
         return True
 
-    async def send_welcome_email(self, user: User, verification_url: Optional[str] = None):
-        """Send a welcome email using the default backbone template."""
+    async def send_welcome_verification_email(self, user: User, verify_url: str):
+        """Send a single email combining welcome message and verification link."""
         try:
             from backbone.core.config import BackboneConfig
             settings = BackboneConfig.get_instance().config
             
             context = {
                 "full_name": user.full_name,
-                "verification_url": verification_url,
+                "verification_url": verify_url,
+                "current_year": datetime.now(timezone.utc).year,
+                "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
+                "support_email": settings.EMAIL_FROM_EMAIL,
+            }
+            await email_sender.queue_email(
+                to_email=user.email,
+                subject=f"Welcome to {getattr(settings, 'SITE_NAME', 'Soul Craft Studio')}! Please verify your email",
+                template_name="email/welcome_verification.html",
+                context=context
+            )
+        except Exception as e:
+            logger.error(f"Failed to queue welcome verification email: {e}")
+
+    async def send_password_reset_email(self, user: User, reset_url: str):
+        """Send password reset email with the link to the core reset page."""
+        try:
+            from backbone.core.config import BackboneConfig
+            settings = BackboneConfig.get_instance().config
+            
+            context = {
+                "full_name": user.full_name,
+                "reset_url": reset_url,
                 "current_year": datetime.now(timezone.utc).year,
                 "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio")
             }
             await email_sender.queue_email(
                 to_email=user.email,
-                subject=f"Welcome to {getattr(settings, 'SITE_NAME', 'Soul Craft Studio')}!",
-                template_name="email/welcome.html",
+                subject=f"Reset your password for {getattr(settings, 'SITE_NAME', 'Soul Craft Studio')}",
+                template_name="email/password_reset.html",
                 context=context
             )
         except Exception as e:
-            logger.error(f"Failed to queue welcome email: {e}")
-
+            logger.error(f"Failed to queue password reset email: {e}")
 
     async def send_verification_email(self, user: User, backend_verify_url: str):
-        """Send verification email with a personalized link hitting the backend directly."""
+        """Send verification email with a link hitting the backend directly."""
         try:
             token = await self.create_verification_request(user)
+            full_url = f"{backend_verify_url}?token={token}"
+            
             from backbone.core.config import BackboneConfig
             settings = BackboneConfig.get_instance().config
-            
-            # Use the provided backend URL (e.g. http://localhost:8000/api/auth/verify)
-            full_url = f"{backend_verify_url}?token={token}"
             
             context = {
                 "full_name": user.full_name,

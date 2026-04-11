@@ -331,23 +331,24 @@
         });
 
         // ── Searchable Select Logic ──────────────────────────────────────────
-        window.initSearchableSelect = function (containerId, modelName, fieldName, initialValue = '', initialLabel = '') {
+        window.initSearchableSelect = function (containerId, modelName, fieldName, isMulti = false) {
             const container = document.getElementById(containerId);
             const input = container.querySelector('input[type="text"]');
-            const hidden = container.querySelector('input[type="hidden"]');
             const dropdown = container.querySelector('.search-results-dropdown');
             const resultsList = dropdown.querySelector('.results-list');
             const prevBtn = dropdown.querySelector('.prev-btn');
             const nextBtn = dropdown.querySelector('.next-btn');
             const pageInfo = dropdown.querySelector('.page-info');
             const clearBtn = container.querySelector('.clear-btn');
+            const chipsContainer = container.querySelector('.chips-container');
 
             let currentPage = 1;
             let totalPages = 1;
             let searchTerm = '';
             let debounceTimer;
 
-            if (clearBtn) {
+            if (clearBtn && !isMulti) {
+                const hidden = container.querySelector('input[type="hidden"]');
                 if (hidden.value || input.value) clearBtn.style.display = 'block';
                 clearBtn.onclick = (e) => {
                     e.stopPropagation();
@@ -374,7 +375,7 @@
                         } else {
                             data.results.forEach(item => {
                                 const div = document.createElement('div');
-                                div.className = 'search-result-item ' + (hidden.value === item.id ? 'selected' : '');
+                                div.className = 'search-result-item';
                                 div.innerHTML = `<i class="fas fa-link mr-2 opacity-50"></i> ${item.text}`;
                                 div.onclick = () => selectItem(item.id, item.text);
                                 resultsList.appendChild(div);
@@ -383,9 +384,9 @@
 
                         currentPage = data.page;
                         totalPages = data.total_pages;
-                        pageInfo.innerText = `Page ${currentPage} of ${totalPages}`;
-                        prevBtn.disabled = currentPage <= 1;
-                        nextBtn.disabled = currentPage >= totalPages;
+                        if (pageInfo) pageInfo.innerText = `Page ${currentPage} of ${totalPages}`;
+                        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+                        if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
                     })
                     .catch(err => {
                         resultsList.innerHTML = '<div class="p-4 text-center text-red-400 text-xs">Error loading data</div>';
@@ -393,11 +394,38 @@
             }
 
             function selectItem(id, label) {
-                hidden.value = id;
-                hidden.disabled = false;
-                input.value = label;
+                if (isMulti) {
+                    addChip(id, label);
+                    input.value = '';
+                    searchTerm = '';
+                } else {
+                    const hidden = container.querySelector('input[type="hidden"]');
+                    hidden.value = id;
+                    hidden.disabled = false;
+                    input.value = label;
+                    if (clearBtn) clearBtn.style.display = 'block';
+                }
                 dropdown.style.display = 'none';
-                if (clearBtn) clearBtn.style.display = 'block';
+            }
+
+            function addChip(id, label) {
+                if (!chipsContainer) return;
+                
+                // Check if already exists
+                const existing = chipsContainer.querySelector(`input[value="${id}"]`);
+                if (existing) return;
+
+                const chip = document.createElement('div');
+                chip.className = 'data-chip pr-2 flex items-center gap-2';
+                chip.innerHTML = `
+                    <span>${label}</span>
+                    <input type="hidden" name="${fieldName}" value="${id}">
+                    <button type="button" class="hover:text-red-500 transition-colors">
+                        <i class="fas fa-times-circle"></i>
+                    </button>
+                `;
+                chip.querySelector('button').onclick = () => chip.remove();
+                chipsContainer.appendChild(chip);
             }
 
             input.addEventListener('focus', () => {
@@ -413,23 +441,26 @@
                 debounceTimer = setTimeout(updateDropdown, 300);
             });
 
-            prevBtn.onclick = (e) => {
-                e.stopPropagation();
-                if (currentPage > 1) {
-                    currentPage--;
-                    updateDropdown();
-                }
-            };
+            if (prevBtn) {
+                prevBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (currentPage > 1) {
+                        currentPage--;
+                        updateDropdown();
+                    }
+                };
+            }
 
-            nextBtn.onclick = (e) => {
-                e.stopPropagation();
-                if (currentPage < totalPages) {
-                    currentPage++;
-                    updateDropdown();
-                }
-            };
+            if (nextBtn) {
+                nextBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        updateDropdown();
+                    }
+                };
+            }
 
-            // Close on outside click
             document.addEventListener('click', (e) => {
                 if (!container.contains(e.target)) {
                     dropdown.style.display = 'none';

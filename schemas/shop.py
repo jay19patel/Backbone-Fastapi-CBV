@@ -24,8 +24,12 @@ class Product(BackboneDocument):
     name: Name = Field(description="The name of the product")
     price: str = Field(description="Display price string, e.g. ₹1499")
     price_value: Optional[float] = Field(default=0.0, description="Numeric price for calculations")
-    img: Thumbnail = None
-    images: Optional[List[Link[Attachment]]] = Field(default_factory=list, description="Additional gallery images")
+    img: Thumbnail = Field(default=None, json_schema_extra={"upload": False})
+    images: Optional[List[Link[Attachment]]] = Field(
+        default_factory=list, 
+        description="Additional gallery images",
+        json_schema_extra={"upload": False}
+    )
     tag: Optional[str] = Field(default=None, description="Special tag: Handmade, New, Bestseller, etc.")
     category_id: Optional[str] = Field(default=None, description="Reference to Category ID")
     stock: int = Field(default=10, description="Items available in stock")

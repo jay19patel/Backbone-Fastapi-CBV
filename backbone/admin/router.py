@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict # Added for pydantic models
 from ..core.models import User
 from ..common.utils import PasswordManager, TokenManager
 from .site import admin_site
+from ..core.models import Attachment
+import base64
 
 # Define INTERNAL_FIELDS globally
 INTERNAL_FIELDS = ["id", "_id", "revision_id", "created_at", "created_by", "updated_at", "updated_by", "is_deleted", "deleted_at", "deleted_by"]
@@ -1035,7 +1037,51 @@ async def model_create_handle(
                             try:
                                 val = DBRef(collection=collection_name, id=ObjectId(val))
                             except: pass
+
+            # ── Handle File Uploads ──
+            from fastapi import UploadFile
+            files = form_data.getlist(key) if is_list else [form_data.get(key)]
+            uploaded_attachments = []
+            
+            for f in files:
+                if isinstance(f, UploadFile) and f.filename:
+                    # Create Attachment
+                    # Note: For creation, we don't have a document_id yet.
+                    # We will create the attachment and link it manually after instance.insert()
+                    att = Attachment(
+                        filename=f.filename,
+                        content_type=f.content_type,
+                        collection_name=getattr(model.Settings, "name", model_name.lower()),
+                        status="pending"
+                    )
+                    await att.insert()
                     
+                    # Process file bytes
+                    f_bytes = await f.read()
+                    encoded = base64.b64encode(f_bytes).decode("utf-8")
+                    
+                    # Run processing (ideally in background, but here we might want it synchronous or at least started)
+                    from ..core.media import process_attachment_upload
+                    from ..common.services import background_internal_task
+                    await background_internal_task(process_attachment_upload, str(att.id), encoded)
+                    
+                    uploaded_attachments.append(att)
+            
+            if uploaded_attachments:
+                if is_list:
+                    # Merge with existing list if any
+                    current_list = data.get(key, [])
+                    if not isinstance(current_list, list): current_list = []
+                    val = current_list + uploaded_attachments
+                else:
+                    val = uploaded_attachments[0]
+                    
+            # Final cleanup: ensure no raw UploadFile objects leak into Beanie
+            if isinstance(val, (list, tuple)):
+                val = [v for v in val if not isinstance(v, UploadFile)]
+            elif isinstance(val, UploadFile):
+                val = None
+                
             data[key] = val
             
     try:
@@ -1319,6 +1365,49 @@ async def model_update_handle(
                                 val = DBRef(collection=collection_name, id=ObjectId(val))
                             except: pass
 
+            # ── Handle File Uploads ──
+            from fastapi import UploadFile
+            files = form_data.getlist(key) if is_list else [form_data.get(key)]
+            uploaded_attachments = []
+            
+            for f in files:
+                if isinstance(f, UploadFile) and f.filename:
+                    att = Attachment(
+                        filename=f.filename,
+                        content_type=f.content_type,
+                        collection_name=getattr(model.Settings, "name", model_name.lower()),
+                        document_id=str(pk),
+                        field_name=key,
+                        status="pending"
+                    )
+                    await att.insert()
+                    
+                    f_bytes = await f.read()
+                    encoded = base64.b64encode(f_bytes).decode("utf-8")
+                    
+                    from ..core.media import process_attachment_upload
+                    from ..common.services import background_internal_task
+                    await background_internal_task(process_attachment_upload, str(att.id), encoded)
+                    
+                    uploaded_attachments.append(att)
+            
+            if uploaded_attachments:
+                if is_list:
+                    current_list = update_data.get(key, [])
+                    if not isinstance(current_list, list): current_list = []
+                    val = current_list + uploaded_attachments
+                else:
+                    val = uploaded_attachments[0]
+
+            # Final cleanup: ensure no raw UploadFile objects leak into Beanie
+            if isinstance(val, (list, tuple)):
+                val = [v for v in val if not isinstance(v, UploadFile)]
+            elif isinstance(val, UploadFile):
+                # If it's an UploadFile here, it means it wasn't processed (no filename)
+                # We should NOT update the field with this.
+                # In update case, if we don't want to change the image, we should probably SKIP the update for this field.
+                continue
+                
             update_data[key] = val
         else:
             if field.annotation == bool:

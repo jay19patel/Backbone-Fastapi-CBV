@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>User Guide - {{ site_name }} Backbone</title>
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1f2937; max-width: 800px; margin: 0 auto; padding: 40px 20px; background: #f9fafb; }
+        .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        h1 { color: #111827; margin-bottom: 8px; }
+        h2 { color: #374151; margin-top: 32px; border-bottom: 2px solid #f3f4f6; padding-bottom: 8px; }
+        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+        pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; }
+        .endpoint { font-weight: bold; color: #4f46e5; }
+        .method { background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Backbone User Guide</h1>
+        <p>Welcome to the core integration guide for {{ site_name }}. This document outlines the key functionalities and API endpoints for your frontend application.</p>
+
+        <h2>Authentication</h2>
+        <p>The authentication system uses JWT-based stateless tokens. All auth endpoints are prefixed with <code>/api/auth</code>.</p>
+        
+        <p><span class="method">POST</span><code class="endpoint">/register</code>: Register a new user. Sends a consolidated welcome/verification email.</p>
+        <p><span class="method">POST</span><code class="endpoint">/login</code>: Authenticate and receive tokens.</p>
+        <p><span class="method">POST</span><code class="endpoint">/password-reset/request</code>: Send a password reset email. Requires <code>email</code> in the body.</p>
+
+        <h2>Email Templates</h2>
+        <p>Templates are located in <code>backend/backbone/templates/email</code>. You can override them by placing files with the same name in <code>backend/templates/email</code>.</p>
+        <ul>
+            <li><code>welcome_verification.html</code>: Consolidated registration email.</li>
+            <li><code>order_confirmation.html</code>: Sent after order placement.</li>
+            <li><code>order_status_update.html</code>: Sent on order status change.</li>
+        </ul>
+
+        <h2>PDF Invoices</h2>
+        <p>Invoices are generated using ReportLab from the HTML template at <code>email/pdf/invoice.html</code>. They are automatically attached to order confirmation emails.</p>
+
+        <h2>Core Pages</h2>
+        <p>Core pages are served under <code>/pages</code>:</p>
+        <ul>
+            <li><code class="endpoint">/pages/verify-status</code>: Displays verification results.</li>
+            <li><code class="endpoint">/pages/reset-password/confirm</code>: Password reset form.</li>
+            <li><code class="endpoint">/pages/user-guide</code>: This guide.</li>
+        </ul>
+
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; color: #6b7280;">
+            &copy; {{ current_year }} {{ site_name }} Backbone Core.
+        </div>
+    </div>
+</body>
+</html>

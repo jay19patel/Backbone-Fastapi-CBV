@@ -97,6 +97,46 @@ class PasswordResetConfirmPage(GenericFormView):
         }
 
 
+class VerifyEmailStatusPage(GenericFormView):
+    template_name = "pages/auth/verify_email_status.html"
+    permission_classes = [AllowAny]
+    page_name = "Email Verification Status"
+    page_description = "Check the status of your email verification."
+    admin_category = "Auth Pages"
+
+    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+        token = request.query_params.get("token", "")
+        success = request.query_params.get("success", "false").lower() == "true"
+        reason = request.query_params.get("reason", "")
+        
+        return {
+            "token": token,
+            "success": success,
+            "reason": reason,
+        }
+
+    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+        # This page is primarily informational after a redirect, but could handle re-send
+        return await self.get_context_data(request)
+
+
+class UserGuidePage(GenericFormView):
+    template_name = "pages/user_guide.html"
+    permission_classes = [AllowAny]
+    page_name = "User Guide"
+    page_description = "Guidelines and integration notes for the Backbone system."
+    admin_category = "Help"
+
+    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+        return {
+            "site_name": "Soul Craft Studio",
+            "api_base_url": str(request.base_url).rstrip('/') + "/api",
+        }
+
+    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+        return await self.get_context_data(request)
+
+
 router = APIRouter()
 router.include_router(
     PasswordResetRequestPage.as_router(
@@ -112,5 +152,21 @@ router.include_router(
         tags=["Pages"],
         name="password_reset_confirm_page",
         admin_path="/pages/reset-password/confirm",
+    )
+)
+router.include_router(
+    VerifyEmailStatusPage.as_router(
+        "/verify-status",
+        tags=["Pages"],
+        name="email_verification_status_page",
+        admin_path="/pages/verify-status",
+    )
+)
+router.include_router(
+    UserGuidePage.as_router(
+        "/user-guide",
+        tags=["Pages"],
+        name="user_guide_page",
+        admin_path="/pages/user-guide",
     )
 )

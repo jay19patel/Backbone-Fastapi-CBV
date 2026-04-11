@@ -28,12 +28,14 @@ from .core.models import Email
 logger = logging.getLogger("backbone.email")
 
 APP_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates"
+APP_EMAIL_ROOT = Path(__file__).resolve().parents[1] / "email_templates"
 FRAMEWORK_TEMPLATE_ROOT = Path(__file__).resolve().parent / "templates"
 
 
 def _build_email_environment() -> Environment:
     loader = ChoiceLoader(
         [
+            FileSystemLoader(str(APP_EMAIL_ROOT)),
             FileSystemLoader(str(APP_TEMPLATE_ROOT)),
             FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)),
         ]

@@ -91,17 +91,16 @@ class AuthRouter:
             
                 new_user = await self.user_repository.create(user_dict, request=request)
 
-                # Send verification email
+                # Send consolidated welcome/verification email
                 try:
-                    # In stateless redirect mode, the link hits the BACKEND first
-                    # We get the base API URL (e.g. http://localhost:8000/api/auth)
-                    # and append /verify
+                    token = await auth_service.create_verification_request(new_user)
                     base_url = str(request.base_url).rstrip('/')
-                    backend_verify_url = f"{base_url}{self.router.prefix}/verify"
+                    # The link hits the backend /verify endpoint, which validates and then renders a core page
+                    verify_url = f"{base_url}{self.router.prefix}/verify?token={token}"
                     
-                    await auth_service.send_verification_email(new_user, backend_verify_url)
+                    await auth_service.send_welcome_verification_email(new_user, verify_url)
                 except Exception as e:
-                    logger.error(f"Failed to send verification email: {e}")
+                    logger.error(f"Failed to send welcome verification email: {e}")
 
                 return self._serialise_user(new_user)
 
@@ -403,32 +402,39 @@ class AuthRouter:
                 auth_service = AuthService(request)
                 success = await auth_service.verify_email_with_token(token)
                 
-                if success:
-                    return RedirectResponse(url=frontend_success)
-                else:
-                    return RedirectResponse(url=f"{frontend_error}?reason=invalid_token")
+                # We render the core verification status page
+                # This page is identified by its name in the auth_pages_router
+                page_url = str(request.url_for("email_verification_status_page"))
+                return RedirectResponse(url=f"{page_url}?token={token}&success={'true' if success else 'false'}")
             except Exception:
                 logger.exception("Email verification redirection failed")
-                return RedirectResponse(url=f"{frontend_error}?reason=server_error")
+                page_url = str(request.url_for("email_verification_status_page"))
+                return RedirectResponse(url=f"{page_url}?success=false&reason=server_error")
 
-        @self.router.get("/verify-email")
-        async def verify_email_json(
+        @self.router.post("/password-reset/request")
+        async def request_password_reset(
             request: Request,
-            token: str
+            email: str
         ):
-            """Secondary endpoint for JSON-based verification (if needed by frontend)."""
+            """API endpoint to trigger password reset email."""
             try:
                 from .service import AuthService
                 auth_service = AuthService(request)
-                success = await auth_service.verify_email_with_token(token)
+                user = await auth_service.get_user_by_email(email)
                 
-                if success:
-                    return {"detail": "Email verified successfully", "success": True}
-                else:
-                    raise HTTPException(status_code=400, detail="Invalid or expired verification token")
-            except HTTPException:
-                raise
+                if user:
+                    reset_request = await auth_service.create_password_reset_request(email)
+                    if reset_request:
+                        token = reset_request["token"]
+                        base_url = str(request.base_url).rstrip('/')
+                        # Link to the core reset confirmation page
+                        # Note: we assume the pages router is registered and accessible
+                        reset_url = f"{base_url}/pages/reset-password/confirm?token={token}"
+                        await auth_service.send_password_reset_email(user, reset_url)
+                
+                return {"detail": "If the account exists, a reset email has been sent."}
             except Exception:
-                logger.exception("Email verification failed")
-                raise HTTPException(status_code=500, detail="Email verification failed")
+                logger.exception("Password reset request failed")
+                raise HTTPException(status_code=500, detail="Password reset request failed")
+
 

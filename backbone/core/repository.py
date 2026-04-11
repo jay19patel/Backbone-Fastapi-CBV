@@ -173,9 +173,13 @@ class BeanieRepository(Generic[T]):
     @staticmethod
     def _extract_link_info(annotation: Any) -> tuple[Optional[Type[Document]], bool]:
         """Extract (target_model, is_list) from a Link[] annotation."""
-        from typing import get_args, get_origin
+        from typing import get_args, get_origin, Annotated, Union
         from beanie import Link
         
+        # Unwrap Annotated if present
+        if get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+
         origin = get_origin(annotation)
         target_model = None
         is_list = False
@@ -184,20 +188,19 @@ class BeanieRepository(Generic[T]):
             target_model = get_args(annotation)[0]
         elif origin in (list, List):
             args = get_args(annotation)
-            if args and get_origin(args[0]) is Link:
-                target_model = get_args(args[0])[0]
+            if args:
+                inner_annotation = args[0]
+                # Recursively extract from list item (could be Link or Annotated[Link])
+                target_model, _ = BeanieRepository._extract_link_info(inner_annotation)
                 is_list = True
         elif origin is Union:
             for arg in get_args(annotation):
-                if get_origin(arg) is Link:
-                    target_model = get_args(arg)[0]
+                if arg is type(None): continue
+                t_model, t_list = BeanieRepository._extract_link_info(arg)
+                if t_model:
+                    target_model = t_model
+                    is_list = t_list
                     break
-                if get_origin(arg) in (list, List):
-                    inner_args = get_args(arg)
-                    if inner_args and get_origin(inner_args[0]) is Link:
-                        target_model = get_args(inner_args[0])[0]
-                        is_list = True
-                        break
         return target_model, is_list
 
     @staticmethod

@@ -58,7 +58,7 @@ Thumbnail = Annotated[
     PlainSerializer(serialize_attachment, return_type=Optional[str], when_used="json")
 ]
 
-def Attechment(foldername: str = "general", label: str = "Attachment") -> Any:
+def Attachment(foldername: str = "general", label: str = "Attachment") -> Any:
     """
     Factory for specific attachment fields with folder constraints.
     """
