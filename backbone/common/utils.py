@@ -49,6 +49,7 @@ class TokenManager:
         """Alias for decode_token."""
         return TokenManager.decode_token(token)
 
+
 # ── Logging Utilities ───────────────────────────────────────────────────────
 
 class DatabaseLoggingHandler(logging.Handler):
@@ -96,3 +97,30 @@ def setup_logger(name: str, log_file: str = "app.log", level=logging.INFO):
     return logger
 
 logger = setup_logger("backbone_app")
+
+from functools import wraps
+import traceback
+
+def log_exceptions(func):
+    """
+    Decorator to automatically log exceptions to the database.
+    Use this on API routes or critical background tasks.
+    """
+    if asyncio.iscoroutinefunction(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in {func.__name__}: {str(e)}", exc_info=True)
+                raise e
+        return async_wrapper
+    else:
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in {func.__name__}: {str(e)}", exc_info=True)
+                raise e
+        return sync_wrapper

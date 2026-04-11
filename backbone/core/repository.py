@@ -287,9 +287,10 @@ class BeanieRepository(Generic[T]):
         """
         if isinstance(data, dict):
             # Auto-resolve media URLs for any "file_path" fields
+            # If it's a media attachment dictionary, we flatten it to a URL string
             if "file_path" in data and isinstance(data["file_path"], str):
                 from .url_utils import get_media_url
-                data["file_path"] = get_media_url(data["file_path"])
+                return get_media_url(data["file_path"])
                 
             return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
         if isinstance(data, list):
@@ -940,7 +941,32 @@ class BeanieRepository(Generic[T]):
         results = await self.document_class.get_pymongo_collection().aggregate(
             pipeline,
         ).to_list(length=1)
-        return results[0]["total"] if results else 0
+
+    async def get_stats(
+        self,
+        config: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Compute multiple statistics (counts, sums) in a single pass if possible,
+        or sequentially.
+        """
+        res = {}
+        for item in config:
+            stype = item.get("type", "count")
+            filters = self._prepare_query(item.get("filters", {}))
+            name = item["name"]
+            
+            if stype == "count":
+                res[name] = await self.count(filters)
+            elif stype == "sum":
+                field = item.get("field")
+                if not field: continue
+                agg = await self.document_class.get_pymongo_collection().aggregate([
+                    {"$match": filters},
+                    {"$group": {"_id": None, "total": {"$sum": f"${field}"}}}
+                ]).to_list(1)
+                res[name] = (agg[0].get("total") or 0) if agg else 0
+        return res
 
     # ── Private Helpers ─────────────────────────────────────────────────────
 

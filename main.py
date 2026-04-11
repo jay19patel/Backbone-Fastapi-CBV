@@ -23,7 +23,7 @@ class ProjectSettings(Settings):
 settings = ProjectSettings()
 
 # Schemas
-from schemas.shop import Category, Product, Order
+from schemas.shop import Category, Product, Order, OrderItem, CartItem, Payment
 from schemas.content import FAQ, Testimonial, Contact
 
 # Routers
@@ -31,11 +31,9 @@ from api.users import router as users_router
 from api.shop import router as shop_router
 from backbone.core.media_router import router as media_router
 from api.content import router as content_router
-from pages.contact import router as pages_router
+from pages.user_guide import router as user_guide_router
 from backbone.auth.pages import router as auth_pages_router
 from pages.admin_pages import (
-    StoreTestView, 
-    ContactFormTestView, 
     AdminProductListView, 
     AdminOrderManagementView
 )
@@ -68,14 +66,14 @@ models_to_register = [
     Category,
     Product,
     Order,
+    OrderItem,
+    CartItem,
+    Payment,
     FAQ,
     Testimonial,
     Contact,
 ]
 
-# Custom Admin Pages (Must be registered before BackboneConfig to avoid greedy route conflicts)
-app.include_router(StoreTestView.as_router("/admin/pages/store-test", tags=["Admin Pages"]))
-app.include_router(ContactFormTestView.as_router("/admin/pages/contact-form", tags=["Admin Pages"]))
 app.include_router(AdminProductListView.as_router("/admin/pages/products", tags=["Admin Pages"]))
 app.include_router(AdminOrderManagementView.as_router("/admin/pages/orders", tags=["Admin Pages"]))
 
@@ -113,21 +111,25 @@ async def order_on_create_hook(instance: Order, **kwargs):
         from backbone.core.config import BackboneConfig
         settings = BackboneConfig.get_instance().config
         
+        # Fetch links to ensure OrderItems are populated
+        await instance.fetch_all_links()
+        
         context = {
             "order": instance,
             "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
             "current_year": datetime.now(timezone.utc).year,
+            "site_url": getattr(settings, "SITE_URL", "http://localhost:3000"),
         }
         
         await email_sender.queue_email(
             to_email=instance.customer_email,
-            subject=f"Order Confirmation - {instance.id}",
+            subject=f"Order Confirmation - {str(instance.id)}",
             template_name="email/order_confirmation.html",
             context=context,
             pdf_attachments=[{
                 "template_name": "email/pdf/invoice.html",
                 "context": context,
-                "filename": f"invoice_{instance.id}.pdf",
+                "filename": f"invoice_{str(instance.id)}.pdf",
                 "content_type": "application/pdf",
             }]
         )
@@ -172,16 +174,20 @@ async def order_on_status_change_hook(instance: Order, changed_fields=None, matc
         from backbone.core.config import BackboneConfig
         settings = BackboneConfig.get_instance().config
         
+        # Fetch links to ensure OrderItems (and snapshots) are available
+        await instance.fetch_all_links()
+        
         context = {
             "order": instance,
             "new_status": instance.status,
             "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
             "current_year": datetime.now(timezone.utc).year,
+            "site_url": getattr(settings, "SITE_URL", "http://localhost:3000"),
         }
         
         await email_sender.queue_email(
             to_email=instance.customer_email,
-            subject=f"Order Status Updated: {instance.status}",
+            subject=f"Order Status Updated: {instance.status.upper()}",
             template_name="email/order_status_update.html",
             context=context
         )
@@ -196,7 +202,7 @@ app.include_router(users_router, prefix="/api")
 app.include_router(shop_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
 app.include_router(content_router, prefix="/api")
-app.include_router(pages_router, prefix="/pages")
+app.include_router(user_guide_router, prefix="/pages")
 app.include_router(auth_pages_router, prefix="/pages")
 
 

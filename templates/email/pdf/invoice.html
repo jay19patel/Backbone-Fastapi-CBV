@@ -1,0 +1,45 @@
+<div style="font-family: Arial, sans-serif; padding: 40px;">
+    <h1 style="text-align: center; color: #333;">INVOICE</h1>
+    <hr>
+    <div style="margin: 20px 0;">
+        <p><strong>Order ID:</strong> {{ order.id }}</p>
+        <p><strong>Date:</strong> {{ order.created_at.strftime('%Y-%m-%d') }}</p>
+    </div>
+    
+    <div style="margin: 20px 0;">
+        <h3>Customer Details:</h3>
+        <p>{{ order.customer_name }}</p>
+        <p>{{ order.customer_email }}</p>
+        <p>{{ order.shipping_address }}</p>
+    </div>
+
+    <table style="width: 100%; border-collapse: collapse; margin-top: 30px;">
+        <thead>
+            <tr style="background-color: #f2f2f2;">
+                <th style="border: 1px solid #ddd; padding: 12px; text-align: left;">Item</th>
+                <th style="border: 1px solid #ddd; padding: 12px; text-align: center;">Qty</th>
+                <th style="border: 1px solid #ddd; padding: 12px; text-align: right;">Price</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in order.items %}
+            <tr>
+                <td style="border: 1px solid #ddd; padding: 12px;">{{ item.name }}</td>
+                <td style="border: 1px solid #ddd; padding: 12px; text-align: center;">{{ item.quantity }}</td>
+                <td style="border: 1px solid #ddd; padding: 12px; text-align: right;">₹{{ item.subtotal }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr style="font-weight: bold; background-color: #f9f9f9;">
+                <td colspan="2" style="border: 1px solid #ddd; padding: 12px; text-align: right;">Grand Total:</td>
+                <td style="border: 1px solid #ddd; padding: 12px; text-align: right;">₹{{ order.total_amount }}</td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <div style="margin-top: 50px; text-align: center; color: #777; font-size: 12px;">
+        <p>Thank you for shopping with {{ site_name }}!</p>
+        <p>This is a computer-generated invoice.</p>
+    </div>
+</div>

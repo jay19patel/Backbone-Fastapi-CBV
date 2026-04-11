@@ -1,0 +1,40 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div style="padding: 20px; text-align: left;">
+    <h1 style="color: #6366f1; margin-bottom: 20px;">Order Status Update</h1>
+    <p>Hi {{ order.customer_name }},</p>
+    <p>We wanted to let you know that the status of your order <strong>#{{ order.id }}</strong> has been updated to:</p>
+    
+    <div style="text-align: center; margin: 40px 0;">
+        <span style="background: #6366f1; color: #ffffff; padding: 12px 30px; border-radius: 999px; font-weight: 700; font-size: 1.2rem; text-transform: uppercase; letter-spacing: 1px;">
+            {{ order.status }}
+        </span>
+    </div>
+
+    {% if order.status == 'shipped' %}
+    <p>Your items are on their way! You'll find tracking information in your dashboard soon.</p>
+    {% elif order.status == 'delivered' %}
+    <p>Package delivered! We hope you love your new Soul Craft items. If you have any feedback, we'd love to hear from you.</p>
+    {% endif %}
+
+    <div style="background: #f8fafc; padding: 20px; border-radius: 12px; margin: 30px 0;">
+        <h3 style="margin-top: 0;">Items in this order:</h3>
+        {% for item in order.items %}
+        <div style="display: flex; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">
+            {% if item.image %}
+            <img src="{{ item.image }}" alt="{{ item.name }}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px; margin-right: 15px;">
+            {% endif %}
+            <div>
+                <p style="margin: 0; font-weight: 600;">{{ item.name }}</p>
+                <p style="margin: 0; color: #64748b; font-size: 0.9rem;">Quantity: {{ item.quantity }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <p style="margin-bottom: 30px;">Questions? Reply to this email or visit our support page.</p>
+    
+    <a href="{{ site_url }}/dashboard/orders/{{ order.id }}" style="background: #1e293b; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; font-weight: 600;">Track Your Order</a>
+</div>
+{% endblock %}

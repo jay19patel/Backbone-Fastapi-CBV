@@ -51,12 +51,18 @@ class Product(BackboneDocument):
         return [serialize_attachment(i) for i in images]
 
 
-class OrderItem(BaseModel):
-    product_id: str
-    name: str
-    quantity: int
-    price: float
-    image: Optional[str] = None
+
+class OrderItem(BackboneDocument):
+    order_id: Optional[str] = Field(default=None, description="Internal ID of the parent order")
+    product: Optional[Link[Product]] = Field(default=None, description="Link to the current product document")
+    
+    # Snapshots (to preserve history even if product changes or is deleted)
+    name: str = Field(description="Snapshot: Name of the product at time of order")
+    price: float = Field(description="Snapshot: Price of the product at time of order")
+    image: Optional[str] = Field(default=None, description="Snapshot: Main image URL at time of order")
+    
+    quantity: int = Field(default=1, description="Quantity ordered")
+    subtotal: float = Field(default=0.0, description="Snapshot: quantity * price")
 
     @pydantic.field_validator('price', mode='before')
     @classmethod
@@ -67,13 +73,11 @@ class OrderItem(BaseModel):
             return float(numeric_str) if numeric_str else 0.0
         return v or 0.0
 
-    @pydantic.model_validator(mode='before')
-    @classmethod
-    def handle_product_id(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            if 'product_id' not in data:
-                data['product_id'] = data.get('id') or data.get('_id')
-        return data
+    class Settings:
+        name = "order_items"
+        indexes = [
+            IndexModel([("order_id", ASCENDING)]),
+        ]
 
 
 class Order(BackboneDocument):
@@ -90,12 +94,17 @@ class Order(BackboneDocument):
     city: Optional[str] = Field(default=None, description="City for shipping")
     state: Optional[str] = Field(default=None, description="State for shipping")
     pincode: Optional[str] = Field(default=None, description="Postal code")
-    items: List[OrderItem] = Field(default_factory=list, description="List of ordered items")
+    
+    # Relationship to OrderItem
+    items: List[Link[OrderItem]] = Field(default_factory=list, description="Linked order items")
+    
     total_amount: float = Field(default=0.0, description="Grand total of the order")
     status: str = Field(
         default="pending",
         description="Order status: pending | processing | shipped | delivered | cancelled",
     )
+    
+    # Payment Reference
     payment_id: Optional[str] = Field(default=None, description="UPI / gateway transaction ID")
     payment_status: str = Field(
         default="pending_verification",
@@ -113,18 +122,32 @@ class Order(BackboneDocument):
         ]
 
 
-# Resolve forward references
-Category.model_rebuild()
-Product.model_rebuild()
-Order.model_rebuild()
+class Payment(BackboneDocument):
+    order: Link[Order] = Field(description="Reference to the order")
+    amount: float = Field(description="Amount paid")
+    currency: str = Field(default="INR")
+    method: str = Field(description="Payment method: UPI, Razorpay, COD, etc.")
+    transaction_id: Optional[str] = Field(default=None, description="Gateway transaction ID")
+    status: str = Field(default="pending", description="pending | success | failed")
+    gateway_response: Optional[dict] = Field(default=None, description="Raw response from payment gateway")
+
+    class Settings:
+        name = "payments"
+        indexes = [
+            IndexModel([("transaction_id", ASCENDING)]),
+            IndexModel([("status", ASCENDING)]),
+        ]
 
 
-class CartItem(BaseModel):
-    product_id: str
-    name: str
-    quantity: int
-    price: float
-    image: Optional[str] = None
+class CartItem(BackboneDocument):
+    cart_id: Optional[str] = Field(default=None, description="Internal ID of the parent cart")
+    product: Link[Product] = Field(description="Link to the product")
+    quantity: int = Field(default=1)
+    
+    # We store a snapshot of name/price even in cart for quick display
+    name: str = Field(description="Snapshot: Name of product")
+    price: float = Field(description="Snapshot: Price of product")
+    image: Optional[str] = Field(default=None)
 
     @pydantic.field_validator('price', mode='before')
     @classmethod
@@ -135,18 +158,16 @@ class CartItem(BaseModel):
             return float(numeric_str) if numeric_str else 0.0
         return v or 0.0
 
-    @pydantic.model_validator(mode='before')
-    @classmethod
-    def handle_product_id(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            if 'product_id' not in data:
-                data['product_id'] = data.get('id') or data.get('_id')
-        return data
+    class Settings:
+        name = "cart_items"
+        indexes = [
+            IndexModel([("cart_id", ASCENDING)]),
+        ]
 
 
 class Cart(BackboneDocument):
     session_id: str = Field(description="Anonymous session ID stored in browser, or user ID")
-    items: List[CartItem] = Field(default_factory=list, description="Cart items")
+    items: List[Link[CartItem]] = Field(default_factory=list, description="Linked cart items")
     total_amount: float = Field(default=0.0, description="Total amount in cart")
 
     class Settings:
@@ -155,5 +176,13 @@ class Cart(BackboneDocument):
             IndexModel([("session_id", ASCENDING)], unique=True)
         ]
 
+
+# Resolve forward references
+Category.model_rebuild()
+Product.model_rebuild()
+OrderItem.model_rebuild()
+Order.model_rebuild()
+Payment.model_rebuild()
+CartItem.model_rebuild()
 Cart.model_rebuild()
 

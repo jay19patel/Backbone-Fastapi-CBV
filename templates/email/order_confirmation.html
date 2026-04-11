@@ -1,0 +1,38 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div style="padding: 20px; text-align: left;">
+    <h1 style="color: #6366f1; margin-bottom: 20px;">Order Confirmed!</h1>
+    <p>Hi {{ order.customer_name }},</p>
+    <p>Thank you for your order! We're getting it ready and will notify you as soon as it's shipped.</p>
+    
+    <div style="background: #f8fafc; padding: 20px; border-radius: 12px; margin: 30px 0;">
+        <h3 style="margin-top: 0;">Order Summary</h3>
+        <p><strong>Order ID:</strong> {{ order.id }}</p>
+        <p><strong>Total Amount:</strong> ₹{{ order.total_amount }}</p>
+        
+        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+            <thead>
+                <tr style="border-bottom: 2px solid #e2e8f0;">
+                    <th style="text-align: left; padding: 10px 0;">Item</th>
+                    <th style="text-align: center; padding: 10px 0;">Qty</th>
+                    <th style="text-align: right; padding: 10px 0;">Price</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in order.items %}
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 10px 0;">{{ item.name }}</td>
+                    <td style="text-align: center; padding: 10px 0;">{{ item.quantity }}</td>
+                    <td style="text-align: right; padding: 10px 0;">₹{{ item.subtotal }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <p style="margin-bottom: 30px;">You can find your invoice attached to this email.</p>
+    
+    <a href="{{ site_url }}" style="background: #6366f1; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; font-weight: 600;">Visit Our Store</a>
+</div>
+{% endblock %}
