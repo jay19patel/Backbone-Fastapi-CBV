@@ -20,6 +20,7 @@ class Testimonial(BackboneDocument):
     content: Text = Field(description="The feedback/content of the testimonial")
     rating: int = Field(default=5, description="Star rating out of 5")
     productImage: Optional[str] = Field(default=None, description="Image URL of the product they received")
+    avatar_url: Optional[str] = Field(default=None, description="Profile image URL for the reviewer")
 
     class Settings:
         name = "testimonials"
@@ -27,6 +28,7 @@ class Testimonial(BackboneDocument):
             IndexModel([("user.id", ASCENDING)], unique=False),
             IndexModel([("created_at", DESCENDING)], unique=False)
         ]
+
 
 class Contact(BackboneDocument):
     name: Name = Field(description="The name of the person contacting")

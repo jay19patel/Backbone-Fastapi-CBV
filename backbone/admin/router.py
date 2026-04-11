@@ -103,6 +103,12 @@ template_dir = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=template_dir)
 templates.env.globals["admin_site"] = admin_site
 
+import json
+from ..common.services import CacheEncoder
+def custom_tojson(value, indent=None):
+    return json.dumps(value, cls=CacheEncoder, indent=indent)
+templates.env.filters["tojson"] = custom_tojson
+
 # Custom Filters
 def nice_title(value: str) -> str:
     if not value: return ""
@@ -231,10 +237,13 @@ async def admin_dashboard(request: Request, user: Optional[User] = Depends(get_a
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    settings = request.app.state.backbone_config.config
     superuser_count = await User.find(User.is_superuser == True).count()
     return templates.TemplateResponse("login.html", {
         "request": request,
         "superuser_exists": superuser_count > 0,
+        "default_email": settings.ADMIN_EMAIL,
+        "default_password": settings.ADMIN_PASSWORD,
         "error": None
     })
 
@@ -265,16 +274,22 @@ async def login_handle(
         user = await User.find_one(User.email == email)
         
         if not user or not PasswordManager.verify_password(password, user.hashed_password):
-             return templates.TemplateResponse("login.html", {
+            settings = request.app.state.backbone_config.config
+            return templates.TemplateResponse("login.html", {
                 "request": request,
                 "superuser_exists": True,
+                "default_email": settings.ADMIN_EMAIL,
+                "default_password": settings.ADMIN_PASSWORD,
                 "error": "Invalid username or password"
             })
             
         if not user.is_superuser:
+            settings = request.app.state.backbone_config.config
             return templates.TemplateResponse("login.html", {
                 "request": request,
                 "superuser_exists": True,
+                "default_email": settings.ADMIN_EMAIL,
+                "default_password": settings.ADMIN_PASSWORD,
                 "error": "Access denied. Superuser only."
             })
 
@@ -629,7 +644,8 @@ def _get_config_entries() -> list:
     """Extract all settings fields with their current values and metadata.
     Sensitive values are masked SERVER-SIDE before being sent to the template.
     """
-    from ..core.settings import Settings, settings
+    from ..core.config import BackboneConfig
+    settings = BackboneConfig.get_instance().config
     import os
 
     # Gather env file keys (to mark from_env=True)
@@ -693,7 +709,7 @@ async def store_page(request: Request, user: Optional[User] = Depends(get_admin_
         return RedirectResponse(url="/admin/login")
 
     from ..core.models import Store
-    from ..core.settings import settings
+    settings = request.app.state.backbone_config.config
 
     config_entries = _get_config_entries()
 

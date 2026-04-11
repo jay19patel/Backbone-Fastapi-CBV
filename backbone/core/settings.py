@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "backbone_app"
 
+    # Default Admin Credentials
+    ADMIN_EMAIL: str = "admin@gmail.com"
+    ADMIN_PASSWORD: str = "admin"
+
     # Cache Settings
     CACHE_ENABLED: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -50,12 +54,7 @@ class Settings(BaseSettings):
     EMAIL_FROM_NAME: str = "Backbone"
     EMAIL_TIMEOUT_SECONDS: int = 30
 
-    # LLM Settings
-    LLM_PROVIDER: str = "" # Set in .env to override (ollama | google)
-    DEVELOPMENT_LLM_MODEL: str = "llama3.1:8b"
-    PRODUCTION_LLM_MODEL: str = "gemini-2.0-flash"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    GOOGLE_API_KEY: str = ""
+
 
     @property
     def cors_origins_list(self) -> list:

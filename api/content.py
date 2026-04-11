@@ -12,9 +12,10 @@ class FAQView(GenericCrudView):
 class TestimonialView(GenericCrudView):
     schema = Testimonial
     search_fields = ["content", "author_name"]
-    list_fields = ["id", "user", "author_name", "content", "rating", "productImage", "created_at"]
+    list_fields = ["id", "user", "author_name", "content", "rating", "productImage", "avatar_url", "created_at"]
     fetch_links = True
     permission_classes = [AllowAny]
+
 
 class ContactView(GenericCrudView):
     schema = Contact

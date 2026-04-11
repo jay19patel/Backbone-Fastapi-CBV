@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from typing import Optional, Any
-from ..core.settings import settings
+from typing import Optional, Any
 
 # ── Auth Utilities ──────────────────────────────────────────────────────────
 
@@ -21,6 +21,8 @@ class TokenManager:
     """Handles JWT token creation and decoding."""
     @staticmethod
     def create_access_token(data: dict, sid: str, expires_delta: Optional[timedelta] = None) -> str:
+        from ..core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
         to_encode.update({"exp": expire, "type": "access", "sid": sid})
@@ -28,6 +30,8 @@ class TokenManager:
 
     @staticmethod
     def create_refresh_token(data: dict, sid: str) -> str:
+        from ..core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
         to_encode.update({"exp": expire, "type": "refresh", "sid": sid})
@@ -35,6 +39,8 @@ class TokenManager:
 
     @staticmethod
     def decode_token(token: str) -> Optional[dict]:
+        from ..core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
         try: return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         except Exception: return None
 

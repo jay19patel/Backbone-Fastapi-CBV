@@ -17,7 +17,7 @@ from bson import ObjectId
 from pydantic import BaseModel
 
 from ..core.models import Task
-from ..core.settings import settings
+
 
 logger = logging.getLogger("backbone.services")
 

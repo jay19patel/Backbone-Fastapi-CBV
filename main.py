@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,7 +10,17 @@ from backbone import (
     on_field_change,
     log as backbone_log,
 )
-from backbone.core.settings import settings
+from backbone.core.settings import Settings
+
+class ProjectSettings(Settings):
+    """
+    Project-specific settings. Inherits all defaults from Backbone core Settings.
+    You can add custom config variables here which will automatically show up 
+    in your Admin "Store" or be used anywhere!
+    """
+    pass
+
+settings = ProjectSettings()
 
 # Schemas
 from schemas.shop import Category, Product, Order
@@ -27,16 +38,25 @@ from backbone.auth.pages import router as auth_pages_router
 # --------------------------------------------------------------------------
 # Application Setup
 # --------------------------------------------------------------------------
-app = FastAPI(title="Khushi Website Modular Backend")
+app = FastAPI(title="Soul Craft Studio — Backbone Backend")
 
-# Allow requests from the Next.js frontend
+# Allowed CORS origins — add production frontend URL here when deploying
+_extra_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    *_extra_origins,
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 models_to_register = [
     Category,

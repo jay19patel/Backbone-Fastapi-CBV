@@ -24,7 +24,6 @@ from reportlab.pdfgen import canvas
 
 from .common.services import background_internal_task
 from .core.models import Email
-from .core.settings import settings
 
 logger = logging.getLogger("backbone.email")
 
@@ -163,6 +162,8 @@ def _build_mime_message(
 
 
 def _smtp_send_sync(message: MIMEMultipart) -> None:
+    from .core.config import BackboneConfig
+    settings = BackboneConfig.get_instance().config
     host_lower = (settings.EMAIL_HOST or "").lower()
     if "gmail" in host_lower and (not settings.EMAIL_USERNAME or not settings.EMAIL_PASSWORD):
         raise RuntimeError(
@@ -199,6 +200,8 @@ class EmailSender:
         pdf_attachments: Optional[List[Dict[str, Any]]] = None,
         max_retries: int = 3,
     ) -> Optional[str]:
+        from .core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
         context = context or {}
         attachments = attachments or []
         pdf_attachments = pdf_attachments or []
@@ -234,6 +237,8 @@ class EmailSender:
         return str(email_log.id)
 
     async def queue_registration_emails(self, *, to_email: str, full_name: str, login_url: str) -> Dict[str, Optional[str]]:
+        from .core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
         base_context = {
             "full_name": full_name,
             "login_url": login_url,
@@ -270,6 +275,8 @@ class EmailSender:
 
 
 async def process_email_delivery_task(email_log_id: str) -> None:
+    from .core.config import BackboneConfig
+    settings = BackboneConfig.get_instance().config
     email_log = await Email.get(email_log_id)
     if not email_log:
         logger.warning("Email not found for id=%s", email_log_id)
