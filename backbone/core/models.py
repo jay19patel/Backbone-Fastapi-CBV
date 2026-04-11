@@ -77,7 +77,9 @@ class User(AuditDocument):
     is_active: Bool = Field(default=True, description="Indicates if the user account is active")
     is_staff: Bool = Field(default=False, description="Indicates if the user has staff privileges")
     is_superuser: Bool = Field(default=False, description="Indicates if the user has superuser system privileges")
+    is_verified: Bool = Field(default=False, description="Indicates if the user has verified their email address")
     hashed_password: str = Field(description="User's hashed password (internal use only)")
+
     
     # Profile fields
     profile_image: Thumbnail = Field(default=None, description="User's profile image or avatar")
@@ -202,25 +204,6 @@ TaskLog = Task
 EmailDeliveryLog = Email
 BackboneStore = Store
 
-class PasswordResetToken(Document):
-    user_id: str = Field(description="ID of the user requesting a password reset")
-    email: EmailStr = Field(description="Email associated with the password reset request")
-    token_hash: str = Field(description="SHA256 hash of the raw reset token")
-    is_active: bool = Field(default=True, description="Whether the reset token is still valid")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp when the token was created")
-    expires_at: datetime = Field(description="Timestamp when the token expires")
-    used_at: Optional[datetime] = Field(default=None, description="Timestamp when the token was consumed")
-
-    class Settings:
-        name = "password_reset_tokens"
-        indexes = [
-            IndexModel([("token_hash", ASCENDING)], unique=True),
-            IndexModel([("user_id", ASCENDING)]),
-            IndexModel([("email", ASCENDING)]),
-            IndexModel([("is_active", ASCENDING)]),
-            IndexModel([("expires_at", ASCENDING)]),
-            IndexModel([("created_at", DESCENDING)]),
-        ]
 
 class BackboneDocument(AuditDocument):
     """

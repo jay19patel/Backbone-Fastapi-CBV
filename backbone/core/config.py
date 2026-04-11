@@ -52,20 +52,20 @@ class BackboneConfig:
             LogEntry,
             Task,
             Attachment,
-            PasswordResetToken,
             Email,
             Store,
         )
+
         core_models = [
             User,
             Session,
             LogEntry,
             Task,
             Attachment,
-            PasswordResetToken,
             Email,
             Store,
         ]
+
         
         # Ensures core models are loaded first to safely resolve Beanie links
         self.document_models = core_models.copy()
@@ -143,7 +143,6 @@ class BackboneConfig:
             LogEntry,
             Task,
             Attachment,
-            PasswordResetToken,
             Email,
             Store,
         )
@@ -153,10 +152,10 @@ class BackboneConfig:
             LogEntry,
             Task,
             Attachment,
-            PasswordResetToken,
             Email,
             Store,
         }
+
         
         for model in self.document_models:
             category = "Core Models" if model in core_models_set else "Custom Models"
@@ -271,6 +270,19 @@ class BackboneConfig:
             document_models=[m for m in self.document_models if hasattr(m, "Settings")]
         )
         logger.info("Beanie initialized")
+        
+        # Sync Admin User
+        try:
+            admin_email = getattr(self.config, "ADMIN_EMAIL", None)
+            admin_password = getattr(self.config, "ADMIN_PASSWORD", None)
+            if admin_email and admin_password:
+                from ..auth.service import AuthService
+                auth_service = AuthService(db_instance=self.database)
+                await auth_service.sync_admin_user(admin_email, admin_password)
+                logger.info("Admin user synchronized from settings")
+        except Exception as e:
+            logger.error(f"Failed to sync admin user: {e}")
+
 
         # Start Task Workers
         if self.task_queue.enabled:

@@ -33,6 +33,12 @@ from backbone.core.media_router import router as media_router
 from api.content import router as content_router
 from pages.contact import router as pages_router
 from backbone.auth.pages import router as auth_pages_router
+from pages.admin_pages import (
+    StoreTestView, 
+    ContactFormTestView, 
+    AdminProductListView, 
+    AdminOrderManagementView
+)
 
 
 # --------------------------------------------------------------------------
@@ -66,6 +72,12 @@ models_to_register = [
     Testimonial,
     Contact,
 ]
+
+# Custom Admin Pages (Must be registered before BackboneConfig to avoid greedy route conflicts)
+app.include_router(StoreTestView.as_router("/admin/pages/store-test", tags=["Admin Pages"]))
+app.include_router(ContactFormTestView.as_router("/admin/pages/contact-form", tags=["Admin Pages"]))
+app.include_router(AdminProductListView.as_router("/admin/pages/products", tags=["Admin Pages"]))
+app.include_router(AdminOrderManagementView.as_router("/admin/pages/orders", tags=["Admin Pages"]))
 
 BackboneConfig(
     app=app,

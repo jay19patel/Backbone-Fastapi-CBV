@@ -30,7 +30,6 @@ from .core.settings import Settings, settings
 from .core.models import (
     EventDocument,
     LogEntry,
-    PasswordResetToken,
     Session,
     Task,
     User,
@@ -171,7 +170,6 @@ __all__ = [
     "LogEntry",
     "EventDocument",
     "Task",
-    "PasswordResetToken",
     "Email",
     "Store",
     # Signals

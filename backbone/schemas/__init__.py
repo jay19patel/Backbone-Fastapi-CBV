@@ -32,7 +32,9 @@ class UserOut(BaseModel):
     full_name: str
     is_active: bool
     is_staff: bool
+    is_verified: bool = False
     headline: Optional[str] = None
+
     bio: Optional[str] = None
     description: Optional[str] = None # For frontend compatibility (aliased to bio)
     profile_image: Optional[Any] = None

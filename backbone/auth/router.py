@@ -14,6 +14,7 @@ from ..schemas import (
     GoogleLoginSchema, LoginSchema, RegisterSchema,
     TokenResponse, UserOut, UserUpdate,
 )
+from fastapi.responses import RedirectResponse
 from ..common.utils import PasswordManager, TokenManager
 from .hooks import register_auth_hooks
 
@@ -90,7 +91,20 @@ class AuthRouter:
             
                 new_user = await self.user_repository.create(user_dict, request=request)
 
+                # Send verification email
+                try:
+                    # In stateless redirect mode, the link hits the BACKEND first
+                    # We get the base API URL (e.g. http://localhost:8000/api/auth)
+                    # and append /verify
+                    base_url = str(request.base_url).rstrip('/')
+                    backend_verify_url = f"{base_url}{self.router.prefix}/verify"
+                    
+                    await auth_service.send_verification_email(new_user, backend_verify_url)
+                except Exception as e:
+                    logger.error(f"Failed to send verification email: {e}")
+
                 return self._serialise_user(new_user)
+
             except HTTPException:
                 raise
             except Exception:
@@ -372,3 +386,49 @@ class AuthRouter:
             except Exception:
                 logger.exception("Update user profile failed")
                 raise
+
+        @self.router.get("/verify", response_class=RedirectResponse)
+        async def verify_redirect(
+            request: Request,
+            token: str
+        ):
+            """Initial entry point from email link. Verifies and redirects to frontend."""
+            # Use configuration for frontend URLs
+            backbone_config = request.app.state.backbone_config
+            frontend_success = getattr(backbone_config.config, "FRONTEND_VERIFY_SUCCESS_URL", "http://localhost:3000/verify-success")
+            frontend_error = getattr(backbone_config.config, "FRONTEND_VERIFY_ERROR_URL", "http://localhost:3000/verify-error")
+            
+            try:
+                from .service import AuthService
+                auth_service = AuthService(request)
+                success = await auth_service.verify_email_with_token(token)
+                
+                if success:
+                    return RedirectResponse(url=frontend_success)
+                else:
+                    return RedirectResponse(url=f"{frontend_error}?reason=invalid_token")
+            except Exception:
+                logger.exception("Email verification redirection failed")
+                return RedirectResponse(url=f"{frontend_error}?reason=server_error")
+
+        @self.router.get("/verify-email")
+        async def verify_email_json(
+            request: Request,
+            token: str
+        ):
+            """Secondary endpoint for JSON-based verification (if needed by frontend)."""
+            try:
+                from .service import AuthService
+                auth_service = AuthService(request)
+                success = await auth_service.verify_email_with_token(token)
+                
+                if success:
+                    return {"detail": "Email verified successfully", "success": True}
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+            except HTTPException:
+                raise
+            except Exception:
+                logger.exception("Email verification failed")
+                raise HTTPException(status_code=500, detail="Email verification failed")
+

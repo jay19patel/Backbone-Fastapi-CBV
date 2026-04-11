@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # Defaults for DB
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "backbone_app"
+    SITE_NAME: str = "Soul Craft Studio"
+    FRONTEND_VERIFY_URL: str = "http://localhost:3000/verify-email"
+    FRONTEND_VERIFY_SUCCESS_URL: str = "http://localhost:3000/verify-success"
+    FRONTEND_VERIFY_ERROR_URL: str = "http://localhost:3000/verify-error"
+
 
     # Default Admin Credentials
     ADMIN_EMAIL: str = "admin@gmail.com"

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Inter', Arial, sans-serif; line-height: 1.6; color: #334155; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; padding: 20px 0; border-bottom: 2px solid #f1f5f9; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #94a3b8; font-size: 12px; padding-top: 20px; border-top: 1px solid #f1f5f9; }
+        h1 { color: #0f172a; font-size: 24px; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Welcome to {{ site_name|default('Soul Craft Studio') }}!</h1>
+    </div>
+    <div class="content">
+        <p>Hi {{ full_name }},</p>
+        <p>We're thrilled to have you join our community of handcrafted art enthusiasts! Your account has been successfully created.</p>
+        <p>At {{ site_name|default('Soul Craft Studio') }}, we believe every piece tells a story, and we're so glad you're now part of ours.</p>
+        <p>You can now browse our collections, track your orders, and save your favorite handcrafted items.</p>
+        
+        {% if verification_url %}
+        <p>To complete your registration and verify your email, please click the button below:</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{{ verification_url }}" style="display: inline-block; padding: 12px 24px; background-color: #f97316; color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold;">Verify Email Address</a>
+        </div>
+        <p style="font-size: 13px; color: #64748b;">If the button above doesn't work, you can copy and paste this link: <br> {{ verification_url }}</p>
+        {% endif %}
+
+        <p>If you have any questions, feel free to reply to this email.</p>
+        <p>Happy exploring!</p>
+        <p>Best regards,<br>The {{ site_name|default('Soul Craft Studio') }} Team</p>
+
+    </div>
+    <div class="footer">
+        &copy; {{ current_year }} {{ site_name|default('Soul Craft Studio') }}. All rights reserved.
+    </div>
+</body>
+</html>

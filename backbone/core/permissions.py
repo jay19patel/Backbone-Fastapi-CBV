@@ -223,6 +223,25 @@ class IsAdminUser(BasePermission):
         return True
 
 
+class IsSuperUser(BasePermission):
+    """
+    Grants access only to users with ``is_superuser=True``.
+
+    Raises:
+        HTTPException(403): If the user is not a superuser.
+    """
+
+    async def has_permission(self) -> bool:
+        """Verify that the user has superuser privileges."""
+        if not self.user or not self.user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access restricted to superusers only.",
+            )
+        return True
+
+
+
 class IsOwner(BasePermission):
     """
     Grants access only to the creator of a resource.
@@ -262,7 +281,7 @@ class IsOwner(BasePermission):
 # ── Permission Constants ───────────────────────────────────────────────────
 
 # Permissions that require an authenticated user
-AUTH_REQUIRING_PERMISSIONS = (IsAuthenticated, IsOwner, IsAdminUser)
+AUTH_REQUIRING_PERMISSIONS = (IsAuthenticated, IsOwner, IsAdminUser, IsSuperUser)
 
 
 # ── Permission Dependency Factory ──────────────────────────────────────────

@@ -24,6 +24,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 
+# ── Load .env from root ───────────────────────────────────────────────────
+# Ensuring settings are loaded from the correct .env even if run from tests/
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+if os.path.exists(env_path):
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, val = line.split("=", 1)
+                # Use setdefault to not override already set env vars
+                os.environ.setdefault(key.strip(), val.strip())
+
 from backbone.core.settings import settings
 from backbone.core.models import Attachment
 from schemas.shop import Category, Product, Order, OrderItem

@@ -54,6 +54,23 @@ class OrderItem(BaseModel):
     price: float
     image: Optional[str] = None
 
+    @pydantic.field_validator('price', mode='before')
+    @classmethod
+    def parse_price(cls, v: Any) -> float:
+        if isinstance(v, str):
+            import re
+            numeric_str = re.sub(r'[^\d.]', '', v)
+            return float(numeric_str) if numeric_str else 0.0
+        return v or 0.0
+
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def handle_product_id(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if 'product_id' not in data:
+                data['product_id'] = data.get('id') or data.get('_id')
+        return data
+
 
 class Order(BackboneDocument):
     customer_name: Name = Field(description="Full name of the customer")
@@ -104,6 +121,23 @@ class CartItem(BaseModel):
     quantity: int
     price: float
     image: Optional[str] = None
+
+    @pydantic.field_validator('price', mode='before')
+    @classmethod
+    def parse_price(cls, v: Any) -> float:
+        if isinstance(v, str):
+            import re
+            numeric_str = re.sub(r'[^\d.]', '', v)
+            return float(numeric_str) if numeric_str else 0.0
+        return v or 0.0
+
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def handle_product_id(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if 'product_id' not in data:
+                data['product_id'] = data.get('id') or data.get('_id')
+        return data
 
 
 class Cart(BackboneDocument):
