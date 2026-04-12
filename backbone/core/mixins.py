@@ -120,6 +120,10 @@ class ViewContext:
     filter_fields: ClassVar[List[str]] = []
     list_fields: ClassVar[Optional[List[str]]] = None
     fetch_links: ClassVar[bool] = False
+    # If True, the document will be re-fetched with links populated before being returned in a Create/Update response.
+    # WARNING: This may cause ResponseValidationError if the response_model expects strings for these links.
+    populate_links_on_save: ClassVar[bool] = False
+    
     cache_ttl: ClassVar[int] = 300
     populate_fields: ClassVar[Optional[Dict[str, Any]]] = None
 
@@ -290,10 +294,11 @@ class ViewContext:
             return data
         return self._repository.serialize_document(data)
 
-    def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Convert string IDs in the payload into MongoDB DBRef objects for
-        Beanie Link fields, allowing clients to send simple string IDs.
+        Beanie Link fields. Also automatically detects Base64 image data
+        and handles attachment creation.
 
         Args:
             payload: The request data dict.
@@ -301,9 +306,6 @@ class ViewContext:
         Returns:
             The modified payload with DBRef values for Link fields.
         """
-        from bson import ObjectId as BsonObjectId
-        from bson.dbref import DBRef
-
         populate = self._get_populate_fields()
 
         for field_name, config in populate.items():
@@ -315,14 +317,90 @@ class ViewContext:
             if not collection_name:
                 continue
 
+            # --- Automated Media Handling ---
+            # If it looks like Base64 data and targets the attachments collection, handle it automatically
+            if collection_name == "attachments" and isinstance(val, str) and val.startswith("data:"):
+                attachment = await self._handle_base64_attachment(field_name, val)
+                if attachment:
+                    payload[field_name] = attachment
+                    continue
+
+            # Handle gallery/list of links
+            if isinstance(val, list):
+                processed_list = []
+                for item in val:
+                    if isinstance(item, str) and item.startswith("data:"):
+                        att = await self._handle_base64_attachment(field_name, item)
+                        if att: processed_list.append(att)
+                    else:
+                        processed_list.append(item)
+                val = processed_list
+
             try:
-                payload[field_name] = self._convert_to_dbref(
-                    val, collection_name,
-                )
+                payload[field_name] = self._convert_to_dbref(val, collection_name)
             except Exception:
                 pass
 
         return payload
+
+    async def _handle_base64_attachment(self, field_name: str, base64_data: str) -> Optional[Any]:
+        """
+        Internal helper to create an Attachment record from Base64 data
+        and queue the background file storage task.
+        """
+        try:
+            from .models import Attachment
+            from .media import process_attachment_upload
+            from .config import BackboneConfig
+            from beanie import PydanticObjectId
+            import mimetypes
+
+            # Determine file extension from data URI
+            ext = "bin"
+            if "image/png" in base64_data: ext = "png"
+            elif "image/jpeg" in base64_data: ext = "jpg"
+            elif "image/webp" in base64_data: ext = "webp"
+            
+            # Extract clean encoded data
+            if "," in base64_data:
+                encoded = base64_data.split(",")[1]
+            else:
+                encoded = base64_data
+
+            # Create the Attachment record (status: pending)
+            filename = f"pending_{PydanticObjectId()}.{ext}"
+            
+            # Use self.schema name for folder organization
+            collection_name = getattr(getattr(self.schema, "Settings", None), "name", self.schema.__name__.lower())
+            
+            attachment = Attachment(
+                filename=filename,
+                content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                status="pending",
+                collection_name=collection_name,
+                field_name=field_name
+            )
+            await attachment.insert()
+            
+            # 5. Queue background processing task
+            config = BackboneConfig.get_instance()
+            
+            # Use the internal task queue to process the upload
+            if hasattr(config, "internal_task_queue") and config.internal_task_queue.enabled:
+                await config.internal_task_queue.enqueue(
+                    process_attachment_upload,
+                    str(attachment.id),
+                    encoded
+                )
+            else:
+                # If workers are disabled, we might want to process synchronously 
+                # or just log a warning. For now, we trust the queue.
+                logger.warning("Could not enqueue media processing task: Task queue disabled or missing.")
+            
+            return attachment
+        except Exception as e:
+            logger.error(f"Failed to auto-handle base64 attachment for {field_name}: {e}")
+            return None
 
     @staticmethod
     def _convert_to_dbref(val: Any, collection_name: str) -> Any:

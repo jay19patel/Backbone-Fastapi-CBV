@@ -38,7 +38,7 @@ def _register_actions(view: Any, router: APIRouter) -> None:
             **kwargs,
         )
 
-def _extract_create_data(view: Any, data: Any) -> dict:
+async def _extract_create_data(view: Any, data: Any) -> dict:
     """Extract and process create data, handling Link fields."""
     populate = view._get_populate_fields()
     extracted_links = {}
@@ -50,12 +50,12 @@ def _extract_create_data(view: Any, data: Any) -> dict:
 
     validated = data.model_dump(by_alias=True, exclude={"id"}) if hasattr(data, "model_dump") else data
     validated.update(extracted_links)
-    return view._process_link_fields(validated)
+    return await view._process_link_fields(validated)
 
-def _extract_update_data(view: Any, data: Any) -> dict:
+async def _extract_update_data(view: Any, data: Any) -> dict:
     """Extract update data, stripping dangerous and unknown fields."""
     raw = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else dict(data)
     from ..core.mixins import DANGEROUS_FIELDS
     for field in DANGEROUS_FIELDS:
         raw.pop(field, None)
-    return view._process_link_fields(raw)
+    return await view._process_link_fields(raw)

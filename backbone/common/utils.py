@@ -38,6 +38,14 @@ class TokenManager:
         return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
     @staticmethod
+    def create_action_token(data: dict, action: str, expires_delta: Optional[timedelta] = None) -> str:
+        from ..core.config import BackboneConfig
+        settings = BackboneConfig.get_instance().config
+        to_encode = data.copy()
+        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=24))
+        to_encode.update({"exp": expire, "action": action})
+        return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
+    @staticmethod
     def decode_token(token: str) -> Optional[dict]:
         from ..core.config import BackboneConfig
         settings = BackboneConfig.get_instance().config

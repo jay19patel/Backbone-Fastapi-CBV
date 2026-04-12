@@ -241,22 +241,30 @@ class AuthRouter:
 
                 # Handle Google profile picture
                 if picture_url and not getattr(user, "profile_image", None):
-                    from ..core.models import Attachment
-                    # Create attachment for the Google profile image
-                    attachment = Attachment(
-                        filename=f"google_profile_{user.id}.jpg",
-                        file_path=picture_url,
-                        content_type="image/jpeg",
-                        collection_name="users",
-                        document_id=str(user.id),
-                        field_name="profile_image",
-                        status="completed"
-                    )
-                    await attachment.insert()
-                    
-                    # Beanie requires Link fields to either be the raw Document or a DBRef
-                    user.profile_image = attachment
-                    needs_save = True
+                    from ..core.media import save_external_image
+                    try:
+                        # Store image locally/Cloudinary
+                        filename = f"google_profile_{user.id}.jpg"
+                        stored_path = await save_external_image(picture_url, "users", filename)
+                        
+                        # Create attachment record
+                        attachment = Attachment(
+                            filename=filename,
+                            file_path=stored_path,
+                            content_type="image/jpeg",
+                            collection_name="users",
+                            document_id=str(user.id),
+                            field_name="profile_image",
+                            status="completed"
+                        )
+                        await attachment.insert()
+                        
+                        # Link to user
+                        user.profile_image = attachment
+                        needs_save = True
+                        logger.info("Stored Google profile picture for user %s", user.id)
+                    except Exception as e:
+                        logger.warning("Failed to store Google profile picture: %s", e)
                     
                 if needs_save:
                     await user.save()
@@ -402,10 +410,9 @@ class AuthRouter:
                 auth_service = AuthService(request)
                 success = await auth_service.verify_email_with_token(token)
                 
-                # We render the core verification status page
-                # This page is identified by its name in the auth_pages_router
-                page_url = str(request.url_for("email_verification_status_page"))
-                return RedirectResponse(url=f"{page_url}?token={token}&success={'true' if success else 'false'}")
+                # Redirect to the built-in verification status page
+                status_page_url = str(request.url_for("email_verification_status_page"))
+                return RedirectResponse(url=f"{status_page_url}?token={token}&success={'true' if success else 'false'}")
             except Exception:
                 logger.exception("Email verification redirection failed")
                 page_url = str(request.url_for("email_verification_status_page"))

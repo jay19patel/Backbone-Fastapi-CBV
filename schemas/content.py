@@ -15,7 +15,7 @@ class FAQ(BackboneDocument):
         ]
 
 class Testimonial(BackboneDocument):
-    user: Owner = Field(description="The user who provided the testimonial (if authenticated), or placeholder")
+    user: Optional[Owner] = Field(default=None, description="The user who provided the testimonial (if authenticated), or placeholder")
     author_name: Optional[str] = Field(default=None, description="Name of the person giving the testimonial")
     content: Text = Field(description="The feedback/content of the testimonial")
     rating: int = Field(default=5, description="Star rating out of 5")

@@ -214,18 +214,7 @@ class BeanieRepository(Generic[T]):
 
         detected: Dict[str, Any] = {}
 
-        # 1. Top-level only: Audit user fields
-        if not prefix:
-            for audit_field in AUDIT_USER_FIELDS:
-                if audit_field in schema.model_fields:
-                    detected[audit_field] = {
-                        "collection": "users",
-                        "field": audit_field,
-                        "is_string_id": True,
-                        "fields": list(DEFAULT_USER_RETURN_FIELDS),
-                    }
-
-        # 2. Field-by-field check
+        # 1. Field-by-field check
         for field_name, field_info in schema.model_fields.items():
             full_path = f"{prefix}{field_name}"
             annotation = field_info.annotation
@@ -248,6 +237,11 @@ class BeanieRepository(Generic[T]):
                     config_dict["fields"] = list(DEFAULT_USER_RETURN_FIELDS)
                 
                 detected[full_path] = config_dict
+                
+                # RECURSION: Also detect links inside the target model for deep population
+                if target_model is not schema:
+                    nested = BeanieRepository.detect_populate_fields(target_model, f"{full_path}.", depth + 1)
+                    detected.update(nested)
             else:
                 # Recurse into nested models/lists/unions to find more links
                 # but only if it's not a direct Link (already handled)
@@ -259,7 +253,9 @@ class BeanieRepository(Generic[T]):
                     elif uo in (list, List):
                         # Link info in list is handled by _extract_link_info above
                         # If we are here, it's a list OF something else (like models)
-                        res.extend(flatten_types(get_args(t)[0]))
+                        args = get_args(t)
+                        if args:
+                             res.extend(flatten_types(args[0]))
                     elif isinstance(t, type):
                         res.append(t)
                     return res
@@ -274,27 +270,32 @@ class BeanieRepository(Generic[T]):
     # ── Data Sanitisation ───────────────────────────────────────────────────
 
     @staticmethod
-    def _sanitize(data: Any) -> Any:
+    def _sanitize(data: Any, depth: int = 0) -> Any:
         """
         Recursively convert all ``ObjectId`` and ``Link`` instances in a
         document tree to plain strings.
 
         Args:
             data: A dict, list, or scalar value.
+            depth: Current recursion depth.
 
         Returns:
             The sanitised structure with string IDs.
         """
+        if depth > 5: # Safety limit for deep documents
+            return str(data)
+
         if isinstance(data, dict):
-            # Auto-resolve media URLs for any "file_path" fields
-            # If it's a media attachment dictionary, we flatten it to a URL string
-            if "file_path" in data and isinstance(data["file_path"], str):
-                from .url_utils import get_media_url
-                return get_media_url(data["file_path"])
-                
-            return {k: BeanieRepository._sanitize(v) for k, v in data.items()}
+            # 1. Recurse into children
+            sanitized = {k: BeanieRepository._sanitize(v, depth + 1) for k, v in data.items()}
+            # 2. Ensure "id" field exists if "_id" is present (for Jinja2 template compatibility)
+            if "_id" in sanitized and "id" not in sanitized:
+                sanitized["id"] = sanitized["_id"]
+            return sanitized
+        
         if isinstance(data, list):
-            return [BeanieRepository._sanitize(v) for v in data]
+            return [BeanieRepository._sanitize(v, depth + 1) for v in data]
+        
         if isinstance(data, (ObjectId, PydanticObjectId)):
             return str(data)
 
@@ -302,13 +303,13 @@ class BeanieRepository(Generic[T]):
         from bson.dbref import DBRef
 
         if isinstance(data, Link):
-            if hasattr(data, "ref"):
-                return str(data.ref.id)
-            if hasattr(data, "id"):
-                return str(data.id)
+            if hasattr(data, "id"): return str(data.id)
+            if hasattr(data, "ref"): return str(data.ref.id)
             return str(data)
+            
         if isinstance(data, DBRef):
             return str(data.id)
+            
         return data
 
     # ── Query Preparation ───────────────────────────────────────────────────
@@ -484,7 +485,12 @@ class BeanieRepository(Generic[T]):
                         "in": {
                             "$ifNull": [
                                 "$$item.id",
-                                {"$ifNull": ["$$item.$id", "$$item"]},
+                                {
+                                    "$ifNull": [
+                                        "$$item._id",
+                                        {"$ifNull": ["$$item.$id", "$$item"]}
+                                    ]
+                                }
                             ],
                         },
                     },
@@ -495,7 +501,12 @@ class BeanieRepository(Generic[T]):
             return {
                 "$ifNull": [
                     f"${local_field}.id",
-                    {"$ifNull": [f"${local_field}.$id", f"${local_field}"]},
+                    {
+                        "$ifNull": [
+                            f"${local_field}._id",
+                            {"$ifNull": [f"${local_field}.$id", f"${local_field}"]}
+                        ]
+                    }
                 ],
             }
         return f"${local_field}"

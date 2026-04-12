@@ -79,12 +79,20 @@ class GenericCreateView(CreateMixin):
     def _register_create_route(router: APIRouter, view: CreateMixin, perm_dep: Callable) -> None:
         async def create_view(request: Request, data: Any = Body(...), user: Any = Depends(perm_dep)) -> Any:
             await view.resolve_context(request)
-            val_data = _extract_create_data(view, data)
+            val_data = await _extract_create_data(view, data)
             val_data.update({"created_at": datetime.now(timezone.utc), "is_deleted": False})
             if user: val_data["created_by"] = str(user.id)
             val_data = await view.before_create(val_data, user)
             inst = await view.perform_create(val_data)
             inst = await view.after_create(inst, user)
+            
+            # REFETCH: If fetch_links is enabled, re-fetch the document with all populated links
+            # before returning it to the client. This ensures immediate data consistency.
+            if view.fetch_links:
+                pk = str(getattr(inst, "id", None) or inst.id)
+                re_fetched = await view.perform_retrieve(pk, request, user)
+                if re_fetched: inst = re_fetched
+
             await view._invalidate_cache()
             return view._serialize_response(inst)
         create_view.__annotations__["data"] = view.create_schema or view.schema
@@ -141,12 +149,19 @@ class GenericUpdateView(UpdateMixin):
         async def update_view(request: Request, pk: str, data: Any = Body(...), user: Any = Depends(perm_dep)) -> Any:
             await view.resolve_context(request)
             inst = await view.get_object(pk, request, user)
-            upd_data = _extract_update_data(view, data)
+            upd_data = await _extract_update_data(view, data)
             upd_data["updated_at"] = datetime.now(timezone.utc)
             if user: upd_data["updated_by"] = str(user.id)
             upd_data = await view.before_update(inst, upd_data, user)
             result = await view.perform_update(inst, upd_data)
             result = await view.after_update(result, user)
+            
+            # REFETCH: If populate_links_on_save is enabled, re-fetch with links
+            if view.populate_links_on_save:
+                pk = str(getattr(result, "id", None) or result.id)
+                re_fetched = await view.perform_retrieve(pk, request, user)
+                if re_fetched: result = re_fetched
+
             await view._invalidate_cache()
             return view._serialize_response(result)
         update_view.__annotations__["data"] = view.update_schema or Dict[str, Any]

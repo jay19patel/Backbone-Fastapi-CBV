@@ -60,6 +60,25 @@ async def _save_to_local(file_bytes: bytes, subfolder: str, filename: str) -> st
     return f"/media/{subfolder}/{filename}"
 
 
+async def save_external_image(url: str, subfolder: str, filename: str) -> str:
+    """
+    Download an external image and save it either to Cloudinary or locally.
+    Returns the secure URL or local relative path.
+    """
+    import httpx
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url)
+        if res.status_code != 200:
+            raise Exception(f"Failed to download image from {url}")
+        file_bytes = res.content
+        content_type = res.headers.get("Content-Type", "image/jpeg")
+
+    if _is_cloudinary_configured():
+        return await _upload_to_cloudinary(file_bytes, subfolder, filename.split('.')[0], content_type)
+    else:
+        return await _save_to_local(file_bytes, subfolder, filename)
+
+
 async def process_attachment_upload(attachment_id: str, base64_data: str):
     """
     Background task to process and save attachment file.

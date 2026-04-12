@@ -53,7 +53,7 @@ def serialize_attachment(value: Any) -> Any:
 
 # The "Thumbnail" Type
 Thumbnail = Annotated[
-    Optional[Link["Attachment"]], 
+    Optional[Union[str, Link["Attachment"]]], 
     Field(default=None),
     PlainSerializer(serialize_attachment, return_type=Optional[str], when_used="json")
 ]
@@ -63,7 +63,7 @@ def Attachment(foldername: str = "general", label: str = "Attachment") -> Any:
     Factory for specific attachment fields with folder constraints.
     """
     return Annotated[
-        Optional[Link["Attachment"]],
+        Optional[Union[str, Link["Attachment"]]],
         Field(default=None, description=f"Enter {label}", json_schema_extra={"folder": foldername}),
         PlainSerializer(serialize_attachment, return_type=Optional[str], when_used="json")
     ]

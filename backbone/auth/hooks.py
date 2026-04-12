@@ -42,17 +42,14 @@ async def send_registration_email_on_user_create(instance: Any, request: Any = N
         from .service import AuthService
         auth_service = AuthService(request)
         
-        # Determine verification URL
-        from ..core.config import BackboneConfig
-        backbone_config = BackboneConfig.get_instance()
-        frontend_verify_url = getattr(backbone_config.config, "FRONTEND_VERIFY_URL", "http://localhost:3000/verify-email")
-        
-        # Generate token and full verification link
+        # Generate token and full verification link pointing to the backend
         token = await auth_service.create_verification_request(instance)
-        verification_url = f"{frontend_verify_url}?token={token}"
+        base_url = str(request.base_url).rstrip('/') if request else str(settings.SITE_URL).rstrip('/')
+        # Link to the backend verification handler
+        verification_url = f"{base_url}/api/auth/verify?token={token}"
         
         # Send Welcome Email (now includes verification link)
-        await auth_service.send_welcome_email(instance, verification_url=verification_url)
+        await auth_service.send_welcome_verification_email(instance, verify_url=verification_url)
     except Exception:
         logger.exception("Failed to send welcome email for user=%s", email)
 

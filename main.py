@@ -1,4 +1,6 @@
 import os
+from datetime import datetime
+from datetime import timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,7 +25,7 @@ class ProjectSettings(Settings):
 settings = ProjectSettings()
 
 # Schemas
-from schemas.shop import Category, Product, Order, OrderItem, CartItem, Payment
+from schemas.shop import Category, Product, Order, Cart, CartItem, Payment
 from schemas.content import FAQ, Testimonial, Contact
 
 # Routers
@@ -66,7 +68,7 @@ models_to_register = [
     Category,
     Product,
     Order,
-    OrderItem,
+    Cart,
     CartItem,
     Payment,
     FAQ,

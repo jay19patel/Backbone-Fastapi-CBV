@@ -135,23 +135,7 @@ class AuthService:
         await session.set({"is_active": False})
         return True
 
-    @staticmethod
-    def create_action_token(data: dict, action: str, expires_delta: Optional[timedelta] = None) -> str:
-        from ..core.config import BackboneConfig
-        settings = BackboneConfig.get_instance().config
-        to_encode = data.copy()
-        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=24))
-        to_encode.update({"exp": expire, "action": action})
-        return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-
-    @staticmethod
-    def decode_token(token: str) -> Optional[dict]:
-        from ..core.config import BackboneConfig
-        settings = BackboneConfig.get_instance().config
-        try:
-            return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        except Exception:
-            return None
+    # Redundant methods removed - using TokenManager directly
 
     async def create_password_reset_request(self, email: str, expires_in_minutes: int = 60) -> Optional[Dict[str, Any]]:
         user = await self.get_user_by_email(email)
@@ -162,7 +146,7 @@ class AuthService:
         # If the password changes, the stamp changes, and the JWT becomes invalid.
         stamp = hashlib.sha256(user.hashed_password.encode()).hexdigest()[:16]
         
-        token = self.create_action_token(
+        token = TokenManager.create_action_token(
             {"sub": str(user.id), "email": user.email, "stamp": stamp},
             action="password_reset",
             expires_delta=timedelta(minutes=expires_in_minutes)
@@ -178,7 +162,7 @@ class AuthService:
         if not token:
             return False
 
-        payload = self.decode_token(token)
+        payload = TokenManager.decode_token(token)
         if not payload or payload.get("action") != "password_reset":
             return False
 

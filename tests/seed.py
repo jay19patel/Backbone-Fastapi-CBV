@@ -1,67 +1,44 @@
 """
 backend/tests/seed.py
 ─────────────────────
-Run this once to seed the database with all sample data:
+Run this once to seed the database via the API:
     cd backend
     .venv/bin/python tests/seed.py
 
-It creates:
-  • 3 Categories
-  • 10 Products  (linked to their categories)
-  • 5 Testimonials
-  • 2 sample Orders  (each with 2 OrderItems)
+This script sends data through the official API endpoints, ensuring 
+that all media processing (thumbnails, etc.) and hooks are triggered.
 
-Safe to re-run — skips documents that already exist (matched by name/email).
+Requires:
+  • Backend server running on http://127.0.0.1:8000
 """
 
 import asyncio
 import sys
 import os
+import httpx
+import json
+from pathlib import Path
 
-# ── Make sure backend/ is on the path ─────────────────────────────────────
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from motor.motor_asyncio import AsyncIOMotorClient
-from beanie import init_beanie
-
-# ── Load .env from root ───────────────────────────────────────────────────
-# Ensuring settings are loaded from the correct .env even if run from tests/
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-if os.path.exists(env_path):
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, val = line.split("=", 1)
-                # Use setdefault to not override already set env vars
-                os.environ.setdefault(key.strip(), val.strip())
-
-from backbone.core.settings import settings
-from backbone.core.models import Attachment
-from schemas.shop import Category, Product, Order, OrderItem
-from schemas.content import Testimonial
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# SEED DATA
-# ═══════════════════════════════════════════════════════════════════════════
+# ── Configuration ──────────────────────────────────────────────────────────
+BASE_URL = "http://127.0.0.1:8000/api"
+IMAGES_DIR = Path(__file__).parent / "images"
 
 CATEGORIES = [
     {
         "name": "Woolen Fashion",
-        "img": "/images/cat_fashion.png",
+        "img_path": "cat_fashion.png",
         "color": "bg-orange-50",
         "description": "Stay cozy and stylish with our handcrafted woolen apparel.",
     },
     {
         "name": "Creative Keychains",
-        "img": "/images/cat_accessories.png",
+        "img_path": "cat_accessories.png",
         "color": "bg-blue-50",
         "description": "Unique and adorable keychains to personalize your style.",
     },
     {
         "name": "Handmade Decor",
-        "img": "/images/cat_decor.png",
+        "img_path": "cat_decor.png",
         "color": "bg-slate-50",
         "description": "Bring warmth to your home with our knitted decorations.",
     },
@@ -72,8 +49,8 @@ PRODUCTS = [
         "name": "Soulful Tote",
         "price": "₹1499",
         "price_value": 1499.0,
-        "img": "/images/1.jpeg",
-        "images": ["/images/1.jpeg", "/images/4.jpeg", "/images/6.jpeg"],
+        "img_path": "1.jpeg",
+        "gallery_paths": ["1.jpeg", "4.jpeg", "6.jpeg"],
         "tag": "Handmade",
         "category_name": "Woolen Fashion",
         "stock": 15,
@@ -84,8 +61,8 @@ PRODUCTS = [
         "name": "Knitted Charm",
         "price": "₹899",
         "price_value": 899.0,
-        "img": "/images/2.jpeg",
-        "images": ["/images/2.jpeg", "/images/5.jpeg", "/images/8.jpeg"],
+        "img_path": "2.jpeg",
+        "gallery_paths": ["2.jpeg", "5.jpeg", "8.jpeg"],
         "tag": "New",
         "category_name": "Creative Keychains",
         "stock": 30,
@@ -96,8 +73,8 @@ PRODUCTS = [
         "name": "Woolen Heart",
         "price": "₹599",
         "price_value": 599.0,
-        "img": "/images/3.jpeg",
-        "images": ["/images/3.jpeg", "/images/1.jpeg", "/images/7.jpeg"],
+        "img_path": "3.jpeg",
+        "gallery_paths": ["3.jpeg", "1.jpeg", "7.jpeg"],
         "tag": "Bestseller",
         "category_name": "Handmade Decor",
         "stock": 25,
@@ -108,8 +85,8 @@ PRODUCTS = [
         "name": "Crafty Pouch",
         "price": "₹1299",
         "price_value": 1299.0,
-        "img": "/images/4.jpeg",
-        "images": ["/images/4.jpeg", "/images/2.jpeg", "/images/5.jpeg"],
+        "img_path": "4.jpeg",
+        "gallery_paths": ["4.jpeg", "2.jpeg", "5.jpeg"],
         "tag": "Limited",
         "category_name": "Woolen Fashion",
         "stock": 8,
@@ -120,8 +97,8 @@ PRODUCTS = [
         "name": "Soft Mascot",
         "price": "₹799",
         "price_value": 799.0,
-        "img": "/images/5.jpeg",
-        "images": ["/images/5.jpeg", "/images/2.jpeg", "/images/8.jpeg"],
+        "img_path": "5.jpeg",
+        "gallery_paths": ["5.jpeg", "2.jpeg", "8.jpeg"],
         "tag": "Popular",
         "category_name": "Creative Keychains",
         "stock": 20,
@@ -132,8 +109,8 @@ PRODUCTS = [
         "name": "Artist Scarf",
         "price": "₹1999",
         "price_value": 1999.0,
-        "img": "/images/6.jpeg",
-        "images": ["/images/6.jpeg", "/images/1.jpeg", "/images/7.jpeg"],
+        "img_path": "6.jpeg",
+        "gallery_paths": ["6.jpeg", "1.jpeg", "7.jpeg"],
         "tag": "Premium",
         "category_name": "Woolen Fashion",
         "stock": 10,
@@ -144,8 +121,8 @@ PRODUCTS = [
         "name": "Cozy Mittens",
         "price": "₹699",
         "price_value": 699.0,
-        "img": "/images/7.jpeg",
-        "images": ["/images/7.jpeg", "/images/3.jpeg", "/images/6.jpeg"],
+        "img_path": "7.jpeg",
+        "gallery_paths": ["7.jpeg", "3.jpeg", "6.jpeg"],
         "tag": "New",
         "category_name": "Woolen Fashion",
         "stock": 18,
@@ -156,8 +133,8 @@ PRODUCTS = [
         "name": "Cloud Plush",
         "price": "₹2499",
         "price_value": 2499.0,
-        "img": "/images/8.jpeg",
-        "images": ["/images/8.jpeg", "/images/5.jpeg", "/images/3.jpeg"],
+        "img_path": "8.jpeg",
+        "gallery_paths": ["8.jpeg", "5.jpeg", "3.jpeg"],
         "tag": "Exclusive",
         "category_name": "Handmade Decor",
         "stock": 5,
@@ -168,8 +145,8 @@ PRODUCTS = [
         "name": "Boho Wall Hanging",
         "price": "₹1799",
         "price_value": 1799.0,
-        "img": "/images/3.jpeg",
-        "images": ["/images/3.jpeg", "/images/1.jpeg", "/images/8.jpeg"],
+        "img_path": "3.jpeg",
+        "gallery_paths": ["3.jpeg", "1.jpeg", "8.jpeg"],
         "tag": "Featured",
         "category_name": "Handmade Decor",
         "stock": 7,
@@ -180,8 +157,8 @@ PRODUCTS = [
         "name": "Mini Cactus Pot",
         "price": "₹499",
         "price_value": 499.0,
-        "img": "/images/2.jpeg",
-        "images": ["/images/2.jpeg", "/images/5.jpeg", "/images/3.jpeg"],
+        "img_path": "2.jpeg",
+        "gallery_paths": ["2.jpeg", "5.jpeg", "3.jpeg"],
         "tag": "Cute",
         "category_name": "Handmade Decor",
         "stock": 35,
@@ -190,245 +167,178 @@ PRODUCTS = [
     },
 ]
 
-TESTIMONIALS = [
-    {
-        "author_name": "Aarti Sharma",
-        "content": "The handcrafted woolen scarf I received is simply beautiful. The quality of the wool is incredibly soft, and you can really feel the love knitted into it!",
-        "rating": 5,
-        "productImage": "https://images.unsplash.com/photo-1605282722370-dcc2525aa1cc?auto=format&fit=crop&q=80&w=300",
-        "user": None,
-    },
-    {
-        "author_name": "Rohan Patel",
-        "content": "I ordered a custom keychain for my wife, and she absolutely loved it. The attention to detail is stunning and it arrived perfectly packaged.",
-        "rating": 5,
-        "productImage": "https://images.unsplash.com/photo-1620791493630-f9fdc61df1cd?auto=format&fit=crop&q=80&w=300",
-        "user": None,
-    },
-    {
-        "author_name": "Sneha Desai",
-        "content": "The woolen decor pieces completely changed the vibe of my living room! Khushi is truly an amazing artist. Will definitely buy again.",
-        "rating": 5,
-        "productImage": "https://images.unsplash.com/photo-1544441893-675973e31985?auto=format&fit=crop&q=80&w=300",
-        "user": None,
-    },
-    {
-        "author_name": "Vikram Singh",
-        "content": "Bought the Cloud Plush as a gift for my daughter. It's incredibly warm, sustainable, and looks so incredibly cute. 10/10 recommend!",
-        "rating": 5,
-        "productImage": "https://images.unsplash.com/photo-1584992236310-6edddc08acff?auto=format&fit=crop&q=80&w=300",
-        "user": None,
-    },
-    {
-        "author_name": "Meera Reddy",
-        "content": "Absolutely gorgeous work! The woolen tote is not only fashionable but also incredibly durable. It stands out wherever I go.",
-        "rating": 5,
-        "productImage": "https://images.unsplash.com/photo-1510419356345-d36d859fa21e?auto=format&fit=crop&q=80&w=300",
-        "user": None,
-    },
-]
+class APISeeder:
+    def __init__(self):
+        # Increase timeout for slow image processing on the server
+        self.client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+        self.cat_map = {} # name -> id
+        self.attachment_map = {} # filename -> attachment_obj
 
+    async def close(self):
+        await self.client.aclose()
 
-SAMPLE_ORDERS = [
-    {
-        "customer_name": "Demo Customer",
-        "customer_email": "demo@soulcraftstudio.in",
-        "customer_phone": "+91 90000 00001",
-        "shipping_address": "12 Baker Street, Near Town Hall",
-        "city": "Valsad",
-        "state": "Gujarat",
-        "pincode": "396001",
-        "total_amount": 2398.0,
-        "status": "delivered",
-        "payment_id": "DEMO123456",
-        "payment_status": "verified",
-        "notes": "Sample seeded order",
-        "items": [
-            {"product_name": "Soulful Tote",  "quantity": 1, "price": 1499.0, "img": "/images/1.jpeg"},
-            {"product_name": "Knitted Charm", "quantity": 1, "price": 899.0,  "img": "/images/2.jpeg"},
-        ],
-    },
-    {
-        "customer_name": "Test User",
-        "customer_email": "test@soulcraftstudio.in",
-        "customer_phone": "+91 90000 00002",
-        "shipping_address": "45 Rose Garden Colony",
-        "city": "Surat",
-        "state": "Gujarat",
-        "pincode": "395001",
-        "total_amount": 3098.0,
-        "status": "shipped",
-        "payment_id": "TEST789012",
-        "payment_status": "verified",
-        "notes": "Sample seeded order",
-        "items": [
-            {"product_name": "Artist Scarf",  "quantity": 1, "price": 1999.0, "img": "/images/6.jpeg"},
-            {"product_name": "Woolen Heart",  "quantity": 1, "price": 599.0,  "img": "/images/3.jpeg"},
-            {"product_name": "Mini Cactus Pot","quantity": 1, "price": 499.0,  "img": "/images/2.jpeg"},
-        ],
-    },
-]
+    async def check_connectivity(self):
+        try:
+            resp = await self.client.get(BASE_URL.replace("/api", "") + "/")
+            if resp.status_code == 200:
+                print(f"  OK: Server is reachable at {BASE_URL}")
+                return True
+            else:
+                print(f"  \u26a0\ufe0f Warning: Server returned {resp.status_code}")
+                return False
+        except Exception as e:
+            print(f"  Error: Could not connect to API: {e}")
+            return False
 
+    async def upload_image(self, filename: str) -> dict:
+        if filename in self.attachment_map:
+            return self.attachment_map[filename]
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SEED FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════════════
+        file_path = IMAGES_DIR / filename
+        if not file_path.exists():
+            print(f"    \u26a0\ufe0f Warning: Image {filename} not found in {IMAGES_DIR}")
+            return None
 
+        with open(file_path, "rb") as f:
+            files = {"file": (filename, f, "image/jpeg")}
+            resp = await self.client.post(f"{BASE_URL}/media/upload", files=files)
+            
+        if resp.status_code == 200:
+            data = resp.json()
+            if "id" in data:
+                self.attachment_map[filename] = data["id"]
+                return data["id"]
+            else:
+                print(f"    Error: Upload successful but 'id' missing in response: {data}")
+                return None
+        else:
+            print(f"    Error: Failed to upload {filename}: {resp.text}")
+            return None
 
-import os
-import shutil
+    async def seed_categories(self):
+        print("\n[Categories] Seeding Categories")
+        print("-" * 30)
+        
+        # Get existing categories to avoid duplicates
+        try:
+            existing_resp = await self.client.get(f"{BASE_URL}/categories/")
+            existing = {c["name"]: c["id"] for c in existing_resp.json().get("results", [])}
+        except Exception as e:
+            print(f"  Warning: Could not fetch existing categories: {e}")
+            existing = {}
 
-async def process_test_image(dummy_url: str):
-    if not dummy_url: return None
-    from backbone.core.models import Attachment
-    filename = dummy_url.split('/')[-1]
-    media_url = f'/media/images/{filename}'
-    att = await Attachment.find_one({'file_path': media_url})
-    if att: return att
-    src = os.path.join(os.path.dirname(__file__), 'images', filename)
-    dest_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'media', 'images')
-    os.makedirs(dest_dir, exist_ok=True)
-    if os.path.exists(src):
-        shutil.copy2(src, os.path.join(dest_dir, filename))
-    status = 'completed'
-    return await Attachment(
-        filename=filename, 
-        file_path=media_url, 
-        content_type='image/png' if 'png' in filename else 'image/jpeg', 
-        status=status).insert()
+        for data in CATEGORIES:
+            name = data["name"]
+            if name in existing:
+                print(f"  Skip existing category: {name}")
+                self.cat_map[name] = existing[name]
+                continue
 
-async def seed_categories() -> dict[str, str]:
-    """Insert categories, return name→id map."""
-    cat_id_map = {}
-    created = skipped = 0
+            print(f"  Creating category: {name}...", end="", flush=True)
+            attachment = await self.upload_image(data["img_path"])
+            
+            payload = {
+                "name": name,
+                "img": attachment,
+                "color": data["color"],
+                "description": data["description"]
+            }
+            
+            resp = await self.client.post(f"{BASE_URL}/categories/", json=payload)
+            if resp.status_code in [200, 201]:
+                resp_data = resp.json()
+                cat_id = resp_data.get("id") or resp_data.get("_id")
+                if cat_id:
+                    self.cat_map[name] = cat_id
+                    print(" OK")
+                else:
+                    print(f" failed: 'id' or '_id' missing in response. Body: {resp.text}")
+            else:
+                print(f" failed: {resp.status_code} - {resp.text}")
 
-    for data in CATEGORIES:
-        exists = await Category.find_one(Category.name == data["name"])
-        if exists:
-            cat_id_map[data["name"]] = str(exists.id)
-            skipped += 1
-            continue
+    async def seed_products(self):
+        print("\n[Products] Seeding Products")
+        print("-" * 30)
 
-        # Resolve attachment
-        att = await process_test_image(data["img"])
-        data_copy = {**data, "img": att}
+        # Get existing products
+        try:
+            existing_resp = await self.client.get(f"{BASE_URL}/products/")
+            existing_names = {p["name"] for p in existing_resp.json().get("results", [])}
+        except Exception as e:
+            print(f"  Warning: Could not fetch existing products: {e}")
+            existing_names = set()
 
-        cat = Category(**data_copy)
-        await cat.insert()
-        cat_id_map[data["name"]] = str(cat.id)
-        created += 1
+        for data in PRODUCTS:
+            name = data["name"]
+            if name in existing_names:
+                print(f"  Skip existing product: {name}")
+                continue
 
-    print(f"  Categories — created: {created}, skipped: {skipped}")
-    return cat_id_map
+            print(f"  Creating product: {name}...", end="", flush=True)
+            
+            # Resolve Image
+            main_attachment = await self.upload_image(data["img_path"])
+            
+            # Resolve Gallery
+            gallery = []
+            for g_path in data.get("gallery_paths", []):
+                att = await self.upload_image(g_path)
+                if att: gallery.append(att)
 
+            payload = {
+                "name": name,
+                "price": data["price"],
+                "price_value": data["price_value"],
+                "img": main_attachment,
+                "images": gallery,
+                "tag": data["tag"],
+                "category_id": self.cat_map.get(data["category_name"]),
+                "stock": data["stock"],
+                "description": data["description"],
+                "details": data["details"]
+            }
 
-async def seed_products(cat_id_map: dict[str, str]):
-    created = skipped = 0
-
-    for data in PRODUCTS:
-        exists = await Product.find_one(Product.name == data["name"])
-        if exists:
-            skipped += 1
-            continue
-
-        product_data = {k: v for k, v in data.items() if k != "category_name" and k not in ["img", "images"]}
-        product_data["category_id"] = cat_id_map.get(data["category_name"], "")
-
-        # Resolve attachments
-        product_data["img"] = await process_test_image(data["img"])
-        gallery_atts = []
-        for g in data.get("images", []):
-            gallery_atts.append(await process_test_image(g))
-        product_data["images"] = gallery_atts
-
-        product = Product(**product_data)
-        await product.insert()
-        created += 1
-
-    print(f"  Products  — created: {created}, skipped: {skipped}")
-
-
-async def seed_testimonials():
-    created = skipped = 0
-
-    for data in TESTIMONIALS:
-        exists = await Testimonial.find_one(Testimonial.author_name == data["author_name"])
-        if exists:
-            skipped += 1
-            continue
-
-        t = Testimonial(**data)
-        await t.insert()
-        created += 1
-
-    print(f"  Testimonials — created: {created}, skipped: {skipped}")
-
-
-async def seed_orders():
-    created = skipped = 0
-
-    for data in SAMPLE_ORDERS:
-        exists = await Order.find_one(
-            Order.customer_email == data["customer_email"],
-            Order.notes == "Sample seeded order",
-        )
-        if exists:
-            skipped += 1
-            continue
-
-        # Resolve product IDs for order items
-        items = []
-        for item_data in data["items"]:
-            product = await Product.find_one(Product.name == item_data["product_name"])
-            product_id = str(product.id) if product else "unknown"
-            items.append(
-                OrderItem(
-                    product_id=product_id,
-                    name=item_data["product_name"],
-                    quantity=item_data["quantity"],
-                    price=item_data["price"],
-                    image=item_data.get("img").replace('/images/', '/media/images/') if item_data.get("img") else None,
-                )
-            )
-
-        order_data = {k: v for k, v in data.items() if k != "items"}
-        order = Order(**order_data, items=items)
-        await order.insert()
-        created += 1
-
-    print(f"  Orders    — created: {created}, skipped: {skipped}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════════════════
+            resp = await self.client.post(f"{BASE_URL}/products/", json=payload)
+            if resp.status_code in [200, 201]:
+                print(" OK")
+            else:
+                print(f" failed: {resp.text}")
 
 async def main():
-    print("\n🌱 Soul Craft Studio — Database Seeder")
+    print("\nSoul Craft Studio \u2014 API-Based Seeder")
     print("=" * 45)
 
-    # Connect to MongoDB
-    db_url  = settings.MONGODB_URL
-    db_name = settings.DATABASE_NAME
-    print(f"  DB  : {db_url}  /  {db_name}")
+    seeder = APISeeder()
+    
+    if not await seeder.check_connectivity():
+        print("\nError: Ensure the backend server is running on http://127.0.0.1:8000")
+        await seeder.close()
+        return
 
-    client = AsyncIOMotorClient(db_url)
-    db     = client[db_name]
+    # Optional: Cleanup existing seeded data to ensure images are re-processed
+    print("\n[Cleanup] Removing existing seeded records to ensure perfect state...")
+    for data in CATEGORIES:
+        # Exact match search
+        search_resp = await seeder.client.get(f"{BASE_URL}/categories/", params={"search": data['name']})
+        if search_resp.status_code == 200:
+            for item in search_resp.json().get("results", []):
+                if item["name"] == data["name"]:
+                    print(f"  Cleaning up category: {item['name']}")
+                    await seeder.client.delete(f"{BASE_URL}/categories/{item['id']}/")
+    
+    for data in PRODUCTS:
+        search_resp = await seeder.client.get(f"{BASE_URL}/products/", params={"search": data['name']})
+        if search_resp.status_code == 200:
+            for item in search_resp.json().get("results", []):
+                if item["name"] == data["name"]:
+                    print(f"  Cleaning up product: {item['name']}")
+                    await seeder.client.delete(f"{BASE_URL}/products/{item['id']}/")
 
-    await init_beanie(
-        database=db,
-        document_models=[Attachment, Category, Product, Order, Testimonial],
-    )
+    await seeder.seed_categories()
+    await seeder.seed_products()
 
-    print("\n📦 Seeding data...")
-    cat_id_map = await seed_categories()
-    await seed_products(cat_id_map)
-    await seed_testimonials()
-    await seed_orders()
-
-    print("\n✅ Seeding complete!\n")
-    client.close()
-
+    await seeder.close()
+    print("\n\u2705 Seeding complete!\n")
 
 if __name__ == "__main__":
     asyncio.run(main())

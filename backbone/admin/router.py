@@ -3,7 +3,7 @@ import math
 from datetime import datetime, timezone
 from typing import Optional, List
 from bson import ObjectId
-from fastapi import APIRouter, Request, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict # Added for pydantic models
@@ -986,19 +986,40 @@ async def model_create_handle(
     # Filter and cast form data
     data = {}
     
+    from ..core.repository import BeanieRepository
+    from bson import ObjectId
+    from bson.dbref import DBRef
+    import base64
+    
+    populate_fields_config = BeanieRepository.detect_populate_fields(model)
+    
     for key, field in get_model_fields(model).items():
         if key in INTERNAL_FIELDS:
             continue
             
         is_list = "list" in str(field.annotation).lower()
-        is_link = "link" in str(field.annotation).lower()
-        
+        # For Admin, we trust detect_populate_fields more than a simple string check
+        is_link = key in populate_fields_config
+
         if key in form_data:
             val = form_data.getlist(key) if is_list else form_data[key]
             
             if is_list:
                 if not val or (len(val) == 1 and not val[0]):
                     val = []
+                else:
+                    import json
+                    parsed_val = []
+                    for v in val:
+                        if isinstance(v, str) and (v.startswith('[') or v.startswith('{')):
+                            try:
+                                parsed_v = json.loads(v)
+                                if isinstance(parsed_v, list): parsed_val.extend(parsed_v)
+                                else: parsed_val.append(parsed_v)
+                            except: parsed_val.append(v)
+                        else:
+                            parsed_val.append(v)
+                    val = parsed_val
             elif not val and field.annotation != bool:
                 continue
                 
@@ -1016,51 +1037,26 @@ async def model_create_handle(
                 from ..common.utils import PasswordManager
                 if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
-                    
-            if is_link and val:
-                from ..core.repository import BeanieRepository
-                from bson import ObjectId
-                from bson.dbref import DBRef
-                populate_fields = BeanieRepository.detect_populate_fields(model)
-                if key in populate_fields:
-                    collection_name = populate_fields[key].get("collection")
-                    if collection_name:
-                        if is_list and isinstance(val, list):
-                            new_val = []
-                            for item_id in val:
-                                try:
-                                    if len(str(item_id)) == 24:
-                                        new_val.append(DBRef(collection=collection_name, id=ObjectId(item_id)))
-                                except: pass
-                            val = new_val
-                        elif isinstance(val, str) and len(val) == 24:
-                            try:
-                                val = DBRef(collection=collection_name, id=ObjectId(val))
-                            except: pass
 
             # ── Handle File Uploads ──
-            from fastapi import UploadFile
             files = form_data.getlist(key) if is_list else [form_data.get(key)]
             uploaded_attachments = []
             
             for f in files:
                 if isinstance(f, UploadFile) and f.filename:
-                    # Create Attachment
-                    # Note: For creation, we don't have a document_id yet.
-                    # We will create the attachment and link it manually after instance.insert()
+                    # Create Attachment (document_id will be set after instance insertion)
                     att = Attachment(
                         filename=f.filename,
                         content_type=f.content_type,
                         collection_name=getattr(model.Settings, "name", model_name.lower()),
-                        status="pending"
+                        status="pending",
+                        field_name=key
                     )
                     await att.insert()
                     
-                    # Process file bytes
                     f_bytes = await f.read()
                     encoded = base64.b64encode(f_bytes).decode("utf-8")
                     
-                    # Run processing (ideally in background, but here we might want it synchronous or at least started)
                     from ..core.media import process_attachment_upload
                     from ..common.services import background_internal_task
                     await background_internal_task(process_attachment_upload, str(att.id), encoded)
@@ -1069,17 +1065,31 @@ async def model_create_handle(
             
             if uploaded_attachments:
                 if is_list:
-                    # Merge with existing list if any
                     current_list = data.get(key, [])
                     if not isinstance(current_list, list): current_list = []
                     val = current_list + uploaded_attachments
                 else:
                     val = uploaded_attachments[0]
-                    
+
+            # ── Link Normalization (to DBRef) ──
+            if is_link and val:
+                coll = populate_fields_config[key].get("collection")
+                if coll:
+                    def to_dbref(v):
+                        if isinstance(v, (str, ObjectId)) and ObjectId.is_valid(str(v)):
+                            return DBRef(collection=coll, id=ObjectId(str(v)))
+                        if hasattr(v, "id"): # Document instance
+                            return DBRef(collection=coll, id=ObjectId(str(v.id)))
+                        return v
+
+                    if isinstance(val, list):
+                        val = [to_dbref(v) for v in val]
+                    else:
+                        val = to_dbref(val)
+
             # Final cleanup: ensure no raw UploadFile objects leak into Beanie
             if isinstance(val, (list, tuple)):
                 val = [v for v in val if not isinstance(v, UploadFile)]
-            elif isinstance(val, UploadFile):
                 val = None
                 
             data[key] = val
@@ -1292,12 +1302,20 @@ async def model_update_handle(
     form_data = await request.form()
     update_data = {}
     
+    from ..core.repository import BeanieRepository
+    from bson import ObjectId
+    from bson.dbref import DBRef
+    import base64
+    
+    populate_fields_config = BeanieRepository.detect_populate_fields(model)
+    
     for key, field in get_model_fields(model).items():
         if key in INTERNAL_FIELDS:
             continue
             
         is_list = "list" in str(field.annotation).lower()
-        is_link = "link" in str(field.annotation).lower()
+        # For Admin, we trust detect_populate_fields more than a simple string check
+        is_link = key in populate_fields_config
 
         if key in form_data:
             val = form_data.getlist(key) if is_list else form_data[key]
@@ -1312,12 +1330,9 @@ async def model_update_handle(
                         if isinstance(v, str) and (v.startswith('[') or v.startswith('{')):
                             try:
                                 parsed_v = json.loads(v)
-                                if isinstance(parsed_v, list):
-                                    parsed_val.extend(parsed_v)
-                                else:
-                                    parsed_val.append(parsed_v)
-                            except Exception:
-                                parsed_val.append(v)
+                                if isinstance(parsed_v, list): parsed_val.extend(parsed_v)
+                                else: parsed_val.append(parsed_v)
+                            except: parsed_val.append(v)
                         else:
                             parsed_val.append(v)
                     val = parsed_val
@@ -1344,29 +1359,7 @@ async def model_update_handle(
                 if isinstance(val, str) and not val.startswith("$argon2"):
                     val = PasswordManager.hash_password(val)
 
-            if is_link and val:
-                from ..core.repository import BeanieRepository
-                from bson import ObjectId
-                from bson.dbref import DBRef
-                populate_fields = BeanieRepository.detect_populate_fields(model)
-                if key in populate_fields:
-                    collection_name = populate_fields[key].get("collection")
-                    if collection_name:
-                        if is_list and isinstance(val, list):
-                            new_val = []
-                            for item_id in val:
-                                try:
-                                    if len(str(item_id)) == 24:
-                                        new_val.append(DBRef(collection=collection_name, id=ObjectId(item_id)))
-                                except: pass
-                            val = new_val
-                        elif isinstance(val, str) and len(val) == 24:
-                            try:
-                                val = DBRef(collection=collection_name, id=ObjectId(val))
-                            except: pass
-
             # ── Handle File Uploads ──
-            from fastapi import UploadFile
             files = form_data.getlist(key) if is_list else [form_data.get(key)]
             uploaded_attachments = []
             
@@ -1399,13 +1392,36 @@ async def model_update_handle(
                 else:
                     val = uploaded_attachments[0]
 
+            # ── Link Normalization (to DBRef) ──
+            if is_link and val:
+                coll = populate_fields_config[key].get("collection")
+                if coll:
+                    def to_dbref(v):
+                        if isinstance(v, (str, ObjectId)) and ObjectId.is_valid(str(v)):
+                            return DBRef(collection=coll, id=ObjectId(str(v)))
+                        if hasattr(v, "id"): # Document instance
+                            return DBRef(collection=coll, id=ObjectId(str(v.id)))
+                        return v
+
+                    if isinstance(val, list):
+                        val = [to_dbref(v) for v in val]
+                    else:
+                        val = to_dbref(val)
+
             # Final cleanup: ensure no raw UploadFile objects leak into Beanie
             if isinstance(val, (list, tuple)):
                 val = [v for v in val if not isinstance(v, UploadFile)]
-            elif isinstance(val, UploadFile):
-                # If it's an UploadFile here, it means it wasn't processed (no filename)
-                # We should NOT update the field with this.
-                # In update case, if we don't want to change the image, we should probably SKIP the update for this field.
+            
+            # If val is still an UploadFile at this point, it means no file was provided in the picker
+            # or it wasn't a valid upload. We must SKIP this field in the update to preserve old value.
+            if isinstance(val, UploadFile) or hasattr(val, "file"):
+                if not getattr(val, "filename", None):
+                    continue
+                if isinstance(val, UploadFile):
+                    continue
+                
+            # For User model, skip hashed_password if it is empty (don't overwrite with None)
+            if model_name == "User" and key == "hashed_password" and not val:
                 continue
                 
             update_data[key] = val
@@ -1418,11 +1434,21 @@ async def model_update_handle(
     try:
         if hasattr(item, "updated_at"):
             update_data["updated_at"] = datetime.now(timezone.utc)
-        if hasattr(item, "updated_by"):
+        if hasattr(item, "updated_by") and user:
             update_data["updated_by"] = str(user.id)
+        
+        # Ensure we don't overwrite created_by if it's already there
+        if hasattr(item, "created_by") and hasattr(item, "created_at"):
+             update_data.pop("created_by", None)
+             update_data.pop("created_at", None)
             
         await item.set(update_data)
-        return RedirectResponse(url=f"/admin/{model_name}/{pk}", status_code=status.HTTP_303_SEE_OTHER)
+        await item.save() # Guarantee persistence
+        
+        response = RedirectResponse(url=f"/admin/{model_name}/{pk}", status_code=status.HTTP_303_SEE_OTHER)
+        # Add a success cookie for the frontend to show a toast/notification
+        response.set_cookie("admin_success", f"{model_name} updated successfully", max_age=5)
+        return response
     except Exception as e:
         import traceback
         traceback.print_exc()
