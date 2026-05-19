@@ -160,8 +160,7 @@
                         {% for page in registered_pages %}
                         <a href="{{ page.path }}"
                             class="flex items-center px-4 py-2 text-indigo-100 hover:bg-indigo-800 rounded-lg transition-colors group">
-                            <i
-                                class="far fa-window-maximize text-indigo-400 group-hover:text-white mr-3 text-sm transition-colors w-5 text-center"></i>
+                            <i class="far fa-window-maximize text-indigo-400 group-hover:text-white mr-3 text-sm transition-colors w-5 text-center"></i>
                             <span class="font-medium text-sm">{{ page.name }}</span>
                         </a>
                         {% endfor %}
@@ -410,7 +409,7 @@
 
             function addChip(id, label) {
                 if (!chipsContainer) return;
-                
+
                 // Check if already exists
                 const existing = chipsContainer.querySelector(`input[value="${id}"]`);
                 if (existing) return;

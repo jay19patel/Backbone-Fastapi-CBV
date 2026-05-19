@@ -96,7 +96,7 @@
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% elif link_model %}
                 {% set is_multi = 'list' in f_type.lower() %}
-                
+
                 <div id="link-field-{{ name }}" class="space-y-3">
                     {# Path A: Single Link Restoration #}
                     {% if not is_multi %}
@@ -124,7 +124,7 @@
                                 </div>
                             </a>
                             {% endif %}
-                            <button type="button" onclick="document.getElementById('single-display-{{ name }}').style.display='none'; document.getElementById('search-container-{{ name }}').style.display='block'; document.getElementById('search-input-{{ name }}').disabled=false; document.getElementById('search-input-{{ name }}').value='';" 
+                            <button type="button" onclick="document.getElementById('single-display-{{ name }}').style.display='none'; document.getElementById('search-container-{{ name }}').style.display='block'; document.getElementById('search-input-{{ name }}').disabled=false; document.getElementById('search-input-{{ name }}').value='';"
                                     class="absolute -top-2 -right-2 bg-slate-100 text-slate-400 rounded-full w-6 h-6 flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all z-10 cursor-pointer"
                                     title="Remove relation">
                                 <i class="fas fa-times text-xs"></i>
@@ -157,14 +157,14 @@
                         {% endif %}
 
                         <div class="relative">
-                            <input type="text" placeholder="Search to {% if is_multi %}add{% else %}select{% endif %} {{ name|nice_title }}..." 
+                            <input type="text" placeholder="Search to {% if is_multi %}add{% else %}select{% endif %} {{ name|nice_title }}..."
                                 class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
                                 readonly onclick="this.removeAttribute('readonly')">
-                            
+
                             <button type="button" class="clear-btn absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-red-500 z-10" style="display: none;" title="Clear selection">
                                 <i class="fas fa-times-circle text-lg"></i>
                             </button>
-                            
+
                             {# Single select fallback input if nothing selected yet #}
                             {% if not is_multi and (not value or not value.id) %}
                             <input type="hidden" name="{{ name }}" id="search-input-{{ name }}">
@@ -179,7 +179,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         {# Always submit one empty value for multi-select to allow clearing the list #}
                         {% if is_multi %}
                         <input type="hidden" name="{{ name }}" value="">

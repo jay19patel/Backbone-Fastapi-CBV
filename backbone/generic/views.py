@@ -5,10 +5,12 @@ Modern router-based generic views for Backbone.
 """
 
 from __future__ import annotations
+
 import logging
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -16,38 +18,57 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, FileSystemLoader
 
 from ..core.mixins import (
-    CreateMixin, DeleteMixin, ListMixin, RetrieveMixin, UpdateMixin, ViewContext
+    CreateMixin,
+    DeleteMixin,
+    ListMixin,
+    RetrieveMixin,
+    UpdateMixin,
+    ViewContext,
 )
 from ..core.permissions import AllowAny, PermissionDependency
-from .utils import _parse_sort, _register_actions, _extract_create_data, _extract_update_data
+from .utils import _extract_create_data, _extract_update_data, _parse_sort, _register_actions
 
 logger = logging.getLogger("backbone.views")
 APP_TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "templates"
+ECOMMERCE_TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "ecommerce" / "templates"
 FRAMEWORK_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates"
+ADMIN_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "admin" / "templates"
 
 
 def build_page_templates() -> Jinja2Templates:
-    """Use app templates first, then fall back to Backbone templates."""
+    """Use app templates first, then admin + Backbone templates."""
     environment = default_page_templates.env if "default_page_templates" in globals() else None
-    loader = ChoiceLoader(
-        [
-            FileSystemLoader(str(APP_TEMPLATE_ROOT)),
-            FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)),
-        ]
-    )
+
+    loaders = []
+    if ECOMMERCE_TEMPLATE_ROOT.exists():
+        loaders.append(FileSystemLoader(str(ECOMMERCE_TEMPLATE_ROOT)))
+    if APP_TEMPLATE_ROOT.exists():
+        loaders.append(FileSystemLoader(str(APP_TEMPLATE_ROOT)))
+    if ADMIN_TEMPLATE_ROOT.exists():
+        loaders.append(FileSystemLoader(str(ADMIN_TEMPLATE_ROOT)))
+    loaders.append(FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)))
+
+    loader = ChoiceLoader(loaders)
     if environment is not None:
         environment.loader = loader
+        from ..admin.jinja_helpers import register_admin_jinja_env
+
+        register_admin_jinja_env(environment)
         return default_page_templates
-    templates = Jinja2Templates(directory=str(APP_TEMPLATE_ROOT))
+    templates = Jinja2Templates(directory=str(FRAMEWORK_TEMPLATE_ROOT))
     templates.env.loader = loader
+    from ..admin.jinja_helpers import register_admin_jinja_env
+
+    register_admin_jinja_env(templates.env)
     return templates
 
 
 default_page_templates = build_page_templates()
 
+
 class GenericListView(ListMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         cls._register_list_route(router, view, view.get_permission_dependency())
@@ -57,18 +78,26 @@ class GenericListView(ListMixin):
     @staticmethod
     def _register_list_route(router: APIRouter, view: ListMixin, perm_dep: Callable) -> None:
         @router.get("/", summary=f"List {view.schema.__name__}")
-        async def list_view(request: Request, user: Any = Depends(perm_dep), page: int = Query(1, ge=1), 
-                            page_size: int = Query(10, ge=1, le=100), search: Optional[str] = Query(None),
-                            sort: Optional[str] = Query(None)) -> dict:
+        async def list_view(
+            request: Request,
+            user: Any = Depends(perm_dep),
+            page: int = Query(1, ge=1),
+            page_size: int = Query(10, ge=1, le=100),
+            search: str | None = Query(None),
+            sort: str | None = Query(None),
+        ) -> dict:
             await view.resolve_context(request)
             query = await view.get_queryset(request, user)
             query = await view.filter_queryset(query, request)
-            results, total = await view.perform_list(query, page=page, page_size=page_size, sort=_parse_sort(sort))
+            results, total = await view.perform_list(
+                query, page=page, page_size=page_size, sort=_parse_sort(sort)
+            )
             return await view.format_list(results, total, page, page_size)
+
 
 class GenericCreateView(CreateMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         cls._register_create_route(router, view, view.get_permission_dependency())
@@ -77,30 +106,42 @@ class GenericCreateView(CreateMixin):
 
     @staticmethod
     def _register_create_route(router: APIRouter, view: CreateMixin, perm_dep: Callable) -> None:
-        async def create_view(request: Request, data: Any = Body(...), user: Any = Depends(perm_dep)) -> Any:
+        async def create_view(
+            request: Request, data: Any = Body(...), user: Any = Depends(perm_dep)
+        ) -> Any:
             await view.resolve_context(request)
             val_data = await _extract_create_data(view, data)
-            val_data.update({"created_at": datetime.now(timezone.utc), "is_deleted": False})
-            if user: val_data["created_by"] = str(user.id)
+            val_data.update({"created_at": datetime.now(UTC), "is_deleted": False})
+            if user:
+                val_data["created_by"] = str(user.id)
             val_data = await view.before_create(val_data, user)
             inst = await view.perform_create(val_data)
             inst = await view.after_create(inst, user)
-            
+
             # REFETCH: If fetch_links is enabled, re-fetch the document with all populated links
             # before returning it to the client. This ensures immediate data consistency.
             if view.fetch_links:
                 pk = str(getattr(inst, "id", None) or inst.id)
                 re_fetched = await view.perform_retrieve(pk, request, user)
-                if re_fetched: inst = re_fetched
+                if re_fetched:
+                    inst = re_fetched
 
             await view._invalidate_cache()
             return view._serialize_response(inst)
+
         create_view.__annotations__["data"] = view.create_schema or view.schema
-        router.add_api_route("/", create_view, methods=["POST"], response_model=view.response_schema or view.schema, status_code=201)
+        router.add_api_route(
+            "/",
+            create_view,
+            methods=["POST"],
+            response_model=view.response_schema or view.schema,
+            status_code=201,
+        )
+
 
 class GenericRetrieveView(RetrieveMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         cls._register_retrieve_route(router, view, view.get_permission_dependency())
@@ -108,7 +149,9 @@ class GenericRetrieveView(RetrieveMixin):
         return router
 
     @staticmethod
-    def _register_retrieve_route(router: APIRouter, view: RetrieveMixin, perm_dep: Callable) -> None:
+    def _register_retrieve_route(
+        router: APIRouter, view: RetrieveMixin, perm_dep: Callable
+    ) -> None:
         @router.get("/{pk}", summary=f"Retrieve {view.schema.__name__}")
         async def retrieve_view(request: Request, pk: str, user: Any = Depends(perm_dep)) -> Any:
             await view.resolve_context(request)
@@ -135,9 +178,10 @@ class GenericRetrieveView(RetrieveMixin):
                 inst = await view.perform_retrieve(pk, request, user)
             return await view.after_retrieve(inst, request, user)
 
+
 class GenericUpdateView(UpdateMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         cls._register_update_route(router, view, view.get_permission_dependency())
@@ -146,30 +190,41 @@ class GenericUpdateView(UpdateMixin):
 
     @staticmethod
     def _register_update_route(router: APIRouter, view: UpdateMixin, perm_dep: Callable) -> None:
-        async def update_view(request: Request, pk: str, data: Any = Body(...), user: Any = Depends(perm_dep)) -> Any:
+        async def update_view(
+            request: Request, pk: str, data: Any = Body(...), user: Any = Depends(perm_dep)
+        ) -> Any:
             await view.resolve_context(request)
             inst = await view.get_object(pk, request, user)
             upd_data = await _extract_update_data(view, data)
-            upd_data["updated_at"] = datetime.now(timezone.utc)
-            if user: upd_data["updated_by"] = str(user.id)
+            upd_data["updated_at"] = datetime.now(UTC)
+            if user:
+                upd_data["updated_by"] = str(user.id)
             upd_data = await view.before_update(inst, upd_data, user)
             result = await view.perform_update(inst, upd_data)
             result = await view.after_update(result, user)
-            
+
             # REFETCH: If populate_links_on_save is enabled, re-fetch with links
             if view.populate_links_on_save:
                 pk = str(getattr(result, "id", None) or result.id)
                 re_fetched = await view.perform_retrieve(pk, request, user)
-                if re_fetched: result = re_fetched
+                if re_fetched:
+                    result = re_fetched
 
             await view._invalidate_cache()
             return view._serialize_response(result)
-        update_view.__annotations__["data"] = view.update_schema or Dict[str, Any]
-        router.add_api_route("/{pk}", update_view, methods=["PATCH"], response_model=view.response_schema or view.schema)
+
+        update_view.__annotations__["data"] = view.update_schema or dict[str, Any]
+        router.add_api_route(
+            "/{pk}",
+            update_view,
+            methods=["PATCH"],
+            response_model=view.response_schema or view.schema,
+        )
+
 
 class GenericDeleteView(DeleteMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         cls._register_delete_route(router, view, view.get_permission_dependency())
@@ -187,9 +242,10 @@ class GenericDeleteView(DeleteMixin):
                 await view.after_delete(inst, user)
                 await view._invalidate_cache()
 
+
 class GenericCrudView(ListMixin, CreateMixin, RetrieveMixin, UpdateMixin, DeleteMixin):
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view, router = cls(), APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         pdep = view.get_permission_dependency()
         GenericListView._register_list_route(router, view, pdep)
@@ -200,82 +256,137 @@ class GenericCrudView(ListMixin, CreateMixin, RetrieveMixin, UpdateMixin, Delete
         _register_actions(view, router)
         return router
 
+
 class GenericStatsView(ViewContext):
-    stats_config: List[Dict[str, Any]] = []
+    stats_config: list[dict[str, Any]] = []
+
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
+
         @router.get("/", summary="Get aggregated statistics")
-        async def stats_view(request: Request, user: Any = Depends(view.get_permission_dependency())) -> dict:
+        async def stats_view(
+            request: Request, user: Any = Depends(view.get_permission_dependency())
+        ) -> dict:
             await view.resolve_context(request)
             from ..core.repository import BeanieRepository
+
             res = {}
             for config in view.stats_config:
-                model, stype, fltr, name = config["model"], config.get("type", "count"), config.get("filters", {}), config["name"]
+                model, stype, fltr, name = (
+                    config["model"],
+                    config.get("type", "count"),
+                    config.get("filters", {}),
+                    config["name"],
+                )
                 repo = BeanieRepository(view._repository.db if view._repository else None)
                 repo.initialize(model)
-                if stype == "count": res[name] = await repo.count(fltr)
+                if stype == "count":
+                    res[name] = await repo.count(fltr)
                 elif stype == "sum":
                     field = config.get("field", "")
-                    agg = await model.get_pymongo_collection().aggregate([{"$match": fltr}, {"$group": {"_id": None, "total": {"$sum": f"${field}"}}}]).to_list(1)
+                    agg = (
+                        await model.get_pymongo_collection()
+                        .aggregate(
+                            [
+                                {"$match": fltr},
+                                {"$group": {"_id": None, "total": {"$sum": f"${field}"}}},
+                            ]
+                        )
+                        .to_list(1)
+                    )
                     res[name] = (agg[0].get("total") or 0) if agg else 0
             return res
+
         return router
+
 
 class GenericSubResourceView(ViewContext):
     array_field: str = ""
     target_id_param: str = "id"
+
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         pdep = view.get_permission_dependency()
+
         @router.post("/{pk}/" + view.array_field + "/", summary=f"Add to {view.array_field}")
-        async def add_item(request: Request, pk: str, data: Dict[str, Any] = Body(...), user: Any = Depends(pdep)) -> dict:
+        async def add_item(
+            request: Request, pk: str, data: dict[str, Any] = Body(...), user: Any = Depends(pdep)
+        ) -> dict:
             await view.resolve_context(request)
             from beanie import PydanticObjectId
+
             inst = await view.get_object(pk, request, user)
             tid = data.get(view.target_id_param)
-            await view._repository.update({"_id": PydanticObjectId(inst.get("id") or inst.get("_id"))}, {"$addToSet": {view.array_field: PydanticObjectId(tid)}})
+            await view._repository.update(
+                {"_id": PydanticObjectId(inst.get("id") or inst.get("_id"))},
+                {"$addToSet": {view.array_field: PydanticObjectId(tid)}},
+            )
             await view._invalidate_cache()
             return {"status": "success"}
-        @router.delete("/{pk}/" + view.array_field + "/{target_id}/", summary=f"Remove from {view.array_field}")
-        async def remove_item(request: Request, pk: str, target_id: str, user: Any = Depends(pdep)) -> dict:
+
+        @router.delete(
+            "/{pk}/" + view.array_field + "/{target_id}/", summary=f"Remove from {view.array_field}"
+        )
+        async def remove_item(
+            request: Request, pk: str, target_id: str, user: Any = Depends(pdep)
+        ) -> dict:
             await view.resolve_context(request)
             from beanie import PydanticObjectId
+
             inst = await view.get_object(pk, request, user)
-            await view._repository.update({"_id": PydanticObjectId(inst.get("id") or inst.get("_id"))}, {"$pull": {view.array_field: PydanticObjectId(target_id)}})
+            await view._repository.update(
+                {"_id": PydanticObjectId(inst.get("id") or inst.get("_id"))},
+                {"$pull": {view.array_field: PydanticObjectId(target_id)}},
+            )
             await view._invalidate_cache()
             return {"status": "success"}
+
         return router
+
 
 class GenericCustomApiView(ViewContext):
     endpoint: str = ""
+
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         pdep = view.get_permission_dependency()
         if cls.get != GenericCustomApiView.get:
+
             @router.get(view.endpoint)
             async def custom_get(request: Request, user: Any = Depends(pdep)) -> Any:
                 await view.resolve_context(request)
                 return await view.get(request, user)
+
         if cls.post != GenericCustomApiView.post:
+
             @router.post(view.endpoint)
-            async def custom_post(request: Request, data: Dict[str, Any] = Body(...), user: Any = Depends(pdep)) -> Any:
+            async def custom_post(
+                request: Request, data: dict[str, Any] = Body(...), user: Any = Depends(pdep)
+            ) -> Any:
                 await view.resolve_context(request)
                 return await view.post(request, data, user)
+
         return router
-    async def get(self, *args, **kwargs): raise NotImplementedError()
-    async def post(self, *args, **kwargs): raise NotImplementedError()
+
+    async def get(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    async def post(self, *args, **kwargs):
+        raise NotImplementedError()
 
 
 class GenericTemplateView:
+    """Server-rendered HTML page. Mount with ``router.include_router(MyPage.as_router(...))``."""
+
     template_name: str = ""
     template_engine: Jinja2Templates = default_page_templates
-    permission_classes: List[Any] = [AllowAny]
+    permission_classes: list[Any] = [AllowAny]
     page_name: str = "Template Page"
     page_description: str = ""
     admin_category: str = "Framework Pages"
@@ -298,10 +409,14 @@ class GenericTemplateView:
             return self.normalize_context(value.model_dump(by_alias=True))
         return value
 
-    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    async def get_context_data(
+        self, request: Request, user: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {}
 
-    async def render(self, request: Request, context: Dict[str, Any], status_code: int = 200) -> HTMLResponse:
+    async def render(
+        self, request: Request, context: dict[str, Any], status_code: int = 200
+    ) -> HTMLResponse:
         full_context = {
             "request": request,
             "page_name": self.page_name,
@@ -309,12 +424,15 @@ class GenericTemplateView:
             "current_user": context.get("current_user"),
             **self.normalize_context(context),
         }
-        return self.template_engine.TemplateResponse(self.get_template_name(), full_context, status_code=status_code)
+        return self.template_engine.TemplateResponse(
+            request, self.get_template_name(), full_context, status_code=status_code
+        )
 
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         route_name = kwargs.pop("name", cls.__name__.lower())
+        # admin_path must be the full public URL (do not add another include_router prefix).
         admin_path = kwargs.pop("admin_path", prefix)
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         perm_dep = view.get_permission_dependency()
@@ -340,26 +458,31 @@ class GenericTemplateView:
 
 
 class GenericFormView(GenericTemplateView):
-    success_redirect_url: Optional[str] = None
+    success_redirect_url: str | None = None
 
-    async def post_context_data(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+    async def post_context_data(
+        self, request: Request, form_data: dict[str, Any], user: Any = None
+    ) -> dict[str, Any]:
         return {}
 
-    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+    async def handle_submit(
+        self, request: Request, form_data: dict[str, Any], user: Any = None
+    ) -> dict[str, Any]:
         return await self.post_context_data(request, form_data, user=user)
 
     @staticmethod
-    def _form_to_dict(form_data: Any) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {}
+    def _form_to_dict(form_data: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
         for key in form_data.keys():
             values = form_data.getlist(key)
             payload[key] = values if len(values) > 1 else values[0]
         return payload
 
     @classmethod
-    def as_router(cls, prefix: str, tags: Optional[List[str]] = None, **kwargs: Any) -> APIRouter:
+    def as_router(cls, prefix: str, tags: list[str] | None = None, **kwargs: Any) -> APIRouter:
         view = cls()
         route_name = kwargs.pop("name", cls.__name__.lower())
+        # admin_path must be the full public URL (do not add another include_router prefix).
         admin_path = kwargs.pop("admin_path", prefix)
         router = APIRouter(prefix=prefix, tags=tags or [prefix.strip("/")], **kwargs)
         perm_dep = view.get_permission_dependency()

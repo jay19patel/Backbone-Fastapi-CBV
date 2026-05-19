@@ -1,23 +1,31 @@
-from beanie import init_beanie
-from motor.motor_asyncio import AsyncIOMotorClient
-from typing import List, Type, Any, Union
-from beanie import Document
-import pymongo.errors
 import logging
+from typing import Any
+
+import pymongo.errors
+from beanie import Document, init_beanie
+from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger("backbone")
 
-async def init_database(client: AsyncIOMotorClient, database_name: str, document_models: List[Union[Type[Document], str, Any]]):
+
+async def init_database(
+    client: AsyncIOMotorClient,
+    database_name: str,
+    document_models: list[type[Document] | str | Any],
+) -> None:
     """
-    Initialize Beanie with the given motor client and document models.
+    Initialize Beanie with the Motor async client.
+    Beanie is pinned to 2.0.1 — Beanie 2.1+ expects PyMongo async instead of Motor.
     """
     try:
         await init_beanie(
             database=client[database_name],
-            document_models=document_models
+            document_models=document_models,
         )
     except pymongo.errors.DuplicateKeyError as e:
         logger.warning(
-            f"Database Initialization Warning: An index build failed due to existing duplicate keys. "
-            f"The application will continue starting, but you should resolve these duplicates. Details: {e}"
+            "Database Initialization Warning: An index build failed due to existing "
+            "duplicate keys. The application will continue starting, but you should "
+            "resolve these duplicates. Details: %s",
+            e,
         )

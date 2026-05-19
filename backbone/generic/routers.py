@@ -17,7 +17,7 @@ Usage (new pattern)::
 
 from __future__ import annotations
 
-from typing import Any, Type
+from typing import Any
 
 from fastapi import APIRouter
 
@@ -46,7 +46,7 @@ class BackboneRouter:
     def register_view(
         self,
         prefix: str,
-        view_class: Type[Any],
+        view_class: type[Any],
         tags: list | None = None,
         **kwargs: Any,
     ) -> None:
@@ -70,4 +70,3 @@ class BackboneRouter:
     def get_router(self) -> APIRouter:
         """Return the aggregated ``APIRouter``."""
         return self.router
-

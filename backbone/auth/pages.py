@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Request
 
@@ -14,7 +14,9 @@ class PasswordResetRequestPage(GenericFormView):
     page_description = "Request a password reset token for an account."
     admin_category = "Auth Pages"
 
-    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    async def get_context_data(
+        self, request: Request, user: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return {
             "submitted": False,
             "success": False,
@@ -24,7 +26,9 @@ class PasswordResetRequestPage(GenericFormView):
             "error": "",
         }
 
-    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+    async def handle_submit(
+        self, request: Request, form_data: dict[str, Any], user: Any = None
+    ) -> dict[str, Any]:
         email = str(form_data.get("email", "")).strip()
         if not email:
             return {
@@ -51,7 +55,9 @@ class PasswordResetRequestPage(GenericFormView):
         if reset_request and request.app.state.backbone_config.is_development:
             token = reset_request["token"]
             context["reset_token"] = token
-            context["reset_url"] = str(request.url_for("password_reset_confirm_page")) + f"?token={token}"
+            context["reset_url"] = (
+                str(request.url_for("password_reset_confirm_page")) + f"?token={token}"
+            )
 
         return context
 
@@ -63,7 +69,9 @@ class PasswordResetConfirmPage(GenericFormView):
     page_description = "Complete the password reset with the provided token."
     admin_category = "Auth Pages"
 
-    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    async def get_context_data(
+        self, request: Request, user: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
         token = request.query_params.get("token", "")
         return {
             "token": token,
@@ -72,22 +80,44 @@ class PasswordResetConfirmPage(GenericFormView):
             "submitted": False,
         }
 
-    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
+    async def handle_submit(
+        self, request: Request, form_data: dict[str, Any], user: Any = None
+    ) -> dict[str, Any]:
         token = str(form_data.get("token", "")).strip()
         password = str(form_data.get("password", "")).strip()
         confirm_password = str(form_data.get("confirm_password", "")).strip()
 
         if not token:
-            return {"token": token, "success": False, "submitted": True, "error": "Reset token is required."}
+            return {
+                "token": token,
+                "success": False,
+                "submitted": True,
+                "error": "Reset token is required.",
+            }
         if not password or len(password) < 8:
-            return {"token": token, "success": False, "submitted": True, "error": "Password must be at least 8 characters."}
+            return {
+                "token": token,
+                "success": False,
+                "submitted": True,
+                "error": "Password must be at least 8 characters.",
+            }
         if password != confirm_password:
-            return {"token": token, "success": False, "submitted": True, "error": "Passwords do not match."}
+            return {
+                "token": token,
+                "success": False,
+                "submitted": True,
+                "error": "Passwords do not match.",
+            }
 
         auth_service = AuthService(request)
         success = await auth_service.reset_password_with_token(token, password)
         if not success:
-            return {"token": token, "success": False, "submitted": True, "error": "Reset token is invalid or expired."}
+            return {
+                "token": token,
+                "success": False,
+                "submitted": True,
+                "error": "Reset token is invalid or expired.",
+            }
 
         return {
             "token": "",
@@ -104,44 +134,30 @@ class VerifyEmailStatusPage(GenericFormView):
     page_description = "Check the status of your email verification."
     admin_category = "Auth Pages"
 
-    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
+    async def get_context_data(
+        self, request: Request, user: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
         token = request.query_params.get("token", "")
         success = request.query_params.get("success", "false").lower() == "true"
         reason = request.query_params.get("reason", "")
-        
+
         return {
             "token": token,
             "success": success,
             "reason": reason,
         }
 
-    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
-        # This page is primarily informational after a redirect, but could handle re-send
-        return await self.get_context_data(request)
-
-
-class UserGuidePage(GenericFormView):
-    template_name = "pages/user_guide.html"
-    permission_classes = [AllowAny]
-    page_name = "User Guide"
-    page_description = "Guidelines and integration notes for the Backbone system."
-    admin_category = "Help"
-
-    async def get_context_data(self, request: Request, user: Any = None, **kwargs: Any) -> Dict[str, Any]:
-        return {
-            "site_name": "Soul Craft Studio",
-            "api_base_url": str(request.base_url).rstrip('/') + "/api",
-        }
-
-    async def handle_submit(self, request: Request, form_data: Dict[str, Any], user: Any = None) -> Dict[str, Any]:
-        return await self.get_context_data(request)
+    async def handle_submit(
+        self, request: Request, form_data: dict[str, Any], user: Any = None
+    ) -> dict[str, Any]:
+        return await self.get_context_data(request, user=user)
 
 
 router = APIRouter()
 router.include_router(
     PasswordResetRequestPage.as_router(
         "/reset-password",
-        tags=["Pages"],
+        tags=["Auth Pages"],
         name="password_reset_request_page",
         admin_path="/pages/reset-password",
     )
@@ -149,7 +165,7 @@ router.include_router(
 router.include_router(
     PasswordResetConfirmPage.as_router(
         "/reset-password/confirm",
-        tags=["Pages"],
+        tags=["Auth Pages"],
         name="password_reset_confirm_page",
         admin_path="/pages/reset-password/confirm",
     )
@@ -157,16 +173,8 @@ router.include_router(
 router.include_router(
     VerifyEmailStatusPage.as_router(
         "/verify-status",
-        tags=["Pages"],
+        tags=["Auth Pages"],
         name="email_verification_status_page",
         admin_path="/pages/verify-status",
-    )
-)
-router.include_router(
-    UserGuidePage.as_router(
-        "/user-guide",
-        tags=["Pages"],
-        name="user_guide_page",
-        admin_path="/pages/user-guide",
     )
 )

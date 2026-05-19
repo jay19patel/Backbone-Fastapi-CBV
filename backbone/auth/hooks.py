@@ -25,7 +25,9 @@ def _build_login_url(request: Any = None) -> str:
     return "http://localhost:3000/login"
 
 
-async def send_registration_email_on_user_create(instance: Any, request: Any = None, **kwargs) -> None:
+async def send_registration_email_on_user_create(
+    instance: Any, request: Any = None, **kwargs
+) -> None:
     if not isinstance(instance, User):
         return
     if getattr(instance, "is_deleted", False):
@@ -35,25 +37,28 @@ async def send_registration_email_on_user_create(instance: Any, request: Any = N
     if not email:
         return
 
-    full_name = (getattr(instance, "full_name", "") or email.split("@")[0]).strip()
-    login_url = _build_login_url(request)
+    (getattr(instance, "full_name", "") or email.split("@")[0]).strip()
+    _build_login_url(request)
 
     try:
         from .service import AuthService
+
         auth_service = AuthService(request)
-        
+
         # Generate token and full verification link pointing to the backend
         token = await auth_service.create_verification_request(instance)
-        base_url = str(request.base_url).rstrip('/') if request else str(settings.SITE_URL).rstrip('/')
+        base_url = (
+            str(request.base_url).rstrip("/")
+            if request
+            else getattr(settings, "SITE_URL", "http://localhost:8000").rstrip("/")
+        )
         # Link to the backend verification handler
         verification_url = f"{base_url}/api/auth/verify?token={token}"
-        
+
         # Send Welcome Email (now includes verification link)
         await auth_service.send_welcome_verification_email(instance, verify_url=verification_url)
     except Exception:
         logger.exception("Failed to send welcome email for user=%s", email)
-
-
 
 
 def register_auth_hooks() -> None:

@@ -7,14 +7,14 @@ import logging
 import re
 import smtplib
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, make_msgid
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, select_autoescape
 from reportlab.lib.pagesizes import A4
@@ -28,25 +28,29 @@ from .core.models import Email
 logger = logging.getLogger("backbone.email")
 
 APP_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "templates"
+ECOMMERCE_TEMPLATE_ROOT = Path(__file__).resolve().parents[1] / "ecommerce" / "templates"
 APP_EMAIL_ROOT = Path(__file__).resolve().parents[1] / "email_templates"
 FRAMEWORK_TEMPLATE_ROOT = Path(__file__).resolve().parent / "templates"
 
 
 def _build_email_environment() -> Environment:
-    loader = ChoiceLoader(
-        [
-            FileSystemLoader(str(APP_EMAIL_ROOT)),
-            FileSystemLoader(str(APP_TEMPLATE_ROOT)),
-            FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)),
-        ]
-    )
+    loaders = []
+    if APP_EMAIL_ROOT.exists():
+        loaders.append(FileSystemLoader(str(APP_EMAIL_ROOT)))
+    if ECOMMERCE_TEMPLATE_ROOT.exists():
+        loaders.append(FileSystemLoader(str(ECOMMERCE_TEMPLATE_ROOT)))
+    if APP_TEMPLATE_ROOT.exists():
+        loaders.append(FileSystemLoader(str(APP_TEMPLATE_ROOT)))
+    loaders.append(FileSystemLoader(str(FRAMEWORK_TEMPLATE_ROOT)))
+
+    loader = ChoiceLoader(loaders)
     return Environment(loader=loader, autoescape=select_autoescape(["html", "xml"]))
 
 
 EMAIL_ENVIRONMENT = _build_email_environment()
 
 
-def _render_template(template_name: str, context: Dict[str, Any]) -> str:
+def _render_template(template_name: str, context: dict[str, Any]) -> str:
     template = EMAIL_ENVIRONMENT.get_template(template_name)
     return template.render(**context)
 
@@ -73,12 +77,12 @@ def _html_to_text_for_pdf(raw_html: str) -> str:
     return value.strip()
 
 
-def _wrap_line(text: str, font_name: str, font_size: int, max_width: float) -> List[str]:
+def _wrap_line(text: str, font_name: str, font_size: int, max_width: float) -> list[str]:
     if not text.strip():
         return [""]
 
     words = text.split()
-    lines: List[str] = []
+    lines: list[str] = []
     current = words[0]
     for word in words[1:]:
         candidate = f"{current} {word}"
@@ -140,7 +144,7 @@ def _build_mime_message(
     plain_text_body: str,
     from_email: str,
     from_name: str,
-    attachments: List[Tuple[str, bytes, str]],
+    attachments: list[tuple[str, bytes, str]],
 ) -> MIMEMultipart:
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
@@ -165,6 +169,7 @@ def _build_mime_message(
 
 def _smtp_send_sync(message: MIMEMultipart) -> None:
     from .core.config import BackboneConfig
+
     settings = BackboneConfig.get_instance().config
     host_lower = (settings.EMAIL_HOST or "").lower()
     if "gmail" in host_lower and (not settings.EMAIL_USERNAME or not settings.EMAIL_PASSWORD):
@@ -173,9 +178,13 @@ def _smtp_send_sync(message: MIMEMultipart) -> None:
         )
 
     if settings.EMAIL_USE_SSL:
-        server = smtplib.SMTP_SSL(settings.EMAIL_HOST, settings.EMAIL_PORT, timeout=settings.EMAIL_TIMEOUT_SECONDS)
+        server = smtplib.SMTP_SSL(
+            settings.EMAIL_HOST, settings.EMAIL_PORT, timeout=settings.EMAIL_TIMEOUT_SECONDS
+        )
     else:
-        server = smtplib.SMTP(settings.EMAIL_HOST, settings.EMAIL_PORT, timeout=settings.EMAIL_TIMEOUT_SECONDS)
+        server = smtplib.SMTP(
+            settings.EMAIL_HOST, settings.EMAIL_PORT, timeout=settings.EMAIL_TIMEOUT_SECONDS
+        )
 
     try:
         server.ehlo()
@@ -195,14 +204,15 @@ class EmailSender:
         *,
         to_email: str,
         subject: str,
-        template_name: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        plain_text_body: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
-        pdf_attachments: Optional[List[Dict[str, Any]]] = None,
+        template_name: str | None = None,
+        context: dict[str, Any] | None = None,
+        plain_text_body: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        pdf_attachments: list[dict[str, Any]] | None = None,
         max_retries: int = 3,
-    ) -> Optional[str]:
+    ) -> str | None:
         from .core.config import BackboneConfig
+
         settings = BackboneConfig.get_instance().config
         context = context or {}
         attachments = attachments or []
@@ -238,26 +248,31 @@ class EmailSender:
                 await refreshed.save()
         return str(email_log.id)
 
-    async def queue_registration_emails(self, *, to_email: str, full_name: str, login_url: str) -> Dict[str, Optional[str]]:
+    async def queue_registration_emails(
+        self, *, to_email: str, full_name: str, login_url: str
+    ) -> dict[str, str | None]:
         from .core.config import BackboneConfig
+
         settings = BackboneConfig.get_instance().config
+        site_name = getattr(settings, "SITE_NAME", "Backbone")
         base_context = {
             "full_name": full_name,
             "login_url": login_url,
             "support_email": settings.EMAIL_FROM_EMAIL,
-            "current_year": datetime.now(timezone.utc).year,
+            "current_year": datetime.now(UTC).year,
+            "site_name": site_name,
         }
 
         welcome_id = await self.queue_email(
             to_email=to_email,
-            subject="Welcome to Blogermenia",
+            subject=f"Welcome to {site_name}",
             template_name="email/welcome_email.html",
             context=base_context,
         )
 
         welcome_pack_id = await self.queue_email(
             to_email=to_email,
-            subject="Your Blogermenia welcome pack",
+            subject=f"Your {site_name} welcome pack",
             template_name="email/welcome_pack_email.html",
             context=base_context,
             pdf_attachments=[
@@ -278,6 +293,7 @@ class EmailSender:
 
 async def process_email_delivery_task(email_log_id: str) -> None:
     from .core.config import BackboneConfig
+
     settings = BackboneConfig.get_instance().config
     email_log = await Email.get(email_log_id)
     if not email_log:
@@ -291,7 +307,7 @@ async def process_email_delivery_task(email_log_id: str) -> None:
         return
 
     email_log.status = "processing"
-    email_log.started_at = datetime.now(timezone.utc)
+    email_log.started_at = datetime.now(UTC)
     email_log.attempt_count = (email_log.attempt_count or 0) + 1
     await email_log.save()
 
@@ -307,7 +323,7 @@ async def process_email_delivery_task(email_log_id: str) -> None:
 
         plain_text_body = email_log.plain_text_body or _strip_html(html_body)
 
-        built_attachments: List[Tuple[str, bytes, str]] = []
+        built_attachments: list[tuple[str, bytes, str]] = []
         for item in email_log.attachments or []:
             filename = str(item.get("filename") or "attachment.bin")
             content_type = str(item.get("content_type") or "application/octet-stream")
@@ -316,7 +332,9 @@ async def process_email_delivery_task(email_log_id: str) -> None:
             elif item.get("file_path"):
                 data = await asyncio.to_thread(_read_file_sync, str(item["file_path"]))
             else:
-                raise ValueError(f"Attachment {filename} missing both content_base64 and file_path.")
+                raise ValueError(
+                    f"Attachment {filename} missing both content_base64 and file_path."
+                )
             built_attachments.append((filename, data, content_type))
 
         for pdf_item in email_log.pdf_attachments or []:
@@ -344,7 +362,7 @@ async def process_email_delivery_task(email_log_id: str) -> None:
         await asyncio.to_thread(_smtp_send_sync, msg)
 
         email_log.status = "sent"
-        email_log.sent_at = datetime.now(timezone.utc)
+        email_log.sent_at = datetime.now(UTC)
         email_log.error_message = None
         email_log.error_traceback = None
         email_log.provider_message_id = msg.get("Message-ID")

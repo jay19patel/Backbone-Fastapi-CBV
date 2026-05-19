@@ -215,14 +215,14 @@ Notes:
 
 Backbone has two queue patterns:
 
-1. **Logged queue**  
-   Use `background_task(...)`  
+1. **Logged queue**
+   Use `background_task(...)`
    - queue: `backbone_tasks`
    - creates `task_logs` entries (`Task` model)
    - good for business jobs where visibility is needed
 
-2. **Internal queue (no Task entry)**  
-   Use `background_internal_task(...)`  
+2. **Internal queue (no Task entry)**
+   Use `background_internal_task(...)`
    - queue: `backbone_internal_tasks`
    - no `task_logs` creation
    - used by internal framework jobs (like attachment processing)
@@ -490,7 +490,7 @@ Tune load by editing constants at top of file:
 - `USER_WORKER_CONCURRENCY`
 - `BLOG_CREATE_CONCURRENCY`
 
-Current repository defaults are intentionally low for quick validation.  
+Current repository defaults are intentionally low for quick validation.
 For heavy seed (around 2500 blogs), set for example:
 - `NUM_USERS = 50`
 - `BLOGS_PER_USER = 50`
@@ -513,7 +513,7 @@ For heavy seed (around 2500 blogs), set for example:
 
 ### 1) `python-dotenv could not parse statement...`
 
-Your `.env` line format is invalid.  
+Your `.env` line format is invalid.
 Use:
 - `KEY=value`
 
@@ -529,7 +529,7 @@ Fix:
 
 ### 3) Background tasks not entering queue
 
-If `CACHE_ENABLED=false`, Redis queue is disabled and tasks run synchronously.  
+If `CACHE_ENABLED=false`, Redis queue is disabled and tasks run synchronously.
 Set:
 - `CACHE_ENABLED=true`
 - valid `REDIS_URL`

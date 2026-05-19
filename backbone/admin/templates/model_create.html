@@ -302,12 +302,28 @@
     </div>
 
     <div class="p-8">
+        {% if form_errors %}
+        <div class="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+            <p class="text-sm font-bold text-rose-800">{{ form_error_summary or 'Please fix the errors below.' }}</p>
+            <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-rose-700">
+                {% for err in form_errors %}
+                <li><span class="font-semibold">{{ err.field|nice_title }}</span>: {{ err.message }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
         <div class="grid grid-cols-1 gap-y-6">
             {% for name, field in model_fields.items() %}
             {% if name not in internal_fields and name not in ['hashed_password', 'password'] %}
+            {% set widget = field_widgets.get(name, {}) %}
+            {% set widget_type = widget.get('widget', 'text') %}
+            {% set is_required = widget.get('required', false) %}
+            {% set saved_value = form_values.get(name, '') %}
             <div>
-                <label class="block text-sm font-semibold text-slate-700 mb-2">{{ name|nice_title }}</label>
-                {% if name in field_links %}
+                <label class="block text-sm font-semibold text-slate-700 mb-2">
+                    {{ name|nice_title }}{% if is_required %} <span class="text-rose-500">*</span>{% endif %}
+                </label>
+                {% if widget_type == 'link' and name in field_links %}
                 <div id="search-container-{{ name }}" class="relative search-container">
                     <input type="text" placeholder="Search to select {{ name|nice_title }}..."
                         class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
@@ -353,20 +369,23 @@
                         window.initSearchableSelect('search-container-{{ name }}', '{{ field_links[name] }}', '{{ name }}');
                     });
                 </script>
-                {% elif field.annotation.__name__ == 'bool' %}
+                {% elif widget_type == 'image' %}
+                <input type="file" name="{{ name }}" accept="image/*" {% if is_required %}required{% endif %}
+                    class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 file:mr-4 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-indigo-700">
+                {% elif widget_type == 'bool' %}
                 <select name="{{ name }}"
                     class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
-                    <option value="true">True</option>
-                    <option value="false" selected>False</option>
+                    <option value="true" {% if saved_value == 'True' or saved_value == 'true' %}selected{% endif %}>True</option>
+                    <option value="false" {% if saved_value in ['', 'False', 'false'] %}selected{% endif %}>False</option>
                 </select>
-                {% elif field.annotation.__name__ in ['int', 'float'] %}
-                <input type="number" name="{{ name }}" step="any" required
+                {% elif widget_type == 'number' %}
+                <input type="number" name="{{ name }}" step="any" value="{{ saved_value }}" {% if is_required %}required{% endif %}
                     class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% else %}
-                <input type="text" name="{{ name }}" required
+                <input type="text" name="{{ name }}" value="{{ saved_value }}" {% if is_required %}required{% endif %}
                     class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% endif %}
-                {% set field_desc = field.description if field.description else 'Enter ' ~ (name|replace('_', ' ')) %}
+                {% set field_desc = widget.get('description') or field.description or ('Enter ' ~ (name|replace('_', ' '))) %}
                 <p class="text-xs text-slate-400 mt-2"><i class="fas fa-info-circle mr-1 opacity-70"></i>{{ field_desc
                     }}</p>
             </div>

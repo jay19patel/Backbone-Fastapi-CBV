@@ -22,15 +22,16 @@ Design decisions:
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional, Sequence, Type, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 
 from ..schemas import UserOut
 from .dependencies import get_current_user, get_optional_user
 
-
 # ── Permission Composition Operators ────────────────────────────────────────
+
 
 class AND:
     """Combine two permissions with logical AND."""
@@ -38,7 +39,7 @@ class AND:
     def __init__(
         self,
         request: Request,
-        user: Optional[UserOut],
+        user: UserOut | None,
         op1_inst: Any,
         op2_inst: Any,
     ) -> None:
@@ -62,7 +63,7 @@ class OR:
     def __init__(
         self,
         request: Request,
-        user: Optional[UserOut],
+        user: UserOut | None,
         op1_inst: Any,
         op2_inst: Any,
     ) -> None:
@@ -100,7 +101,7 @@ class OperandHolder:
     def __call__(
         self,
         request: Request,
-        user: Optional[UserOut] = None,
+        user: UserOut | None = None,
     ) -> Any:
         """Instantiate and compose both operands."""
         op1_inst = self.op1_class(request, user)
@@ -126,6 +127,7 @@ class BasePermissionMetaclass(type):
 
 # ── Base Permission ────────────────────────────────────────────────────────
 
+
 class BasePermission(metaclass=BasePermissionMetaclass):
     """
     Abstract base class for all Backbone permissions.
@@ -146,7 +148,7 @@ class BasePermission(metaclass=BasePermissionMetaclass):
     def __init__(
         self,
         request: Request,
-        user: Optional[UserOut] = None,
+        user: UserOut | None = None,
     ) -> None:
         self.request = request
         self.user = user
@@ -174,6 +176,7 @@ class BasePermission(metaclass=BasePermissionMetaclass):
 
 
 # ── Built-in Permissions ────────────────────────────────────────────────────
+
 
 class AllowAny(BasePermission):
     """
@@ -241,7 +244,6 @@ class IsSuperUser(BasePermission):
         return True
 
 
-
 class IsOwner(BasePermission):
     """
     Grants access only to the creator of a resource.
@@ -286,6 +288,7 @@ AUTH_REQUIRING_PERMISSIONS = (IsAuthenticated, IsOwner, IsAdminUser, IsSuperUser
 
 # ── Permission Dependency Factory ──────────────────────────────────────────
 
+
 def _requires_authentication(
     permission_classes: Sequence[Any],
 ) -> bool:
@@ -312,7 +315,7 @@ def _requires_authentication(
 
 
 def PermissionDependency(
-    permission_classes: List[Any],
+    permission_classes: list[Any],
 ) -> Callable:
     """
     Factory that returns a FastAPI ``Depends()`` function for
@@ -344,8 +347,8 @@ def PermissionDependency(
 
     async def permission_checker(
         request: Request,
-        user: Optional[UserOut] = Depends(user_dependency),
-    ) -> Optional[UserOut]:
+        user: UserOut | None = Depends(user_dependency),
+    ) -> UserOut | None:
         """Check all permissions and return the user."""
         for perm_class in permission_classes:
             perm_inst = perm_class(request, user)

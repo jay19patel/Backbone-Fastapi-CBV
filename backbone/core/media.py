@@ -1,10 +1,11 @@
-import os
 import base64
 import logging
 import mimetypes
+import os
 from pathlib import Path
-from backbone.core.models import Attachment
+
 from backbone.core.config import BackboneConfig
+from backbone.core.models import Attachment
 
 logger = logging.getLogger("backbone.media")
 
@@ -17,13 +18,16 @@ def _is_cloudinary_configured() -> bool:
     """Check if Cloudinary is configured."""
     try:
         import cloudinary
+
         config = cloudinary.config()
         return bool(config.cloud_name and config.api_key and config.api_secret)
     except Exception:
         return False
 
 
-async def _upload_to_cloudinary(file_bytes: bytes, subfolder: str, public_id: str, content_type: str) -> str:
+async def _upload_to_cloudinary(
+    file_bytes: bytes, subfolder: str, public_id: str, content_type: str
+) -> str:
     """
     Upload file bytes to Cloudinary and return the secure URL.
     """
@@ -66,6 +70,7 @@ async def save_external_image(url: str, subfolder: str, filename: str) -> str:
     Returns the secure URL or local relative path.
     """
     import httpx
+
     async with httpx.AsyncClient() as client:
         res = await client.get(url)
         if res.status_code != 200:
@@ -74,7 +79,9 @@ async def save_external_image(url: str, subfolder: str, filename: str) -> str:
         content_type = res.headers.get("Content-Type", "image/jpeg")
 
     if _is_cloudinary_configured():
-        return await _upload_to_cloudinary(file_bytes, subfolder, filename.split('.')[0], content_type)
+        return await _upload_to_cloudinary(
+            file_bytes, subfolder, filename.split(".")[0], content_type
+        )
     else:
         return await _save_to_local(file_bytes, subfolder, filename)
 
@@ -128,7 +135,7 @@ async def process_attachment_upload(attachment_id: str, base64_data: str):
                 if getattr(model.Settings, "name", None) == attachment.collection_name:
                     target_model = model
                     break
-            
+
             if target_model:
                 doc = await target_model.get(attachment.document_id)
                 if doc:

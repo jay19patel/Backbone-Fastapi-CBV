@@ -20,51 +20,28 @@ Usage:
 
 import asyncio
 import inspect
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+# ── Admin ────────────────────────────────────────────────────────────────
+from .admin import admin_site
+
+# ── Auth ─────────────────────────────────────────────────────────────────
+from .auth.router import AuthRouter
+from .common.exceptions import (
+    AuthenticationException,
+    BackboneException,
+    NotFoundException,
+    PermissionException,
+    ServiceException,
+    ValidationException,
+)
+
+# ── Common Services & Utils ──────────────────────────────────────────────
+from .common.services import CacheService, background_internal_task, background_task
+from .common.utils import PasswordManager, TokenManager, logger
 
 # ── Configuration ────────────────────────────────────────────────────────
 from .core.config import BackboneConfig
-from .core.settings import Settings, settings
-
-# ── Core Models ──────────────────────────────────────────────────────────
-from .core.models import (
-    EventDocument,
-    LogEntry,
-    Session,
-    Task,
-    User,
-    Email,
-    Store,
-    TaskLog,          # Backward-compatible alias
-    EmailDeliveryLog, # Backward-compatible alias
-    BackboneStore,    # Backward-compatible alias
-)
-
-# ── Signals ──────────────────────────────────────────────────────────────
-from .core.signals import Signal, signals
-from .hooks import (
-    on_create,
-    on_update,
-    on_delete,
-    on_field_change,
-    register_create_hook,
-    register_update_hook,
-    register_delete_hook,
-    register_field_change_hook,
-)
-
-# ── Repository ───────────────────────────────────────────────────────────
-from .core.repository import BeanieRepository
-
-# ── Permissions ──────────────────────────────────────────────────────────
-from .core.permissions import (
-    AllowAny,
-    BasePermission,
-    IsAdminUser,
-    IsAuthenticated,
-    IsOwner,
-    PermissionDependency,
-)
 
 # ── Mixins (Layer 2 — for power users) ──────────────────────────────────
 from .core.mixins import (
@@ -76,53 +53,78 @@ from .core.mixins import (
     ViewContext,
 )
 
+# ── Core Models ──────────────────────────────────────────────────────────
+from .core.models import (
+    BackboneStore,  # Backward-compatible alias
+    Email,
+    EmailDeliveryLog,  # Backward-compatible alias
+    EventDocument,
+    LogEntry,
+    Session,
+    Store,
+    Task,
+    TaskLog,  # Backward-compatible alias
+    User,
+)
+
+# ── Permissions ──────────────────────────────────────────────────────────
+from .core.permissions import (
+    AllowAny,
+    BasePermission,
+    IsAdminUser,
+    IsAuthenticated,
+    IsOwner,
+    PermissionDependency,
+)
+
+# ── Repository ───────────────────────────────────────────────────────────
+from .core.repository import BeanieRepository
+from .core.settings import Settings, settings
+
+# ── Signals ──────────────────────────────────────────────────────────────
+from .core.signals import Signal, signals
+from .db import BackboneDB, db
+from .email_sender import EmailSender, email_sender
+
+# ── Router Aggregation ───────────────────────────────────────────────────
+from .generic.routers import BackboneRouter
+
 # ── Generic Views (as_router) ───────────────────────────────────────────
 from .generic.views import (
     GenericCreateView,
     GenericCrudView,
     GenericCustomApiView,
     GenericDeleteView,
-    GenericListView,
     GenericFormView,
+    GenericListView,
     GenericRetrieveView,
     GenericStatsView,
     GenericSubResourceView,
     GenericTemplateView,
     GenericUpdateView,
 )
-
-# ── Router Aggregation ───────────────────────────────────────────────────
-from .generic.routers import BackboneRouter
+from .hooks import (
+    on_create,
+    on_delete,
+    on_field_change,
+    on_update,
+    register_create_hook,
+    register_delete_hook,
+    register_field_change_hook,
+    register_update_hook,
+)
 
 # ── Schemas ──────────────────────────────────────────────────────────────
 from .schemas import PaginatedResponse, TokenResponse, UserOut
-
-# ── Auth ─────────────────────────────────────────────────────────────────
-from .auth.router import AuthRouter
-
-# ── Common Services & Utils ──────────────────────────────────────────────
-from .common.services import CacheService, background_task, background_internal_task
-from .common.utils import PasswordManager, TokenManager, logger
-from .common.exceptions import (
-    BackboneException,
-    NotFoundException,
-    ValidationException,
-    AuthenticationException,
-    PermissionException,
-    ServiceException
-)
-
-# ── Admin ────────────────────────────────────────────────────────────────
-from .admin import admin_site
-from .email_sender import email_sender, EmailSender
-from .db import db, BackboneDB
 
 # Convenient alias for explicit store usage patterns:
 #   await backbone.db_store.get("my_key")
 db_store = db
 
 
-async def _insert_log_entry(level: str, message: str, module: str, function: str, line: int, extra: dict):
+async def _insert_log_entry(
+    level: str, message: str, module: str, function: str, line: int, extra: dict
+):
     try:
         await LogEntry(
             level=level.upper(),
@@ -131,7 +133,7 @@ async def _insert_log_entry(level: str, message: str, module: str, function: str
             function=function,
             line=line,
             extra=extra or None,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ).insert()
     except Exception:
         pass
@@ -159,6 +161,7 @@ def log(message: str, level: str = "info", **extra):
         except Exception:
             pass
 
+
 __all__ = [
     # Configuration
     "BackboneConfig",
@@ -170,8 +173,11 @@ __all__ = [
     "LogEntry",
     "EventDocument",
     "Task",
+    "TaskLog",
     "Email",
+    "EmailDeliveryLog",
     "Store",
+    "BackboneStore",
     # Signals
     "signals",
     "Signal",

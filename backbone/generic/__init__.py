@@ -5,13 +5,25 @@ Generic CRUD views and utilities.
 """
 
 from .views import (
-    GenericListView, GenericCreateView, GenericRetrieveView,
-    GenericUpdateView, GenericDeleteView, GenericCrudView,
-    GenericStatsView, GenericSubResourceView, GenericCustomApiView
+    GenericCreateView,
+    GenericCrudView,
+    GenericCustomApiView,
+    GenericDeleteView,
+    GenericListView,
+    GenericRetrieveView,
+    GenericStatsView,
+    GenericSubResourceView,
+    GenericUpdateView,
 )
 
 __all__ = [
-    "GenericListView", "GenericCreateView", "GenericRetrieveView",
-    "GenericUpdateView", "GenericDeleteView", "GenericCrudView",
-    "GenericStatsView", "GenericSubResourceView", "GenericCustomApiView"
+    "GenericListView",
+    "GenericCreateView",
+    "GenericRetrieveView",
+    "GenericUpdateView",
+    "GenericDeleteView",
+    "GenericCrudView",
+    "GenericStatsView",
+    "GenericSubResourceView",
+    "GenericCustomApiView",
 ]

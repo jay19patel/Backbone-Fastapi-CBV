@@ -1,20 +1,21 @@
 from fastapi import HTTPException
-from typing import Any, Dict, Optional
+
 
 class APIException(HTTPException):
     """
     Base class for all custom API exceptions.
     Subclasses should provide `status_code` and `detail` defaults.
     """
+
     status_code: int = 500
     default_detail: str = "A server error occurred."
     default_code: str = "error"
 
     def __init__(
         self,
-        detail: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        code: Optional[str] = None
+        detail: str | None = None,
+        headers: dict[str, str] | None = None,
+        code: str | None = None,
     ):
         if detail is None:
             detail = self.default_detail
@@ -80,8 +81,13 @@ class Throttled(APIException):
     status_code = 429
     default_detail = "Request was throttled."
     default_code = "throttled"
-    
-    def __init__(self, wait: Optional[int] = None, detail: Optional[str] = None, headers: Optional[Dict[str, str]] = None):
+
+    def __init__(
+        self,
+        wait: int | None = None,
+        detail: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         if detail is None:
             detail = self.default_detail
             if wait is not None:

@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "argon2-cffi>=25.1.0",
-    "beanie>=2.0.1",
+    "beanie==2.0.1",
+    "motor>=3.7.1,<4",
     "cloudinary>=1.44.1",
     "email-validator>=2.3.0",
     "fastapi>=0.128.0",
@@ -17,12 +18,12 @@ dependencies = [
     "langchain-ollama>=0.2.0",
     "langchain-google-genai>=4.2.1",
     "langgraph>=1.1.4",
-    "motor>=3.7.1",
     "passlib>=1.7.4",
     "pydantic-settings>=2.12.0",
     "pyjwt>=2.11.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "mongomock-motor>=0.0.36",
     "python-multipart>=0.0.22",
     "python-slugify>=8.0.4",
     "redis>=5.0.1",
@@ -31,6 +32,60 @@ dependencies = [
     "uvicorn>=0.40.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pre-commit>=4.2.0",
+    "ruff>=0.11.0",
+]
+
 # ── Dev server commands ──────────────────────────────────────────────────────
 # New structure (recommended):  uv run uvicorn app.main:app --reload
 # Legacy (backward compat):     uv run uvicorn main:app --reload
+
+# ── Ruff (Linter + Formatter) ─────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "BLE"]
+ignore = [
+    "B008",   # FastAPI Depends() pattern
+    "E501",   # Line length — handled by formatter
+    "E402",   # Settings/bootstrap before imports (main.py, admin router)
+    "E712",   # Beanie/MongoDB boolean filter style
+    "E722",   # Legacy bare except in admin handlers
+    "B904",   # raise-from (gradual cleanup)
+    "BLE001", # Logging / bootstrap fallbacks
+    "B023",   # Closure in dynamic form helpers
+    "B006",   # FastAPI mutable default args
+    "B007",   # Unused loop variables in model introspection
+    "F841",   # Assigned but unused (admin/auth paths)
+    "N802",   # Public API: TextField, Slug, Connect, etc.
+    "N815",   # camelCase API fields (e.g. productImage)
+    "N818",   # BackboneException — stable public name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["N", "B", "E402"]
+"main.py" = ["E402"]
+"backbone/admin/router.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true

@@ -1,54 +1,630 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>User Guide - {{ site_name }} Backbone</title>
-    <style>
-        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1f2937; max-width: 800px; margin: 0 auto; padding: 40px 20px; background: #f9fafb; }
-        .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
-        h1 { color: #111827; margin-bottom: 8px; }
-        h2 { color: #374151; margin-top: 32px; border-bottom: 2px solid #f3f4f6; padding-bottom: 8px; }
-        code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
-        pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; }
-        .endpoint { font-weight: bold; color: #4f46e5; }
-        .method { background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-right: 8px; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>Backbone User Guide</h1>
-        <p>Welcome to the core integration guide for {{ site_name }}. This document outlines the key functionalities and API endpoints for your frontend application.</p>
+{% extends "pages/base_public.html" %}
+{# backbone-pages-default: user_guide #}
 
-        <h2>Authentication</h2>
-        <p>The authentication system uses JWT-based stateless tokens. All auth endpoints are prefixed with <code>/api/auth</code>.</p>
-        
-        <p><span class="method">POST</span><code class="endpoint">/register</code>: Register a new user. Sends a consolidated welcome/verification email.</p>
-        <p><span class="method">POST</span><code class="endpoint">/login</code>: Authenticate and receive tokens.</p>
-        <p><span class="method">POST</span><code class="endpoint">/password-reset/request</code>: Send a password reset email. Requires <code>email</code> in the body.</p>
+{% block title %}Developer Guide — {{ site_name }}{% endblock %}
 
-        <h2>Email Templates</h2>
-        <p>Templates are located in <code>backend/backbone/templates/email</code>. You can override them by placing files with the same name in <code>backend/templates/email</code>.</p>
-        <ul>
-            <li><code>welcome_verification.html</code>: Consolidated registration email.</li>
-            <li><code>order_confirmation.html</code>: Sent after order placement.</li>
-            <li><code>order_status_update.html</code>: Sent on order status change.</li>
-        </ul>
+{% block content %}
+<div class="container mx-auto max-w-5xl px-4 py-10">
 
-        <h2>PDF Invoices</h2>
-        <p>Invoices are generated using ReportLab from the HTML template at <code>email/pdf/invoice.html</code>. They are automatically attached to order confirmation emails.</p>
+  <div class="mb-10 text-center">
+    <h1 class="text-4xl font-bold text-gray-900 mb-2">Backbone FastAPI — Developer Guide</h1>
+    <p class="text-gray-500 text-lg">Everything you need to build production-grade APIs with Backbone.</p>
+    <a href="{{ api_base_url }}/docs" class="mt-4 inline-block text-blue-600 underline text-sm">OpenAPI Docs →</a>
+  </div>
 
-        <h2>Core Pages</h2>
-        <p>Core pages are served under <code>/pages</code>:</p>
-        <ul>
-            <li><code class="endpoint">/pages/verify-status</code>: Displays verification results.</li>
-            <li><code class="endpoint">/pages/reset-password/confirm</code>: Password reset form.</li>
-            <li><code class="endpoint">/pages/user-guide</code>: This guide.</li>
-        </ul>
+  <!-- TOC -->
+  <nav class="bg-gray-50 border rounded-lg p-5 mb-10">
+    <h2 class="font-semibold text-gray-700 mb-3">Table of Contents</h2>
+    <ol class="list-decimal list-inside space-y-1 text-sm text-blue-700">
+      <li><a href="#quickstart" class="hover:underline">Quick Start</a></li>
+      <li><a href="#models" class="hover:underline">Defining Models</a></li>
+      <li><a href="#generic-crud" class="hover:underline">Generic CRUD Views</a></li>
+      <li><a href="#filtering" class="hover:underline">Filtering &amp; Search</a></li>
+      <li><a href="#permissions" class="hover:underline">Permissions</a></li>
+      <li><a href="#auth" class="hover:underline">Authentication API</a></li>
+      <li><a href="#email-verification" class="hover:underline">Email Verification</a></li>
+      <li><a href="#template-overrides" class="hover:underline">Template Overrides</a></li>
+      <li><a href="#admin" class="hover:underline">Admin Panel</a></li>
+      <li><a href="#signals" class="hover:underline">Signals</a></li>
+      <li><a href="#background-tasks" class="hover:underline">Background Tasks</a></li>
+      <li><a href="#scheduler" class="hover:underline">Cron Scheduler</a></li>
+      <li><a href="#cli" class="hover:underline">CLI Tools</a></li>
+      <li><a href="#link-utilities" class="hover:underline">Link Utilities (no more <code>_extract_id</code>)</a></li>
+      <li><a href="#owner-scoping" class="hover:underline">Owner Scoping &amp; <code>IsOwner</code></a></li>
+      <li><a href="#dynamic-choices" class="hover:underline">Dynamic Choices (statuses in DB)</a></li>
+      <li><a href="#atomic-updates" class="hover:underline">Atomic Updates (race-free stock)</a></li>
+      <li><a href="#safe-tasks" class="hover:underline">Safe Task Payloads</a></li>
+      <li><a href="#configuration" class="hover:underline">Configuration Reference</a></li>
+    </ol>
+  </nav>
 
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; color: #6b7280;">
-            &copy; {{ current_year }} {{ site_name }} Backbone Core.
-        </div>
+  <!-- 1. Quick Start -->
+  <section id="quickstart" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">1. Quick Start</h2>
+    <p class="text-gray-600 mb-4">Install dependencies and run your app:</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code># Install
+uv sync
+# or: pip install -r requirements.txt
+
+# Copy environment file
+cp .env.example .env
+# → Edit .env and set SECRET_KEY, MONGODB_URL, ADMIN_EMAIL, ADMIN_PASSWORD
+
+# Run
+uv run uvicorn main:app --reload</code></pre>
+    <p class="text-gray-600 mt-4">Then visit:</p>
+    <ul class="list-disc list-inside text-sm text-blue-700 mt-2">
+      <li><a href="/docs" class="underline">/docs</a> — Interactive OpenAPI documentation</li>
+      <li><a href="/admin" class="underline">/admin</a> — Admin panel (use ADMIN_EMAIL / ADMIN_PASSWORD)</li>
+      <li><a href="/pages/user-guide" class="underline">/pages/user-guide</a> — This page</li>
+    </ul>
+  </section>
+
+  <!-- 2. Models -->
+  <section id="models" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">2. Defining Models</h2>
+    <p class="text-gray-600 mb-4">Backbone provides two base document classes:</p>
+    <ul class="list-disc list-inside text-gray-600 text-sm mb-4">
+      <li><strong>AuditDocument</strong> — adds created_at, updated_at, soft-delete (is_deleted), and signals.</li>
+      <li><strong>BackboneDocument</strong> — extends AuditDocument with automatic slug generation.</li>
+    </ul>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone.domain.base import BackboneDocument
+from backbone.domain.models import User
+from beanie import Link, Indexed
+from pydantic import Field
+from typing import Optional, List
+
+class Article(BackboneDocument):
+    title: Indexed(str) = Field(max_length=200)
+    body: str
+    status: str = Field(default="draft")
+    author: Optional[Link[User]] = None
+
+    # Automatic slug from title
+    slug: str = Field(
+        default="",
+        json_schema_extra={"slugify": True, "populate_from": "title"},
+    )
+
+    class Settings:
+        name = "articles"   # MongoDB collection name</code></pre>
+    <p class="text-gray-600 mt-3 text-sm"><strong>AuditDocument fields available automatically:</strong>
+    <code>created_at</code>, <code>updated_at</code>, <code>created_by</code>, <code>updated_by</code>,
+    <code>is_deleted</code>, <code>deleted_at</code>, <code>deleted_by</code></p>
+  </section>
+
+  <!-- 3. Generic CRUD -->
+  <section id="generic-crud" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">3. Generic CRUD Views</h2>
+    <p class="text-gray-600 mb-4">Inherit <code>GenericCrudView</code> to auto-generate 5 routes:</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5 text-sm">
+      <div class="bg-blue-50 rounded p-3"><span class="font-mono text-blue-700">GET /</span> — Paginated list</div>
+      <div class="bg-green-50 rounded p-3"><span class="font-mono text-green-700">POST /</span> — Create</div>
+      <div class="bg-yellow-50 rounded p-3"><span class="font-mono text-yellow-700">GET /{id}</span> — Retrieve</div>
+      <div class="bg-orange-50 rounded p-3"><span class="font-mono text-orange-700">PATCH /{id}</span> — Partial update</div>
+      <div class="bg-red-50 rounded p-3"><span class="font-mono text-red-700">DELETE /{id}</span> — Soft delete</div>
     </div>
-</body>
-</html>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import GenericCrudView, IsAuthenticated
+
+class ArticleAPI(GenericCrudView):
+    model = Article
+    search_fields = ["title", "body"]          # ?search=...
+    filter_fields = ["status", "author"]        # ?status=published
+    lookup_field = "slug"                       # GET /api/articles/my-slug
+    fetch_links = True                          # Auto-resolve Link fields
+    permission_classes = [IsAuthenticated]
+
+# Mount the router
+app.include_router(ArticleAPI.as_router(
+    prefix="/api/articles",
+    tags=["Articles"]
+))</code></pre>
+
+    <h3 class="text-lg font-semibold text-gray-700 mt-6 mb-3">Extending Lifecycle Hooks</h3>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>class ArticleAPI(GenericCrudView):
+    model = Article
+
+    async def before_create(self, data, user):
+        # Inject the logged-in user as author
+        data["author"] = str(user.id)
+        return data
+
+    async def after_create(self, instance, user):
+        # Fire a background task after creation
+        from backbone.services.tasks import task_service
+        task_service.run_in_background(notify_subscribers, article_id=str(instance.id))
+        return instance
+
+    async def get_queryset(self, request, user):
+        # Scope list to only published articles for non-admins
+        if user and user.is_admin():
+            return {"is_deleted": {"$ne": True}}
+        return {"is_deleted": {"$ne": True}, "status": "published"}</code></pre>
+  </section>
+
+  <!-- 4. Filtering -->
+  <section id="filtering" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">4. Filtering &amp; Search</h2>
+    <p class="text-gray-600 mb-4">Backbone supports rich URL-based filtering when fields are listed in <code>filter_fields</code>:</p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="text-left p-2 border">URL param</th>
+            <th class="text-left p-2 border">MongoDB equivalent</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="p-2 border font-mono">?status=published</td><td class="p-2 border">{"status": "published"}</td></tr>
+          <tr><td class="p-2 border font-mono">?price__gt=100</td><td class="p-2 border">{"price": {"$gt": 100}}</td></tr>
+          <tr><td class="p-2 border font-mono">?price__gte=50&amp;price__lte=200</td><td class="p-2 border">{"price": {"$gte": 50, "$lte": 200}}</td></tr>
+          <tr><td class="p-2 border font-mono">?status__in=draft,published</td><td class="p-2 border">{"status": {"$in": ["draft","published"]}}</td></tr>
+          <tr><td class="p-2 border font-mono">?title__contains=guide</td><td class="p-2 border">{"title": {"$regex": "guide", "$options": "i"}}</td></tr>
+          <tr><td class="p-2 border font-mono">?title__startswith=How</td><td class="p-2 border">{"title": {"$regex": "^How", "$options": "i"}}</td></tr>
+          <tr><td class="p-2 border font-mono">?search=backbone</td><td class="p-2 border">$or across all search_fields</td></tr>
+          <tr><td class="p-2 border font-mono">?sort=-created_at</td><td class="p-2 border">sort by created_at descending</td></tr>
+          <tr><td class="p-2 border font-mono">?page=2&amp;page_size=20</td><td class="p-2 border">skip=20, limit=20</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 5. Permissions -->
+  <section id="permissions" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">5. Permissions</h2>
+    <div class="overflow-x-auto mb-5">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="bg-gray-100"><th class="text-left p-2 border">Class</th><th class="text-left p-2 border">Description</th></tr></thead>
+        <tbody>
+          <tr><td class="p-2 border font-mono">AllowAny</td><td class="p-2 border">No restriction (default)</td></tr>
+          <tr><td class="p-2 border font-mono">IsAuthenticated</td><td class="p-2 border">Valid JWT required (401 otherwise)</td></tr>
+          <tr><td class="p-2 border font-mono">IsStaffUser</td><td class="p-2 border">role in {STAFF, ADMIN, SUPERUSER}</td></tr>
+          <tr><td class="p-2 border font-mono">IsAdminUser</td><td class="p-2 border">role in {ADMIN, SUPERUSER}</td></tr>
+          <tr><td class="p-2 border font-mono">IsSuperUser</td><td class="p-2 border">role == SUPERUSER</td></tr>
+          <tr><td class="p-2 border font-mono">IsOwner</td><td class="p-2 border">Declarative: owner_fields / owner_email_field / bypass_roles</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import IsAuthenticated, IsAdminUser, IsOwner
+
+# Combine with & (AND) or | (OR)
+class MyView(GenericCrudView):
+    permission_classes = [IsAuthenticated &amp; IsOwner]
+
+class AdminView(GenericCrudView):
+    permission_classes = [IsAdminUser | IsOwner]
+
+# Custom permission
+from backbone import BasePermission
+class IsPublished(BasePermission):
+    async def has_object_permission(self, obj):
+        return getattr(obj, "status", None) == "published"</code></pre>
+    <p class="text-gray-600 mt-4 text-sm">
+      Need multi-field ownership (e.g. <code>user</code> or <code>created_by</code>), or guest ownership by
+      email? Subclass <code>IsOwner</code> — see the
+      <a href="#owner-scoping" class="text-blue-700 underline">Owner Scoping</a> section below.
+    </p>
+  </section>
+
+  <!-- 6. Auth API -->
+  <section id="auth" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">6. Authentication API</h2>
+    <div class="overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="bg-gray-100"><th class="p-2 border">Method</th><th class="p-2 border">Endpoint</th><th class="p-2 border">Description</th></tr></thead>
+        <tbody>
+          <tr><td class="p-2 border">POST</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/register</td><td class="p-2 border">Create account</td></tr>
+          <tr><td class="p-2 border">POST</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/login</td><td class="p-2 border">Login, get tokens</td></tr>
+          <tr><td class="p-2 border">GET</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/me</td><td class="p-2 border">Current user profile</td></tr>
+          <tr><td class="p-2 border">GET</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/verify-email?token=...</td><td class="p-2 border">Verify email</td></tr>
+          <tr><td class="p-2 border">POST</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/logout</td><td class="p-2 border">Invalidate session</td></tr>
+          <tr><td class="p-2 border">POST</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/password-reset/request</td><td class="p-2 border">Request reset email</td></tr>
+          <tr><td class="p-2 border">POST</td><td class="p-2 border font-mono">{{ api_base_url }}/auth/password-reset/confirm</td><td class="p-2 border">Set new password</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code># Register
+POST {{ api_base_url }}/auth/register
+{"email": "user@example.com", "password": "secure123", "full_name": "Jane Doe"}
+
+# Login
+POST {{ api_base_url }}/auth/login
+{"email": "user@example.com", "password": "secure123"}
+# → {"access_token": "...", "refresh_token": "...", "token_type": "bearer"}
+
+# Authenticated request
+GET {{ api_base_url }}/auth/me
+Authorization: Bearer &lt;access_token&gt;</code></pre>
+  </section>
+
+  <!-- 7. Email Verification -->
+  <section id="email-verification" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">7. Email Verification</h2>
+    <p class="text-gray-600 mb-4">Enable email verification in your <code>.env</code>:</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>REQUIRE_EMAIL_VERIFICATION=true
+EMAIL_ENABLED=true
+EMAIL_HOST=smtp.gmail.com
+EMAIL_USERNAME=yourapp@gmail.com
+EMAIL_PASSWORD=yourapppassword</code></pre>
+    <p class="text-gray-600 mt-4 text-sm">When enabled:</p>
+    <ol class="list-decimal list-inside text-gray-600 text-sm mt-2 space-y-1">
+      <li>User registers → receives verification email</li>
+      <li>User clicks link → <code>/pages/verify-email?token=...</code></li>
+      <li>User is now verified and can log in</li>
+      <li>Login attempts by unverified users receive HTTP 403</li>
+    </ol>
+  </section>
+
+  <!-- Template overrides -->
+  <section id="template-overrides" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">Template overrides &amp; custom layouts</h2>
+    <p class="text-gray-600 mb-4">
+      Backbone ships default Jinja2 templates inside the installed package. Your application can override any of them
+      <strong>without changing Python code</strong>: create the same relative path under your project's working directory
+      (where you run <code>uvicorn</code>), and that file wins.
+    </p>
+    <div class="overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 border text-left">Area</th>
+            <th class="p-2 border text-left">Your project path (first)</th>
+            <th class="p-2 border text-left">Packaged fallback</th>
+          </tr>
+        </thead>
+        <tbody class="text-gray-700">
+          <tr>
+            <td class="p-2 border">Admin UI</td>
+            <td class="p-2 border font-mono text-xs">templates/admin/&lt;name&gt;.html</td>
+            <td class="p-2 border font-mono text-xs">backbone/templates/admin/</td>
+          </tr>
+          <tr>
+            <td class="p-2 border">Public pages</td>
+            <td class="p-2 border font-mono text-xs">templates/pages/…</td>
+            <td class="p-2 border font-mono text-xs">backbone/templates/pages/…</td>
+          </tr>
+          <tr>
+            <td class="p-2 border">Transactional email</td>
+            <td class="p-2 border font-mono text-xs">templates/email/&lt;name&gt;.html</td>
+            <td class="p-2 border font-mono text-xs">backbone/templates/email/</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-gray-600 mb-3 text-sm"><strong>How it works:</strong> routers use a Jinja2 <code>ChoiceLoader</code> with
+      <code class="bg-gray-100 px-1 rounded">&lt;cwd&gt;/templates/…</code> first, then the package directory from
+      <code>BackboneSettings.backbone_templates_path</code>. Only files you add under your project need to exist; everything else is served from Backbone.</p>
+    <p class="text-gray-600 mb-3 text-sm"><strong>Custom-only templates:</strong> you can add new templates under
+      <code class="bg-gray-100 px-1 rounded">templates/pages/</code> for your own routes and render them with the same
+      <code>Jinja2Templates</code> pattern (app loader first). Extend <code class="bg-gray-100 px-1 rounded">pages/base_public.html</code>
+      for a consistent public layout.</p>
+    <p class="text-gray-600 text-sm"><strong>Context variables:</strong> admin views pass model metadata, forms, and <code>admin_site</code> globals;
+      public auth pages expect keys documented next to each route in <code class="bg-gray-100 px-1 rounded">backbone/web/routers/pages.py</code>;
+      email bodies use the arguments of <code class="bg-gray-100 px-1 rounded">MailService.send_*</code> methods.</p>
+  </section>
+
+  <!-- 8. Admin Panel -->
+  <section id="admin" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">8. Admin Panel</h2>
+    <p class="text-gray-600 mb-4">Register any model to manage it via the web admin at <code>/admin</code>:</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import admin_site, ModelAdmin
+
+class ArticleAdmin(ModelAdmin):
+    list_display = ["title", "status", "created_at"]
+    search_fields = ["title"]
+    ordering = "-created_at"
+
+admin_site.register(Article, admin_class=ArticleAdmin, category="Content")
+
+# Then call setup_backbone before starting the app:
+setup_backbone(app, models=[Article])</code></pre>
+    <p class="text-gray-600 mt-4 text-sm">Features: list, search, sort, create, update, file upload (auto Attachment), linked-field dropdowns, delete.</p>
+  </section>
+
+  <!-- 9. Signals -->
+  <section id="signals" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">9. Signals</h2>
+    <p class="text-gray-600 mb-4">React to model lifecycle events anywhere in your codebase:</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import signals
+from myapp.models import Order
+
+@signals.post_create.connect(Order)
+async def on_order_created(instance, **kwargs):
+    await send_order_confirmation_email(instance)
+
+@signals.on_field_change.connect(Order)
+async def on_order_status_changed(instance, changed_fields, **kwargs):
+    if "status" in changed_fields:
+        old_status, new_status = changed_fields["status"]
+        if new_status == "shipped":
+            await send_shipping_notification(instance)
+
+@signals.post_delete.connect(Order)
+async def on_order_deleted(instance, **kwargs):
+    await cleanup_order_resources(instance)</code></pre>
+  </section>
+
+  <!-- 10. Background Tasks -->
+  <section id="background-tasks" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">10. Background Tasks</h2>
+    <p class="text-gray-600 mb-4">Two modes available:</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone.services.tasks import task_service
+
+# Mode 1: In-process (asyncio) — fire and forget, no Redis needed
+task_service.run_in_background(send_welcome_email, to_email=user.email)
+
+# Mode 2: Redis queue — durable, survives restarts
+await task_service.enqueue("myapp.jobs.generate_report", user_id=str(user.id))
+
+# Start the worker (separate terminal or process):
+# python -m backbone.cli worker</code></pre>
+    <p class="text-gray-600 mt-4 text-sm">
+      Worker tasks must be referenced by their full Python dotted path (e.g. <code>myapp.jobs.my_function</code>).
+      All task runs are logged to the <code>task_logs</code> MongoDB collection and visible in the admin.
+    </p>
+  </section>
+
+  <!-- 11. Scheduler -->
+  <section id="scheduler" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">11. Cron Scheduler</h2>
+    <p class="text-gray-600 mb-4">Schedule recurring jobs using decorator syntax. The scheduler starts automatically with <code>setup_backbone()</code>.</p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone.services.scheduler import scheduler
+
+# Run at midnight every day
+@scheduler.cron(hour=0, minute=0)
+async def daily_report():
+    await generate_and_email_daily_report()
+
+# Run every 15 minutes
+@scheduler.interval(minutes=15)
+async def refresh_cache():
+    await rebuild_homepage_cache()
+
+# Run every Sunday at 3am
+@scheduler.cron(day_of_week="sun", hour=3, minute=0)
+async def weekly_cleanup():
+    await purge_soft_deleted_records()
+
+# Programmatic (no decorator)
+scheduler.add_cron_job(my_function, hour=2, minute=30)
+scheduler.add_interval_job(another_function, seconds=30)</code></pre>
+    <p class="text-gray-600 mt-3 text-sm">All times are UTC. Requires <code>apscheduler>=3.10</code> (already in dependencies).</p>
+  </section>
+
+  <!-- 12. CLI -->
+  <section id="cli" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">12. CLI Tools</h2>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code># Create or update an admin user
+python -m backbone.cli create-admin
+
+# Change any user's password
+python -m backbone.cli change-password admin@example.com
+
+# List all users
+python -m backbone.cli list-users
+
+# Start the background task worker
+python -m backbone.cli worker --concurrency 4
+
+# Run the test suite
+python -m backbone.cli run-tests
+
+# Flush all backbone collections (dev only!)
+python -m backbone.cli flush-db --yes
+
+# Show current configuration
+python -m backbone.cli info</code></pre>
+  </section>
+
+  <!-- Link Utilities -->
+  <section id="link-utilities" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">13. Link Utilities — no more <code>_extract_id_from_link</code></h2>
+    <p class="text-gray-600 mb-4">
+      Every Backbone project used to ship a handful of near-identical helpers to build, read
+      and resolve Beanie <code>Link</code> objects. All of that now lives in
+      <code>backbone.domain.links</code> and is importable straight from the package root.
+    </p>
+    <div class="overflow-x-auto mb-5">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 border text-left">Helper</th>
+            <th class="p-2 border text-left">What it does</th>
+          </tr>
+        </thead>
+        <tbody class="text-gray-700">
+          <tr>
+            <td class="p-2 border font-mono whitespace-nowrap">link_to(Model, id)</td>
+            <td class="p-2 border">Build a <code>Link[Model]</code> from a collection + id, without loading the document.</td>
+          </tr>
+          <tr>
+            <td class="p-2 border font-mono whitespace-nowrap">link_id(link_or_doc)</td>
+            <td class="p-2 border">Return the string id for a <code>Link</code>, resolved doc, dict stub, or <code>None</code>.</td>
+          </tr>
+          <tr>
+            <td class="p-2 border font-mono whitespace-nowrap">extract_product_like_id(payload, *keys)</td>
+            <td class="p-2 border">Pull an id from <code>{"product": "..."}</code>, <code>{"product_id": "..."}</code>, or <code>{"product": {"id": "..."}}</code>.</td>
+          </tr>
+          <tr>
+            <td class="p-2 border font-mono whitespace-nowrap">await resolve_link(link)</td>
+            <td class="p-2 border">Lazy-fetch a Link if it isn't loaded; pass-through if already a Document.</td>
+          </tr>
+          <tr>
+            <td class="p-2 border font-mono whitespace-nowrap">await attachment_path(attachment)</td>
+            <td class="p-2 border">Return the <code>file_path</code> of a <code>Link[Attachment]</code> — perfect for template rendering.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import link_to, link_id, resolve_link, attachment_path, extract_product_like_id
+from ecommerce.models import Product, Order
+
+# ? Build a link without a DB round-trip
+order.user = link_to(User, current_user.id)
+
+# ? Read an id whether it is a Link, loaded Doc, or dict
+customer_id = link_id(order.user)
+
+# ? Resolve only when you actually need the related document
+product = await resolve_link(cart_line.product)
+
+# ? Strip the id out of any flavour of API payload
+product_id = extract_product_like_id(payload, "product_id", "product")
+
+# ? Build a public URL for an attachment
+cover_url = await attachment_path(product.primary_image)</code></pre>
+  </section>
+
+  <!-- Owner Scoping -->
+  <section id="owner-scoping" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">14. Owner Scoping with <code>IsOwner</code></h2>
+    <p class="text-gray-600 mb-4">
+      Instead of writing a bespoke <code>IsOrderOwner</code> / <code>IsCartOwner</code> class every time,
+      Backbone's <code>IsOwner</code> is declarative: set class attributes, and <strong>both</strong>
+      object-level checks and list-scoping queries follow automatically.
+    </p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone import IsOwner, UserRole
+
+class IsOrderOwner(IsOwner):
+    # ? The first matching field wins; supports Beanie Link, PydanticObjectId, str.
+    owner_fields = ["user", "created_by"]
+    # ? Guest checkout: accept documents whose customer_email matches the user's email.
+    owner_email_field = "customer_email"
+    # ? Staff + admins always pass (still subject to authentication, etc.).
+    bypass_roles = (UserRole.STAFF, UserRole.ADMIN, UserRole.SUPERUSER)</code></pre>
+
+    <h3 class="text-lg font-semibold text-gray-700 mt-6 mb-3">Owner auto-injection at create-time</h3>
+    <p class="text-gray-600 mb-4">
+      Every <code>GenericCrudView</code> can set <code>owner_link_field</code> — before the document is
+      saved Backbone will stamp the logged-in user's <code>Link</code> onto that field if the client left
+      it blank. Combined with <code>IsOwner</code> you rarely need to write <code>before_create</code>
+      ownership glue at all.
+    </p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>class OrderView(GenericCrudView):
+    model = Order
+    permission_classes = [IsAuthenticated, IsOrderOwner]
+
+    # ? Framework will do: data["user"] = link_to(User, current_user.id)
+    owner_link_field = "user"
+    # ? Default is backbone.domain.models.User; override only for multi-tenant apps.
+    owner_link_model = User</code></pre>
+  </section>
+
+  <!-- Dynamic Choices -->
+  <section id="dynamic-choices" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">15. Dynamic Choices (statuses, categories…)</h2>
+    <p class="text-gray-600 mb-4">
+      Hard-coded <code>*_CHOICES</code> tuples are painful — every new value needs a deploy.
+      Backbone's <code>ChoiceSet</code> keeps the safe Python defaults <em>and</em> makes each group
+      editable in the admin (<code>Core Models → Choice</code>).
+    </p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code># * ecommerce/statuses.py
+from backbone import ChoiceSet
+
+OrderStatusChoices = ChoiceSet(
+    name="order_status",
+    label="Order Status",
+    defaults=[
+        ("pending",    "Pending"),
+        ("processing", "Processing"),
+        ("shipped",    "Shipped"),
+        ("delivered",  "Delivered"),
+        ("cancelled",  "Cancelled"),
+    ],
+)
+
+# ? Validate a client-submitted value
+canonical_status = await OrderStatusChoices.parse(request_payload["status"])
+
+# ? Render a &lt;select&gt; — list is defaults ∪ active DB rows, sorted
+options = await OrderStatusChoices.options()   # [("pending", "Pending"), ...]</code></pre>
+    <p class="text-gray-600 mt-3 text-sm">
+      <strong>How it plays with Pydantic:</strong> keep a strict <code>Literal[...]</code> on your
+      request schemas for compile-time safety, and use <code>ChoiceSet.parse()</code> in your view to
+      accept admin-added values at runtime. Defaults are seeded into MongoDB on every startup.
+    </p>
+  </section>
+
+  <!-- Atomic Updates -->
+  <section id="atomic-updates" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">16. Atomic Updates — race-free stock &amp; counters</h2>
+    <p class="text-gray-600 mb-4">
+      Never decrement a numeric field by reading, mutating, and saving. Two concurrent requests
+      will both see the same "before" value and one will overwrite the other. Use
+      <code>BaseRepository.atomic_decrement_field</code> — it issues a single
+      <code>findOneAndUpdate</code> with a conditional <code>$gte</code> so MongoDB itself refuses to
+      go negative.
+    </p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code>from backbone.repositories.base import BaseRepository
+from ecommerce.models import Product
+
+product_repo = BaseRepository(Product)
+
+was_decremented = await product_repo.atomic_decrement_field(
+    document_id=product_id,
+    field_name="stock",
+    quantity=order_line.quantity,
+)
+if not was_decremented:
+    raise HTTPException(status_code=409, detail="Not enough stock")</code></pre>
+    <p class="text-gray-600 mt-3 text-sm">
+      Returns <code>True</code> only when the update actually matched (stock was sufficient),
+      so you can surface a friendly error without any manual transaction management.
+    </p>
+  </section>
+
+  <!-- Safe Tasks -->
+  <section id="safe-tasks" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">17. Safe Task Payloads (Beanie-aware)</h2>
+    <p class="text-gray-600 mb-4">
+      Beanie <code>Document</code> instances are not safely picklable across worker boundaries,
+      and background workers should never act on a stale in-memory snapshot.
+      <code>task_service.enqueue()</code> automatically rewrites every Beanie document it receives
+      into a small reference stub, then <strong>re-fetches</strong> the live document inside the
+      worker before calling your function.
+    </p>
+    <pre class="bg-gray-900 text-green-300 rounded-lg p-4 text-sm overflow-x-auto"><code># * Any view / service
+await task_service.enqueue(
+    "ecommerce.jobs.send_order_confirmation",
+    order,                 # ? Beanie Order instance — auto-serialised
+    include_invoice=True,  # ? Plain kwargs pass through untouched
+)
+
+# * ecommerce/jobs.py (the worker-side function)
+async def send_order_confirmation(order: Order, include_invoice: bool) -> None:
+    # ? `order` is a FRESH document reloaded by the worker, not a pickled copy.
+    ...</code></pre>
+    <p class="text-gray-600 mt-3 text-sm">
+      No extra configuration is required on either side — just pass documents as you would to any
+      async function. For non-Beanie values (strings, ints, dicts) nothing changes.
+    </p>
+  </section>
+
+  <!-- 18. Configuration -->
+  <section id="configuration" class="mb-14">
+    <h2 class="text-2xl font-bold text-gray-800 border-b pb-2 mb-5">18. Configuration Reference</h2>
+    <p class="text-gray-600 mb-4">All settings can be set via environment variables or <code>.env</code> file.</p>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="bg-gray-100"><th class="p-2 border">Variable</th><th class="p-2 border">Default</th><th class="p-2 border">Description</th></tr></thead>
+        <tbody>
+          <tr><td class="p-2 border font-mono">SECRET_KEY</td><td class="p-2 border text-red-600">CHANGE THIS</td><td class="p-2 border">JWT signing key</td></tr>
+          <tr><td class="p-2 border font-mono">MONGODB_URL</td><td class="p-2 border">localhost:27017</td><td class="p-2 border">MongoDB connection string</td></tr>
+          <tr><td class="p-2 border font-mono">DATABASE_NAME</td><td class="p-2 border">backbone_app</td><td class="p-2 border">MongoDB database name</td></tr>
+          <tr><td class="p-2 border font-mono">REDIS_URL</td><td class="p-2 border">localhost:6379/0</td><td class="p-2 border">Redis connection for cache + tasks</td></tr>
+          <tr><td class="p-2 border font-mono">CACHE_ENABLED</td><td class="p-2 border">false</td><td class="p-2 border">Enable Redis cache</td></tr>
+          <tr><td class="p-2 border font-mono">EMAIL_ENABLED</td><td class="p-2 border">false</td><td class="p-2 border">Enable SMTP email sending</td></tr>
+          <tr><td class="p-2 border font-mono">REQUIRE_EMAIL_VERIFICATION</td><td class="p-2 border">false</td><td class="p-2 border">Block login until email is verified</td></tr>
+          <tr><td class="p-2 border font-mono">ACCESS_TOKEN_EXPIRE_MINUTES</td><td class="p-2 border">30</td><td class="p-2 border">JWT access token lifetime</td></tr>
+          <tr><td class="p-2 border font-mono">REFRESH_TOKEN_EXPIRE_DAYS</td><td class="p-2 border">7</td><td class="p-2 border">Refresh token lifetime</td></tr>
+          <tr><td class="p-2 border font-mono">ADMIN_EMAIL</td><td class="p-2 border">admin@backbone.com</td><td class="p-2 border">Seeded admin email</td></tr>
+          <tr><td class="p-2 border font-mono">ADMIN_PASSWORD</td><td class="p-2 border text-red-600">CHANGE THIS</td><td class="p-2 border">Seeded admin password</td></tr>
+          <tr><td class="p-2 border font-mono">CORS_ALLOWED_ORIGINS</td><td class="p-2 border">localhost:3000</td><td class="p-2 border">Comma-separated CORS origins</td></tr>
+          <tr><td class="p-2 border font-mono">ENVIRONMENT</td><td class="p-2 border">development</td><td class="p-2 border">development / production / testing</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

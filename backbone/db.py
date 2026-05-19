@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from pymongo.errors import DuplicateKeyError
 
@@ -31,7 +31,7 @@ class BackboneDB:
         if store:
             return store
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             store = Store(scope=self.scope, values={}, created_at=now, updated_at=now)
             await store.insert()
@@ -53,7 +53,7 @@ class BackboneDB:
     async def set(self, key: str, value: Any) -> Any:
         self._validate_key(key)
         await self._ensure_store()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         collection = Store.get_pymongo_collection()
         await collection.update_one(
             {"scope": self.scope},
@@ -62,15 +62,15 @@ class BackboneDB:
         )
         return value
 
-    async def update(self, mapping: Dict[str, Any]) -> Dict[str, Any]:
+    async def update(self, mapping: dict[str, Any]) -> dict[str, Any]:
         if not mapping:
             return {}
         for key in mapping.keys():
             self._validate_key(key)
 
         await self._ensure_store()
-        now = datetime.now(timezone.utc)
-        set_payload: Dict[str, Any] = {"updated_at": now}
+        now = datetime.now(UTC)
+        set_payload: dict[str, Any] = {"updated_at": now}
         for key, value in mapping.items():
             set_payload[f"values.{key}"] = value
 
@@ -85,7 +85,7 @@ class BackboneDB:
     async def delete(self, key: str) -> bool:
         self._validate_key(key)
         await self._ensure_store()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         collection = Store.get_pymongo_collection()
         result = await collection.update_one(
             {"scope": self.scope},
@@ -94,7 +94,7 @@ class BackboneDB:
         )
         return result.modified_count > 0
 
-    async def all(self) -> Dict[str, Any]:
+    async def all(self) -> dict[str, Any]:
         store = await self._ensure_store()
         return dict(store.values or {})
 

@@ -1,36 +1,38 @@
-import json
 import asyncio
-import uuid
 import hashlib
-import logging
 import importlib
 import inspect
+import json
+import logging
 import time
 import traceback
-from datetime import datetime, timezone
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
+from typing import Any
 
 import redis.asyncio as redis
-from beanie import PydanticObjectId, Link
+from beanie import Link, PydanticObjectId
 from bson import ObjectId
 from pydantic import BaseModel
 
 from ..core.models import Task
 
-
 logger = logging.getLogger("backbone.services")
 
 # ── Cache Encoder ────────────────────────────────────────────────────────────
 
+
 class CacheEncoder(json.JSONEncoder):
     """Custom JSON encoder for Backbone cache serialisation."""
+
     def default(self, obj: Any) -> Any:
         if isinstance(obj, BaseModel):
             return obj.model_dump()
         if isinstance(obj, datetime):
             return obj.isoformat()
-        if isinstance(obj, (ObjectId, PydanticObjectId)):
+        if isinstance(obj, ObjectId | PydanticObjectId):
             return str(obj)
         if isinstance(obj, Link):
             if hasattr(obj, "ref"):
@@ -40,16 +42,20 @@ class CacheEncoder(json.JSONEncoder):
             return str(obj)
         return super().default(obj)
 
+
 # ── Cache Service ───────────────────────────────────────────────────────────
+
 
 class CacheService:
     """Service for handling Redis caching operations."""
-    def __init__(self, redis_client: Optional[redis.Redis], enabled: bool = True) -> None:
+
+    def __init__(self, redis_client: redis.Redis | None, enabled: bool = True) -> None:
         self.redis = redis_client
         self.enabled = enabled and redis_client is not None
 
-    async def get(self, key: str) -> Optional[Any]:
-        if not self.enabled: return None
+    async def get(self, key: str) -> Any | None:
+        if not self.enabled:
+            return None
         try:
             data = await self.redis.get(key)
             if data:
@@ -59,7 +65,8 @@ class CacheService:
         return None
 
     async def set(self, key: str, value: Any, ttl: int = 300) -> bool:
-        if not self.enabled: return False
+        if not self.enabled:
+            return False
         try:
             serialised = await asyncio.to_thread(json.dumps, value, cls=CacheEncoder)
             await self.redis.set(key, serialised, ex=ttl)
@@ -68,16 +75,21 @@ class CacheService:
             logger.error(f"Cache SET error for key '{key}': {exc}")
         return False
 
-    async def get_or_set(self, key: str, ttl: int, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if not self.enabled: return await func(*args, **kwargs)
+    async def get_or_set(
+        self, key: str, ttl: int, func: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        if not self.enabled:
+            return await func(*args, **kwargs)
         cached = await self.get(key)
-        if cached is not None: return cached
+        if cached is not None:
+            return cached
         value = await func(*args, **kwargs)
         await self.set(key, value, ttl=ttl)
         return value
 
     async def delete(self, key: str) -> bool:
-        if not self.enabled: return False
+        if not self.enabled:
+            return False
         try:
             await self.redis.delete(key)
             return True
@@ -86,13 +98,16 @@ class CacheService:
         return False
 
     async def delete_pattern(self, pattern: str) -> bool:
-        if not self.enabled: return False
+        if not self.enabled:
+            return False
         try:
             cursor: int = 0
             while True:
                 cursor, keys = await self.redis.scan(cursor, match=pattern, count=100)
-                if keys: await self.redis.delete(*keys)
-                if cursor == 0: break
+                if keys:
+                    await self.redis.delete(*keys)
+                if cursor == 0:
+                    break
             return True
         except Exception as exc:
             logger.error(f"Cache PATTERN DELETE error for '{pattern}': {exc}")
@@ -111,6 +126,7 @@ class CacheService:
 
     def __call__(self, expire: int = 300, include_ip: bool = False, key_prefix: str = "cache"):
         """FastAPI-compatible caching decorator."""
+
         def decorator(func):
             @wraps(func)
             async def wrapper(*args, **kwargs):
@@ -119,6 +135,7 @@ class CacheService:
 
                 # Find FastAPI request object in args/kwargs
                 from fastapi import Request
+
                 request = None
                 for arg in args:
                     if isinstance(arg, Request):
@@ -134,7 +151,7 @@ class CacheService:
                 key_parts = [key_prefix, func.__name__]
                 if include_ip and request:
                     key_parts.append(request.client.host if request.client else "unknown_ip")
-                
+
                 # Hash arguments for a stable key
                 params = str(args) + str(kwargs)
                 key_parts.append(hashlib.md5(params.encode()).hexdigest())
@@ -144,12 +161,15 @@ class CacheService:
                 cached = await self.get(key)
                 if cached is not None:
                     return cached
-                
+
                 result = await func(*args, **kwargs)
                 await self.set(key, result, ttl=expire)
                 return result
+
             return wrapper
+
         return decorator
+
 
 # ── Global Cache Instance (Backward Compatibility) ───────────────────────────
 
@@ -157,14 +177,18 @@ cache = CacheService(None, enabled=False)
 
 # ── Task Queue ──────────────────────────────────────────────────────────────
 
+
 class TaskQueue:
     """Advanced Redis-backed Task Queue for Backbone."""
-    def __init__(self, redis_client: Optional[redis.Redis], queue_name: str = "backbone_tasks"):
+
+    def __init__(self, redis_client: redis.Redis | None, queue_name: str = "backbone_tasks"):
         self.redis = redis_client
         self.queue_name = queue_name
         self.enabled = redis_client is not None
 
-    async def enqueue(self, func: Union[Callable, str], *args, no_log: bool = False, **kwargs) -> Optional[str]:
+    async def enqueue(
+        self, func: Callable | str, *args, no_log: bool = False, **kwargs
+    ) -> str | None:
         if callable(func):
             func_path = f"{func.__module__}:{func.__name__}"
         else:
@@ -174,8 +198,10 @@ class TaskQueue:
         if not self.enabled:
             logger.warning("TaskQueue disabled. Executing synchronously.")
             if callable(func):
-                if inspect.iscoroutinefunction(func): await func(*args, **kwargs)
-                else: func(*args, **kwargs)
+                if inspect.iscoroutinefunction(func):
+                    await func(*args, **kwargs)
+                else:
+                    func(*args, **kwargs)
             return None
 
         task_id = str(uuid.uuid4())
@@ -220,17 +246,21 @@ class TaskQueue:
                 await task_log.save()
             return None
 
-    async def dequeue(self) -> Optional[Dict[str, Any]]:
-        if not self.enabled: return None
+    async def dequeue(self) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
         try:
             result = await self.redis.blpop(self.queue_name, timeout=5)
-            if result: return json.loads(result[1])
+            if result:
+                return json.loads(result[1])
         except Exception as exc:
             logger.error(f"Failed to dequeue task: {exc}")
         return None
 
+
 class TaskWorker:
     """Worker that processes tasks from the TaskQueue."""
+
     def __init__(self, queue: TaskQueue, worker_name: str = "Worker"):
         self.queue = queue
         self.worker_name = worker_name
@@ -238,16 +268,22 @@ class TaskWorker:
 
     async def run(self):
         self.running = True
-        logger.info(f"{self.worker_name} started.")
+        logger.info("%s started.", self.worker_name)
         while self.running:
             task_data = await self.queue.dequeue()
-            if task_data: await self.process_task(task_data)
-            await asyncio.sleep(0.1)
+            # dequeue() uses blpop(timeout=5) which already provides back-pressure.
+            # No sleep needed — the blocking pop is the rate limiter.
+            if task_data:
+                await self.process_task(task_data)
 
-    async def process_task(self, task_data: Dict[str, Any]):
+    async def process_task(self, task_data: dict[str, Any]):
         task_id, func_path = task_data.get("id"), task_data.get("func")
-        args, kwargs, no_log = task_data.get("args", []), task_data.get("kwargs", {}), task_data.get("no_log", False)
-        
+        args, kwargs, no_log = (
+            task_data.get("args", []),
+            task_data.get("kwargs", {}),
+            task_data.get("no_log", False),
+        )
+
         task_log = None
         if not no_log:
             try:
@@ -255,7 +291,7 @@ class TaskWorker:
                     task_log = await Task.get(task_id)
                     if task_log:
                         task_log.status = "processing"
-                        task_log.started_at = datetime.now(timezone.utc)
+                        task_log.started_at = datetime.now(UTC)
                         task_log.metadata = {
                             **(task_log.metadata or {}),
                             "queue_name": task_data.get("queue_name", self.queue.queue_name),
@@ -271,35 +307,41 @@ class TaskWorker:
             module_name, func_name = func_path.split(":")
             module = importlib.import_module(module_name)
             func = getattr(module, func_name)
-            if inspect.iscoroutinefunction(func): await func(*args, **kwargs)
-            else: await asyncio.to_thread(func, *args, **kwargs)
+            if inspect.iscoroutinefunction(func):
+                await func(*args, **kwargs)
+            else:
+                await asyncio.to_thread(func, *args, **kwargs)
             if task_log:
                 task_log.status = "completed"
-                task_log.completed_at = datetime.now(timezone.utc)
+                task_log.completed_at = datetime.now(UTC)
                 task_log.execution_time_s = round(time.time() - start_time, 2)
                 task_log.error_message = None
                 task_log.error_traceback = None
                 await task_log.save()
         except Exception as e:
             logger.error(f"Task failed {task_id}: {e}")
-            
+
             # Retry logic
             retry_count = task_data.get("retry_count", 0)
             max_retries = task_data.get("max_retries", 3)
-            
+
             if retry_count < max_retries:
                 retry_count += 1
                 task_data["retry_count"] = retry_count
-                backoff = 2 ** retry_count # Exponential backoff
-                logger.info(f"Retrying task {task_id} in {backoff}s (Attempt {retry_count}/{max_retries})")
-                
+                backoff = 2**retry_count  # Exponential backoff
+                logger.info(
+                    f"Retrying task {task_id} in {backoff}s (Attempt {retry_count}/{max_retries})"
+                )
+
                 # Re-enqueue after sleep
                 await asyncio.sleep(backoff)
                 try:
-                    await self.queue.redis.rpush(self.queue.queue_name, json.dumps(task_data, default=str))
+                    await self.queue.redis.rpush(
+                        self.queue.queue_name, json.dumps(task_data, default=str)
+                    )
                     if task_log:
                         task_log.status = f"retrying ({retry_count})"
-                        task_log.error_message = f"Attempt {retry_count-1} failed: {e}"
+                        task_log.error_message = f"Attempt {retry_count - 1} failed: {e}"
                         task_log.error_traceback = traceback.format_exc()
                         task_log.metadata = {
                             **(task_log.metadata or {}),
@@ -319,25 +361,29 @@ class TaskWorker:
                 task_log.execution_time_s = round(time.time() - start_time, 2)
                 await task_log.save()
 
+
 # ── Background Task Helper ──────────────────────────────────────────────────
 
-async def background_task(func: Union[Callable, str], *args, **kwargs):
+
+async def background_task(func: Callable | str, *args, **kwargs):
     """Simplified helper to enqueue a task."""
     try:
         from ..core.config import BackboneConfig
+
         return await BackboneConfig.get_instance().task_queue.enqueue(func, *args, **kwargs)
     except Exception as e:
         logger.error(f"Failed to enqueue task: {e}")
         return None
 
 
-async def background_internal_task(func: Union[Callable, str], *args, **kwargs):
+async def background_internal_task(func: Callable | str, *args, **kwargs):
     """
     Enqueue internal framework tasks without creating Task entries.
     Uses the dedicated internal queue.
     """
     try:
         from ..core.config import BackboneConfig
+
         return await BackboneConfig.get_instance().internal_task_queue.enqueue(
             func,
             *args,

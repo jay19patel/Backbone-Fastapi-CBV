@@ -1,67 +1,76 @@
-import os
-from datetime import datetime
-from datetime import timezone
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+"""
+main.py — Soul Craft Studio, Backbone Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-from backbone import (
-    BackboneConfig,
-    on_create,
-    on_update,
-    on_delete,
-    on_field_change,
-    log as backbone_log,
-)
+Entry point. Responsibilities here are strictly:
+  1. Settings instantiation
+  2. Schema registration
+  3. Router registration
+  4. Framework bootstrap (BackboneConfig)
+
+Business logic lives in:
+  - api/          — view hooks (stock, cart, payment)
+  - services/     — application-layer hooks (emails, audit logs)
+"""
+
+from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+
+from backbone import BackboneConfig
 from backbone.core.settings import Settings
+
 
 class ProjectSettings(Settings):
     """
     Project-specific settings. Inherits all defaults from Backbone core Settings.
-    You can add custom config variables here which will automatically show up 
-    in your Admin "Store" or be used anywhere!
+    Add custom config variables here — they will auto-appear in the Admin Store.
     """
-    pass
+
 
 settings = ProjectSettings()
 
-# Schemas
-from schemas.shop import Category, Product, Order, Cart, CartItem, Payment
-from schemas.content import FAQ, Testimonial, Contact
-
-# Routers
-from api.users import router as users_router
-from api.shop import router as shop_router
-from backbone.core.media_router import router as media_router
-from api.content import router as content_router
-from pages.user_guide import router as user_guide_router
+# ── Schema Imports ───────────────────────────────────────────────────────────
 from backbone.auth.pages import router as auth_pages_router
-from pages.admin_pages import (
-    AdminProductListView, 
-    AdminOrderManagementView
+from backbone.core.media_router import router as media_router
+from ecommerce.api.content import router as content_router
+from ecommerce.api.shop import router as shop_router
+
+# ── Router Imports ───────────────────────────────────────────────────────────
+from ecommerce.api.users import router as users_router
+from ecommerce.pages import pages_router
+from ecommerce.schemas.content import FAQ, Contact, Testimonial
+from ecommerce.schemas.shop import Cart, CartItem, Category, Order, Payment, Product
+
+# ── Signal Hooks ─────────────────────────────────────────────────────────────
+# Import triggers hook registration via register_order_hooks() at module load.
+from ecommerce.services.order_hooks import register_order_hooks
+
+register_order_hooks()
+
+# ── Application Setup ────────────────────────────────────────────────────────
+app = FastAPI(
+    title="Soul Craft Studio — Backbone Backend",
+    description="Production API powered by Backbone FastAPI CBV framework.",
+    version="1.0.0",
 )
 
+# HTML list pages + legacy redirects must register before admin CRUD routes
+app.include_router(pages_router)
 
-# --------------------------------------------------------------------------
-# Application Setup
-# --------------------------------------------------------------------------
-app = FastAPI(title="Soul Craft Studio — Backbone Backend")
 
-# Allowed CORS origins — add production frontend URL here when deploying
-_extra_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    *_extra_origins,
-]
+@app.get("/admin/pages/products", include_in_schema=False)
+async def redirect_admin_products_page():
+    return RedirectResponse(url="/pages/products", status_code=307)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+@app.get("/admin/pages/orders", include_in_schema=False)
+async def redirect_admin_orders_page():
+    return RedirectResponse(url="/pages/orders", status_code=307)
+
+
+@app.get("/about-backbone", include_in_schema=False)
+async def redirect_about_backbone_page():
+    return RedirectResponse(url="/pages/user-guide/", status_code=307)
 
 
 models_to_register = [
@@ -76,138 +85,32 @@ models_to_register = [
     Contact,
 ]
 
-app.include_router(AdminProductListView.as_router("/admin/pages/products", tags=["Admin Pages"]))
-app.include_router(AdminOrderManagementView.as_router("/admin/pages/orders", tags=["Admin Pages"]))
-
+# ── Framework Bootstrap ───────────────────────────────────────────────────────
 BackboneConfig(
     app=app,
     config=settings,
     document_models=models_to_register,
 )
 
+# Auth HTML (reset password, etc.) — under /pages/reset-password, ...
+app.include_router(auth_pages_router, prefix="/pages")
 
-# --------------------------------------------------------------------------
-# Shop Hooks (Order model)
-# --------------------------------------------------------------------------
-def _order_payload(instance: Order) -> dict:
-    return {
-        "id": str(getattr(instance, "id", "") or ""),
-        "customer": getattr(instance, "customer_name", None),
-        "total": getattr(instance, "total_amount", None),
-        "status": getattr(instance, "status", None),
-        "items_count": len(getattr(instance, "items", [])),
-    }
-
-
-@on_create(Order)
-async def order_on_create_hook(instance: Order, **kwargs):
-    backbone_log(
-        "Order placed: on_create",
-        hook="on_create",
-        model="Order",
-        payload=_order_payload(instance),
-    )
-    # Send order confirmation email with PDF invoice
-    try:
-        from backbone.email_sender import email_sender
-        from backbone.core.config import BackboneConfig
-        settings = BackboneConfig.get_instance().config
-        
-        # Fetch links to ensure OrderItems are populated
-        await instance.fetch_all_links()
-        
-        context = {
-            "order": instance,
-            "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
-            "current_year": datetime.now(timezone.utc).year,
-            "site_url": getattr(settings, "SITE_URL", "http://localhost:3000"),
-        }
-        
-        await email_sender.queue_email(
-            to_email=instance.customer_email,
-            subject=f"Order Confirmation - {str(instance.id)}",
-            template_name="email/order_confirmation.html",
-            context=context,
-            pdf_attachments=[{
-                "template_name": "email/pdf/invoice.html",
-                "context": context,
-                "filename": f"invoice_{str(instance.id)}.pdf",
-                "content_type": "application/pdf",
-            }]
-        )
-    except Exception as e:
-        backbone_log(f"Failed to send order confirmation: {e}", level="error")
-
-
-@on_update(Order)
-async def order_on_update_hook(instance: Order, changed_fields=None, **kwargs):
-    backbone_log(
-        "Order updated: on_update",
-        hook="on_update",
-        model="Order",
-        payload=_order_payload(instance),
-        changed_fields=list((changed_fields or {}).keys()),
-    )
-
-
-@on_delete(Order)
-async def order_on_delete_hook(instance: Order, **kwargs):
-    backbone_log(
-        "Order deleted: on_delete",
-        hook="on_delete",
-        model="Order",
-        payload=_order_payload(instance),
-    )
-
-
-@on_field_change(Order, fields=["status"])
-async def order_on_status_change_hook(instance: Order, changed_fields=None, matched_fields=None, **kwargs):
-    backbone_log(
-        "Order status changed: on_field_change",
-        hook="on_field_change",
-        model="Order",
-        payload=_order_payload(instance),
-        matched_fields=matched_fields or [],
-        changed_fields=list((changed_fields or {}).keys()),
-    )
-    # Send status update email
-    try:
-        from backbone.email_sender import email_sender
-        from backbone.core.config import BackboneConfig
-        settings = BackboneConfig.get_instance().config
-        
-        # Fetch links to ensure OrderItems (and snapshots) are available
-        await instance.fetch_all_links()
-        
-        context = {
-            "order": instance,
-            "new_status": instance.status,
-            "site_name": getattr(settings, "SITE_NAME", "Soul Craft Studio"),
-            "current_year": datetime.now(timezone.utc).year,
-            "site_url": getattr(settings, "SITE_URL", "http://localhost:3000"),
-        }
-        
-        await email_sender.queue_email(
-            to_email=instance.customer_email,
-            subject=f"Order Status Updated: {instance.status.upper()}",
-            template_name="email/order_status_update.html",
-            context=context
-        )
-    except Exception as e:
-        backbone_log(f"Failed to send status update email: {e}", level="error")
-
-
-# --------------------------------------------------------------------------
-# Register Routers
-# --------------------------------------------------------------------------
+# ── API Routers ───────────────────────────────────────────────────────────────
 app.include_router(users_router, prefix="/api")
 app.include_router(shop_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
 app.include_router(content_router, prefix="/api")
-app.include_router(user_guide_router, prefix="/pages")
-app.include_router(auth_pages_router, prefix="/pages")
 
 
-@app.get("/")
-async def root():
-    return {"message": "Soul Craft Studio (Khushi Website) Backbone Backend"}
+# ── System Endpoints ──────────────────────────────────────────────────────────
+
+
+@app.get("/", tags=["System"])
+async def root() -> dict:
+    return {"message": "Soul Craft Studio Backbone Backend", "status": "online"}
+
+
+@app.get("/health", tags=["System"])
+async def health() -> dict:
+    """Liveness probe endpoint. Returns 200 when the process is alive."""
+    return {"status": "ok"}

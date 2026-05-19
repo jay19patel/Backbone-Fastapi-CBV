@@ -5,7 +5,9 @@ A middleware sets the base URL from the incoming request on each request.
 Serializers and any code that needs the base URL can call `get_media_url(path)`
 without hardcoding the host.
 """
+
 from contextvars import ContextVar
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -25,6 +27,7 @@ class DynamicBaseURLMiddleware(BaseHTTPMiddleware):
     Starlette middleware that stores the request's base URL
     in a context variable so that serializers can access it.
     """
+
     async def dispatch(self, request: Request, call_next):
         _base_url_var.set(_build_base_url(request))
         response = await call_next(request)

@@ -1,15 +1,92 @@
+# Local development (hot reload — no rebuild on code changes):
+#   cp .env.example .env
+#   docker compose up --build          # first time only (or after requirements.txt change)
+#   docker compose up                  # later: code save → app reloads automatically
+#
+# Production (no source mount, optimized server):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#
+# API: http://localhost:8000  |  Health: http://localhost:8000/health
+
 services:
   mongodb:
-    image: mongo:latest
-    ports:
-      - "27017:27017" # Expose to host for local app connection
+    image: mongo:7.0.9
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: ${DATABASE_NAME:-backbone_app}
     volumes:
       - mongodb_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   redis:
-    image: redis:alpine
+    image: redis:7.2.4-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - redis_data:/data
     ports:
-      - "6380:6379" # Expose to host for local app connection
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme}@mongodb:27017/${DATABASE_NAME:-backbone_app}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      CACHE_ENABLED: "true"
+      ENVIRONMENT: develop
+      # Reliable file watching on Docker bind mounts (especially macOS)
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount source so edits on the host reload inside the container
+      - .:/app:cached
+      - app_media:/app/media
+    command:
+      - /opt/venv/bin/uvicorn
+      - main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/backbone
+      - --reload-dir
+      - /app/ecommerce
 
 volumes:
   mongodb_data:
+  redis_data:
+  app_media:

@@ -3,45 +3,47 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Iterable, Set, Type
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from .core.signals import signals
 
 
-def _as_field_set(fields: Iterable[str] | str) -> Set[str]:
+def _as_field_set(fields: Iterable[str] | str) -> set[str]:
     if isinstance(fields, str):
         value = fields.strip()
         return {value} if value else set()
     return {str(item).strip() for item in fields if str(item).strip()}
 
 
-def _connect_unique(signal_obj: Any, model_class: Type, handler: Callable) -> None:
+def _connect_unique(signal_obj: Any, model_class: type, handler: Callable) -> None:
     # Keep import-time registration idempotent by handler name.
     existing = signal_obj._handlers.get(model_class, [])
     signal_obj._handlers[model_class] = [
-        item for item in existing
+        item
+        for item in existing
         if getattr(item, "__name__", "") != getattr(handler, "__name__", "")
     ]
     signal_obj.connect(model_class, handler)
 
 
-def register_create_hook(model_class: Type, handler: Callable) -> Callable:
+def register_create_hook(model_class: type, handler: Callable) -> Callable:
     _connect_unique(signals.post_create, model_class, handler)
     return handler
 
 
-def register_update_hook(model_class: Type, handler: Callable) -> Callable:
+def register_update_hook(model_class: type, handler: Callable) -> Callable:
     _connect_unique(signals.post_update, model_class, handler)
     return handler
 
 
-def register_delete_hook(model_class: Type, handler: Callable) -> Callable:
+def register_delete_hook(model_class: type, handler: Callable) -> Callable:
     _connect_unique(signals.post_delete, model_class, handler)
     return handler
 
 
 def register_field_change_hook(
-    model_class: Type,
+    model_class: type,
     fields: Iterable[str] | str,
     handler: Callable,
     *,
@@ -75,7 +77,7 @@ def register_field_change_hook(
     return _wrapped
 
 
-def on_create(model_class: Type) -> Callable:
+def on_create(model_class: type) -> Callable:
     def decorator(handler: Callable) -> Callable:
         register_create_hook(model_class, handler)
         return handler
@@ -83,7 +85,7 @@ def on_create(model_class: Type) -> Callable:
     return decorator
 
 
-def on_update(model_class: Type) -> Callable:
+def on_update(model_class: type) -> Callable:
     def decorator(handler: Callable) -> Callable:
         register_update_hook(model_class, handler)
         return handler
@@ -91,7 +93,7 @@ def on_update(model_class: Type) -> Callable:
     return decorator
 
 
-def on_delete(model_class: Type) -> Callable:
+def on_delete(model_class: type) -> Callable:
     def decorator(handler: Callable) -> Callable:
         register_delete_hook(model_class, handler)
         return handler
@@ -100,7 +102,7 @@ def on_delete(model_class: Type) -> Callable:
 
 
 def on_field_change(
-    model_class: Type,
+    model_class: type,
     fields: Iterable[str] | str,
     *,
     require_all: bool = False,
@@ -115,4 +117,3 @@ def on_field_change(
         return handler
 
     return decorator
-

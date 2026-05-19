@@ -31,24 +31,22 @@ Design decisions:
 
 from __future__ import annotations
 
-import logging
 import hashlib
 import json
+import logging
 import re
-from datetime import datetime, timezone
+from collections.abc import Callable
 from math import ceil
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Type
+from typing import Any, ClassVar
 from urllib.parse import unquote
 
 from beanie import Document, PydanticObjectId
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ..schemas import UserOut
 from ..common.services import CacheService
 from .permissions import (
     AllowAny,
-    BasePermission,
     PermissionDependency,
 )
 from .repository import BeanieRepository
@@ -58,25 +56,44 @@ logger = logging.getLogger("backbone.mixins")
 # ── Constants ───────────────────────────────────────────────────────────────
 
 # Query parameter names reserved by the framework
-RESERVED_QUERY_PARAMS = frozenset({
-    "page", "page_size", "search", "sort", "skip", "limit",
-})
+RESERVED_QUERY_PARAMS = frozenset(
+    {
+        "page",
+        "page_size",
+        "search",
+        "sort",
+        "skip",
+        "limit",
+    }
+)
 
 # Fields that must never be accepted from user input
-DANGEROUS_FIELDS = frozenset({
-    "is_superuser", "is_staff", "is_active",
-    "hashed_password", "password",
-})
+DANGEROUS_FIELDS = frozenset(
+    {
+        "is_superuser",
+        "is_staff",
+        "is_active",
+        "hashed_password",
+        "password",
+    }
+)
 
 # Fields managed internally — excluded from user-facing updates
-AUDIT_FIELDS = frozenset({
-    "created_at", "updated_at", "deleted_at",
-    "created_by", "updated_by", "deleted_by",
-    "is_deleted",
-})
+AUDIT_FIELDS = frozenset(
+    {
+        "created_at",
+        "updated_at",
+        "deleted_at",
+        "created_by",
+        "updated_by",
+        "deleted_by",
+        "is_deleted",
+    }
+)
 
 
 # ── ViewContext (Shared State) ──────────────────────────────────────────────
+
 
 class ViewContext:
     """
@@ -107,29 +124,32 @@ class ViewContext:
     """
 
     # ── Required ─────────────────────────────────────────────────────────
-    schema: ClassVar[Type[Document]]
+    schema: ClassVar[type[Document]]
 
     # ── Optional overrides ───────────────────────────────────────────────
-    response_schema: ClassVar[Optional[Type[BaseModel]]] = None
-    create_schema: ClassVar[Optional[Type[BaseModel]]] = None
-    update_schema: ClassVar[Optional[Type[BaseModel]]] = None
+    response_schema: ClassVar[type[BaseModel] | None] = None
+    create_schema: ClassVar[type[BaseModel] | None] = None
+    update_schema: ClassVar[type[BaseModel] | None] = None
     repository_class: ClassVar[type] = BeanieRepository
     permission_classes: ClassVar[list] = [AllowAny]
     lookup_field: ClassVar[str] = "id"
-    search_fields: ClassVar[List[str]] = []
-    filter_fields: ClassVar[List[str]] = []
-    list_fields: ClassVar[Optional[List[str]]] = None
+    search_fields: ClassVar[list[str]] = []
+    filter_fields: ClassVar[list[str]] = []
+    list_fields: ClassVar[list[str] | None] = None
     fetch_links: ClassVar[bool] = False
     # If True, the document will be re-fetched with links populated before being returned in a Create/Update response.
     # WARNING: This may cause ResponseValidationError if the response_model expects strings for these links.
     populate_links_on_save: ClassVar[bool] = False
-    
+
     cache_ttl: ClassVar[int] = 300
-    populate_fields: ClassVar[Optional[Dict[str, Any]]] = None
+    populate_fields: ClassVar[dict[str, Any] | None] = None
 
     # ── Internal — do not override ───────────────────────────────────────
-    _repository: Optional[BeanieRepository] = None
-    _cache: Optional[CacheService] = None
+    _repository: BeanieRepository | None = None
+    _cache: CacheService | None = None
+    # PERF: Cached result of BeanieRepository.detect_populate_fields(schema).
+    # Computed once per class on first request, reused on all subsequent ones.
+    _populate_fields_cache: ClassVar[dict[str, Any] | None] = None
 
     # ── Context Resolution ───────────────────────────────────────────────
 
@@ -241,29 +261,36 @@ class ViewContext:
         Smart lookup: Only adds 'id' to the query if 'pk' looks like an ObjectId.
         """
         query = {"is_deleted": False}
-        
+
         if self.lookup_field == "id" or self.lookup_field == "_id":
             query["id"] = pk
             return query
 
         # Check if pk looks like an ObjectId (24 hex chars)
         is_oid = len(pk) == 24 and all(c in "0123456789abcdefABCDEF" for c in pk)
-        
+
         if is_oid:
             query["$or"] = [{self.lookup_field: pk}, {"id": pk}]
         else:
             query[self.lookup_field] = pk
-            
+
         return query
 
-    def _get_populate_fields(self) -> Dict[str, Any]:
-        """Return the populate_fields config, auto-detecting if fetch_links is set."""
+    def _get_populate_fields(self) -> dict[str, Any]:
+        """Return the populate_fields config, auto-detecting Link fields if fetch_links is set.
+
+        PERF: The detect_populate_fields() result is cached at the class level on first
+        call (result is fully deterministic per schema) to avoid repeated schema traversal.
+        """
         fields = dict(self.populate_fields or {})
         if self.fetch_links:
-            fields.update(BeanieRepository.detect_populate_fields(self.schema))
+            cls = type(self)
+            if cls._populate_fields_cache is None:
+                cls._populate_fields_cache = BeanieRepository.detect_populate_fields(self.schema)
+            fields.update(cls._populate_fields_cache)
         return fields
 
-    def _get_projection(self) -> Optional[Dict[str, int]]:
+    def _get_projection(self) -> dict[str, int] | None:
         """Build a projection dict from list_fields."""
         if not self.list_fields:
             return None
@@ -282,7 +309,7 @@ class ViewContext:
         settings_name = getattr(getattr(self.schema, "Settings", None), "name", None)
         return f"backbone:{settings_name or self.schema.__name__.lower()}"
 
-    def _build_cache_key(self, operation: str, payload: Dict[str, Any]) -> str:
+    def _build_cache_key(self, operation: str, payload: dict[str, Any]) -> str:
         raw = json.dumps(payload, sort_keys=True, default=str)
         digest = hashlib.md5(raw.encode()).hexdigest()
         return f"{self._cache_namespace}:{operation}:{digest}"
@@ -294,7 +321,7 @@ class ViewContext:
             return data
         return self._repository.serialize_document(data)
 
-    async def _process_link_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_link_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Convert string IDs in the payload into MongoDB DBRef objects for
         Beanie Link fields. Also automatically detects Base64 image data
@@ -319,7 +346,11 @@ class ViewContext:
 
             # --- Automated Media Handling ---
             # If it looks like Base64 data and targets the attachments collection, handle it automatically
-            if collection_name == "attachments" and isinstance(val, str) and val.startswith("data:"):
+            if (
+                collection_name == "attachments"
+                and isinstance(val, str)
+                and val.startswith("data:")
+            ):
                 attachment = await self._handle_base64_attachment(field_name, val)
                 if attachment:
                     payload[field_name] = attachment
@@ -331,7 +362,8 @@ class ViewContext:
                 for item in val:
                     if isinstance(item, str) and item.startswith("data:"):
                         att = await self._handle_base64_attachment(field_name, item)
-                        if att: processed_list.append(att)
+                        if att:
+                            processed_list.append(att)
                     else:
                         processed_list.append(item)
                 val = processed_list
@@ -343,24 +375,29 @@ class ViewContext:
 
         return payload
 
-    async def _handle_base64_attachment(self, field_name: str, base64_data: str) -> Optional[Any]:
+    async def _handle_base64_attachment(self, field_name: str, base64_data: str) -> Any | None:
         """
         Internal helper to create an Attachment record from Base64 data
         and queue the background file storage task.
         """
         try:
-            from .models import Attachment
-            from .media import process_attachment_upload
-            from .config import BackboneConfig
-            from beanie import PydanticObjectId
             import mimetypes
+
+            from beanie import PydanticObjectId
+
+            from .config import BackboneConfig
+            from .media import process_attachment_upload
+            from .models import Attachment
 
             # Determine file extension from data URI
             ext = "bin"
-            if "image/png" in base64_data: ext = "png"
-            elif "image/jpeg" in base64_data: ext = "jpg"
-            elif "image/webp" in base64_data: ext = "webp"
-            
+            if "image/png" in base64_data:
+                ext = "png"
+            elif "image/jpeg" in base64_data:
+                ext = "jpg"
+            elif "image/webp" in base64_data:
+                ext = "webp"
+
             # Extract clean encoded data
             if "," in base64_data:
                 encoded = base64_data.split(",")[1]
@@ -369,34 +406,36 @@ class ViewContext:
 
             # Create the Attachment record (status: pending)
             filename = f"pending_{PydanticObjectId()}.{ext}"
-            
+
             # Use self.schema name for folder organization
-            collection_name = getattr(getattr(self.schema, "Settings", None), "name", self.schema.__name__.lower())
-            
+            collection_name = getattr(
+                getattr(self.schema, "Settings", None), "name", self.schema.__name__.lower()
+            )
+
             attachment = Attachment(
                 filename=filename,
                 content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
                 status="pending",
                 collection_name=collection_name,
-                field_name=field_name
+                field_name=field_name,
             )
             await attachment.insert()
-            
+
             # 5. Queue background processing task
             config = BackboneConfig.get_instance()
-            
+
             # Use the internal task queue to process the upload
             if hasattr(config, "internal_task_queue") and config.internal_task_queue.enabled:
                 await config.internal_task_queue.enqueue(
-                    process_attachment_upload,
-                    str(attachment.id),
-                    encoded
+                    process_attachment_upload, str(attachment.id), encoded
                 )
             else:
-                # If workers are disabled, we might want to process synchronously 
+                # If workers are disabled, we might want to process synchronously
                 # or just log a warning. For now, we trust the queue.
-                logger.warning("Could not enqueue media processing task: Task queue disabled or missing.")
-            
+                logger.warning(
+                    "Could not enqueue media processing task: Task queue disabled or missing."
+                )
+
             return attachment
         except Exception as e:
             logger.error(f"Failed to auto-handle base64 attachment for {field_name}: {e}")
@@ -429,6 +468,7 @@ class ViewContext:
 
 
 # ── ListMixin ───────────────────────────────────────────────────────────────
+
 
 class ListMixin(ViewContext):
     """
@@ -502,8 +542,7 @@ class ListMixin(ViewContext):
         """Apply full-text search across configured search_fields."""
         safe_search = re.escape(search)
         search_clause = [
-            {field: {"$regex": safe_search, "$options": "i"}}
-            for field in self.search_fields
+            {field: {"$regex": safe_search, "$options": "i"}} for field in self.search_fields
         ]
         if "$or" in query:
             existing_or = query.pop("$or")
@@ -544,10 +583,7 @@ class ListMixin(ViewContext):
         if field_name in self.filter_fields or key in self.filter_fields:
             return True
 
-        return any(
-            field_name.startswith(f + ".") or f == field_name
-            for f in self.filter_fields
-        )
+        return any(field_name.startswith(f + ".") or f == field_name for f in self.filter_fields)
 
     @staticmethod
     def _coerce_filter_value(val: str) -> Any:
@@ -584,11 +620,17 @@ class ListMixin(ViewContext):
             query[field] = {operator_map[op]: val}
         elif op == "in":
             items = val if isinstance(val, list) else str(val).split(",")
-            items = [ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item for item in items]
+            items = [
+                ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item
+                for item in items
+            ]
             query[field] = {"$in": items}
         elif op == "nin":
             items = val if isinstance(val, list) else str(val).split(",")
-            items = [ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item for item in items]
+            items = [
+                ListMixin._maybe_convert_id(field, item.strip()) if isinstance(item, str) else item
+                for item in items
+            ]
             query[field] = {"$nin": items}
 
         return query
@@ -615,7 +657,7 @@ class ListMixin(ViewContext):
         *,
         page: int,
         page_size: int,
-        sort: Optional[list] = None,
+        sort: list | None = None,
     ) -> tuple[list, int]:
         """
         Execute the database query.
@@ -695,6 +737,7 @@ class ListMixin(ViewContext):
 
 
 # ── CreateMixin ─────────────────────────────────────────────────────────────
+
 
 class CreateMixin(ViewContext):
     """
@@ -776,6 +819,7 @@ class CreateMixin(ViewContext):
 
 
 # ── RetrieveMixin ───────────────────────────────────────────────────────────
+
 
 class RetrieveMixin(ViewContext):
     """
@@ -864,6 +908,7 @@ class RetrieveMixin(ViewContext):
 
 # ── UpdateMixin ─────────────────────────────────────────────────────────────
 
+
 class UpdateMixin(ViewContext):
     """
     Provides partial update for ``PATCH /{pk}`` endpoint.
@@ -920,7 +965,12 @@ class UpdateMixin(ViewContext):
         Returns:
             The updated Beanie Document instance.
         """
-        query = {"$or": [{self.lookup_field: instance.get(self.lookup_field, instance.get("id"))}, {"id": instance.get("id")}]}
+        query = {
+            "$or": [
+                {self.lookup_field: instance.get(self.lookup_field, instance.get("id"))},
+                {"id": instance.get("id")},
+            ]
+        }
         return await self._repository.update(
             query,
             data,
@@ -944,6 +994,7 @@ class UpdateMixin(ViewContext):
 
 
 # ── DeleteMixin ─────────────────────────────────────────────────────────────
+
 
 class DeleteMixin(ViewContext):
     """
@@ -992,7 +1043,12 @@ class DeleteMixin(ViewContext):
         Args:
             instance: The document to delete.
         """
-        query = {"$or": [{self.lookup_field: instance.get(self.lookup_field, instance.get("id"))}, {"id": instance.get("id")}]}
+        query = {
+            "$or": [
+                {self.lookup_field: instance.get(self.lookup_field, instance.get("id"))},
+                {"id": instance.get("id")},
+            ]
+        }
         await self._repository.delete(query, soft=True)
 
     async def after_delete(
