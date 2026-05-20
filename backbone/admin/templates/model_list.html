@@ -35,6 +35,7 @@
                 <form action="/admin/{{ model_name }}/delete_all" method="post"
                     onsubmit="return confirm('WARNING: This will permanently delete ALL records in {{ model_name }}. Are you sure?');"
                     class="inline">
+                    <input type="hidden" name="_csrf_token" value="{{ request.state.admin_csrf_token }}">
                     <button type="submit"
                         class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-500/20 transition-all transform hover:-translate-y-0.5 active:translate-y-0">
                         <i class="fas fa-trash mr-2"></i> Delete All

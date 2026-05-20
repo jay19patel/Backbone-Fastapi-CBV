@@ -3,11 +3,11 @@ from typing import Any
 
 import pydantic
 from beanie import Link
-from pydantic import BaseModel, Field
+from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from backbone.core.fields import Name, Text, Thumbnail
-from backbone.core.models import Attachment, BackboneDocument
+from backbone.core.models import Attachment, BackboneDocument, User
 
 
 class Category(BackboneDocument):
@@ -98,6 +98,9 @@ class CartItem(BackboneDocument):
 # ---------------------------------------------------------------------------
 class Cart(BackboneDocument):
     # Identity: prefer user_id for logged-in users, fall back to session_id
+    user: Link[User] | None = Field(
+        default=None, description="Linked authenticated user for non-guest carts"
+    )
     user_id: str | None = Field(
         default=None, description="Logged-in user ID (primary key for auth'd carts)"
     )
@@ -117,6 +120,7 @@ class Cart(BackboneDocument):
         indexes = [
             # Quick lookup by user or session
             IndexModel([("user_id", ASCENDING)], name="user_id_index"),
+            IndexModel([("user.$id", ASCENDING)], name="user_link_index"),
             IndexModel([("session_id", ASCENDING)], name="session_id_index"),
             # One active cart per logged-in user (guest carts must omit user_id — see CartView.before_create)
             IndexModel(
@@ -145,10 +149,16 @@ class Cart(BackboneDocument):
 
 
 # ---------------------------------------------------------------------------
-# OrderItem — embedded snapshot inside Order (not a separate collection)
+# OrderItem — immutable line-item snapshot linked to an Order
 # ---------------------------------------------------------------------------
-class OrderItem(BaseModel):
+class OrderItem(BackboneDocument):
     """Embedded snapshot of a cart item at the moment of purchase."""
+
+    order_id: str | None = Field(default=None, description="Parent Order ID")
+
+    product: Link[Product] | None = Field(
+        default=None, description="Optional live product link for admin navigation"
+    )
 
     # Optional soft-link back to the product (may become stale)
     product_id: str | None = Field(default=None, description="Product ID at time of order")
@@ -173,6 +183,14 @@ class OrderItem(BaseModel):
             return float(numeric_str) if numeric_str else 0.0
         return v or 0.0
 
+    class Settings:
+        name = "order_items"
+        indexes = [
+            IndexModel([("order_id", ASCENDING)]),
+            IndexModel([("product_id", ASCENDING)]),
+            IndexModel([("cart_item_id", ASCENDING)]),
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Order
@@ -194,8 +212,10 @@ class Order(BackboneDocument):
     state: str | None = Field(default=None)
     pincode: str | None = Field(default=None)
 
-    # Items (embedded snapshots — always visible, never orphaned)
-    items: list[OrderItem] = Field(default_factory=list, description="Snapshot of ordered items")
+    # Items (linked snapshots — same admin UX as Cart.items -> CartItem)
+    items: list[Link[OrderItem]] = Field(
+        default_factory=list, description="Linked ordered item snapshots"
+    )
 
     total_amount: float = Field(default=0.0)
     status: str = Field(

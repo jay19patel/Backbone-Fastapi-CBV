@@ -1,5 +1,6 @@
 import asyncio
 import re
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from pymongo import UpdateOne
 
 from backbone.common.utils import log_exceptions
 from backbone.core.fields import serialize_attachment
+from backbone.core.models import User
 from backbone.core.permissions import AllowAny
 from backbone.generic.views import GenericCrudView
 from ecommerce.schemas.shop import Cart, CartItem, Category, Order, OrderItem, Payment, Product
@@ -72,6 +74,9 @@ class OrderView(GenericCrudView):
     filter_fields = ["customer_email", "status", "payment_status"]
     fetch_links = True
     permission_classes = [AllowAny]
+    _pending_order_items: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+        "pending_order_items", default=None
+    )
 
     async def filter_queryset(self, query: dict, request: Any) -> dict:
         query = await super().filter_queryset(query, request)
@@ -93,7 +98,7 @@ class OrderView(GenericCrudView):
         cart_id = data.get("cart_id")
         payment_id = data.pop("payment_id", None)
 
-        processed_items: list[OrderItem] = []
+        processed_items: list[dict[str, Any]] = []
         total_amount = 0.0
 
         if cart_id:
@@ -126,17 +131,18 @@ class OrderView(GenericCrudView):
                         detail=f"Insufficient stock for '{ci.name}'. Only {product.stock} available.",
                     )
 
-                item_snapshot = OrderItem(
-                    product_id=str(product.id) if product else None,
-                    cart_item_id=str(ci.id),
-                    name=ci.name,
-                    price=unit_price,
-                    image=ci.image or (serialize_attachment(product.img) if product else None),
-                    quantity=qty,
-                    subtotal=unit_price * qty,
-                )
+                item_snapshot = {
+                    "product": product,
+                    "product_id": str(product.id) if product else None,
+                    "cart_item_id": str(ci.id),
+                    "name": ci.name,
+                    "price": unit_price,
+                    "image": ci.image or (serialize_attachment(product.img) if product else None),
+                    "quantity": qty,
+                    "subtotal": unit_price * qty,
+                }
                 processed_items.append(item_snapshot)
-                total_amount += item_snapshot.subtotal
+                total_amount += item_snapshot["subtotal"]
 
         else:
             # ── Strategy 2: Manual item list in payload ────────────────────────
@@ -175,26 +181,29 @@ class OrderView(GenericCrudView):
                     )
 
                 unit_price = product.price_value or 0.0
-                item_snapshot = OrderItem(
-                    product_id=str(product.id),
-                    name=product.name,
-                    price=unit_price,
-                    image=serialize_attachment(product.img),
-                    quantity=qty,
-                    subtotal=unit_price * qty,
-                )
+                item_snapshot = {
+                    "product": product,
+                    "product_id": str(product.id),
+                    "cart_item_id": None,
+                    "name": product.name,
+                    "price": unit_price,
+                    "image": serialize_attachment(product.img),
+                    "quantity": qty,
+                    "subtotal": unit_price * qty,
+                }
                 processed_items.append(item_snapshot)
-                total_amount += item_snapshot.subtotal
+                total_amount += item_snapshot["subtotal"]
 
         if not processed_items:
             raise HTTPException(
                 status_code=400, detail="No valid items could be processed for this order."
             )
 
-        data["items"] = processed_items
+        data["items"] = []
         data["total_amount"] = total_amount
         data["payment_id"] = payment_id
         data["payment_status"] = "pending"
+        self._pending_order_items.set(processed_items)
         return data
 
     @log_exceptions
@@ -208,6 +217,18 @@ class OrderView(GenericCrudView):
         Steps 2 and 3 run concurrently via asyncio.gather for improved throughput.
         """
         order_id = str(instance.id)
+        pending_items = self._pending_order_items.get() or []
+        self._pending_order_items.set([])
+
+        order_items: list[OrderItem] = []
+        for item in pending_items:
+            order_item = OrderItem(order_id=order_id, **item)
+            await order_item.insert()
+            order_items.append(order_item)
+
+        if order_items:
+            instance.items = order_items
+            await instance.save()
 
         # 1. Bulk-decrement stock — single MongoDB round-trip for all items
         #    PERF: Replaces N serial fetch+save cycles with one bulk_write.
@@ -216,7 +237,7 @@ class OrderView(GenericCrudView):
                 {"_id": ObjectId(item.product_id), "stock": {"$gte": item.quantity}},
                 {"$inc": {"stock": -item.quantity}},
             )
-            for item in instance.items
+            for item in order_items
             if item.product_id
         ]
         if stock_ops:
@@ -270,9 +291,11 @@ class OrderView(GenericCrudView):
 # =============================================================================
 class CartView(GenericCrudView):
     schema = Cart
+    response_schema = dict
     search_fields = ["user_id", "session_id"]
     list_fields = [
         "id",
+        "user",
         "user_id",
         "session_id",
         "items",
@@ -283,6 +306,9 @@ class CartView(GenericCrudView):
     filter_fields = ["user_id", "session_id", "is_ordered"]
     fetch_links = True
     permission_classes = [AllowAny]
+    _pending_cart_items: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+        "pending_cart_items", default=None
+    )
 
     async def get_queryset(self, request: Request, user: Any) -> dict[str, Any]:
         """Only show ACTIVE (non-ordered) carts by default."""
@@ -360,24 +386,29 @@ class CartView(GenericCrudView):
         raw_items = data.pop("items", [])
 
         if user:
-            data["user_id"] = str(user.id)
+            user_id = str(user.id)
+            user_doc = await User.get(user_id)
+            if user_doc:
+                data["user"] = user_doc
+            data["user_id"] = user_id
             data.pop("session_id", None)  # user-linked carts don't need session_id
         else:
             # Omit user_id entirely so guest partial index ($exists: false) applies
+            data.pop("user", None)
             data.pop("user_id", None)
 
         # Process items in after_create once we have the cart ID
         data["items"] = []
         data["total_amount"] = 0.0
-        self._pending_cart_items = raw_items
+        self._pending_cart_items.set(raw_items)
         return data
 
     @log_exceptions
     async def after_create(self, instance: Cart, user: Any) -> Cart:
         """Back-link CartItems to this Cart once we have its ID."""
         cart_id = str(instance.id)
-        pending_items = getattr(self, "_pending_cart_items", []) or []
-        self._pending_cart_items = []
+        pending_items = self._pending_cart_items.get() or []
+        self._pending_cart_items.set([])
 
         if pending_items:
             processed_links, total_amount = await self._process_cart_items(cart_id, pending_items)
@@ -424,9 +455,31 @@ class PaymentView(GenericCrudView):
     permission_classes = [AllowAny]
 
 
+class OrderItemView(GenericCrudView):
+    schema = OrderItem
+    search_fields = ["order_id", "product_id", "cart_item_id", "name"]
+    list_fields = [
+        "id",
+        "order_id",
+        "product",
+        "product_id",
+        "cart_item_id",
+        "name",
+        "price",
+        "image",
+        "quantity",
+        "subtotal",
+        "created_at",
+    ]
+    filter_fields = ["order_id", "product_id", "cart_item_id"]
+    fetch_links = True
+    permission_classes = [AllowAny]
+
+
 router = APIRouter()
 router.include_router(CategoryView.as_router("/categories", tags=["Shop — Categories"]))
 router.include_router(ProductView.as_router("/products", tags=["Shop — Products"]))
 router.include_router(OrderView.as_router("/orders", tags=["Shop — Orders"]))
+router.include_router(OrderItemView.as_router("/order-items", tags=["Shop — Order Items"]))
 router.include_router(CartView.as_router("/carts", tags=["Shop — Carts"]))
 router.include_router(PaymentView.as_router("/payments", tags=["Shop — Payments"]))

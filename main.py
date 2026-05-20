@@ -39,7 +39,7 @@ from ecommerce.api.shop import router as shop_router
 from ecommerce.api.users import router as users_router
 from ecommerce.pages import pages_router
 from ecommerce.schemas.content import FAQ, Contact, Testimonial
-from ecommerce.schemas.shop import Cart, CartItem, Category, Order, Payment, Product
+from ecommerce.schemas.shop import Cart, CartItem, Category, Order, OrderItem, Payment, Product
 
 # ── Signal Hooks ─────────────────────────────────────────────────────────────
 # Import triggers hook registration via register_order_hooks() at module load.
@@ -77,6 +77,7 @@ models_to_register = [
     Category,
     Product,
     Order,
+    OrderItem,
     Cart,
     CartItem,
     Payment,

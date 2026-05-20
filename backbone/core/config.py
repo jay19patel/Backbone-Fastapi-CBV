@@ -246,6 +246,7 @@ class BackboneConfig:
     def _setup_middlewares(self):
         from fastapi.middleware.cors import CORSMiddleware
 
+        from ..admin.csrf import AdminCSRFMiddleware
         from .url_utils import DynamicBaseURLMiddleware
 
         cors_origins_list = getattr(self.config, "cors_origins_list", [])
@@ -269,6 +270,7 @@ class BackboneConfig:
             allow_headers=["*"],
         )
 
+        self.app.add_middleware(AdminCSRFMiddleware)
         self.app.add_middleware(DynamicBaseURLMiddleware)
 
     @property

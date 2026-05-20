@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any
-
-if TYPE_CHECKING:
-    from backbone.core.models import User
+from typing import Annotated, Any, ForwardRef
 
 from beanie import Link
 from pydantic import Field, PlainSerializer
@@ -85,7 +82,7 @@ def Attachment(foldername: str = "general", label: str = "Attachment") -> Any:
 
 # The "Owner" Type
 Owner = Annotated[
-    Link[User],
+    Link[ForwardRef("User", module="backbone.core.models")],
     Field(description="Owner of the document"),
 ]
 

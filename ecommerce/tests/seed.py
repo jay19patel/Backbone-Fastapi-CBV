@@ -6,8 +6,8 @@ Usage (server must be running on http://127.0.0.1:8000):
 
 Creates:
   • Categories & products (with images)
-  • Guest cart + CartItem documents (active cart)
-  • Orders from carts → embedded OrderItem snapshots
+  • Authenticated user cart + CartItem documents (active cart)
+  • Orders from carts → linked OrderItem snapshot documents
   • Payment documents linked to each order
 """
 
@@ -41,12 +41,18 @@ def extract_resource_id(document: dict[str, Any] | None, label: str = "resource"
 # ── Seed identity (used for cleanup + demo orders) ────────────────────────────
 SEED_CUSTOMER = {
     "customer_name": "Priya Sharma",
-    "customer_email": "demo.seed@soulcraft.test",
+    "customer_email": "demo.seed@soulcraftstudio.in",
     "customer_phone": "+91-9876543210",
     "shipping_address": "12 Craft Lane, Navrangpura",
     "city": "Ahmedabad",
     "state": "Gujarat",
     "pincode": "380009",
+}
+
+SEED_USER = {
+    "email": "cart.user.seed@soulcraftstudio.in",
+    "password": "SeedUser#2026",
+    "full_name": "Seed Cart User",
 }
 
 SEED_SESSION_ACTIVE = "seed-demo-active-cart"
@@ -196,6 +202,8 @@ class APISeeder:
         self.cat_map: dict[str, str] = {}
         self.product_map: dict[str, str] = {}
         self.attachment_map: dict[str, str] = {}
+        self.access_token: str | None = None
+        self.seed_user_id: str | None = None
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -240,6 +248,33 @@ class APISeeder:
     async def delete_resource(self, resource: str, resource_id: str) -> bool:
         response = await self.client.delete(f"{BASE_URL}/{resource}/{resource_id}/")
         return response.status_code in (200, 204)
+
+    async def ensure_seed_user(self) -> None:
+        """Create/login a real user so the active cart has a populated Cart.user link."""
+        response = await self.client.post(f"{BASE_URL}/auth/register", json=SEED_USER)
+        if response.status_code not in (200, 201, 400):
+            raise RuntimeError(
+                f"Seed user register failed ({response.status_code}): {response.text}"
+            )
+
+        login = await self.client.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": SEED_USER["email"], "password": SEED_USER["password"]},
+        )
+        if login.status_code != 200:
+            raise RuntimeError(f"Seed user login failed ({login.status_code}): {login.text}")
+
+        self.access_token = login.json().get("access_token")
+        if not self.access_token:
+            raise RuntimeError("Seed user login did not return an access token.")
+
+        me = await self.client.get(f"{BASE_URL}/auth/me", headers=self.auth_headers())
+        if me.status_code == 200:
+            self.seed_user_id = extract_resource_id(me.json(), "seed_user")
+        print(f"  OK: demo user logged in ({SEED_USER['email']})")
+
+    def auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.access_token}"} if self.access_token else {}
 
     # ── Media & catalog ───────────────────────────────────────────────────────
 
@@ -379,6 +414,7 @@ class APISeeder:
         seed_email = SEED_CUSTOMER["customer_email"].lower()
         orders = await self.list_all("orders", {"customer_email": seed_email})
         payment_ids: set[str] = set()
+        order_ids: set[str] = set()
 
         for order in orders:
             payment = order.get("payment")
@@ -388,8 +424,18 @@ class APISeeder:
                 payment_ids.add(payment)
 
             order_id = order.get("id") or order.get("_id")
-            if order_id and await self.delete_resource("orders", str(order_id)):
-                print(f"  deleted order {order_id[:8]}…")
+            if order_id:
+                order_id = str(order_id)
+                order_ids.add(order_id)
+                if await self.delete_resource("orders", order_id):
+                    print(f"  deleted order {order_id[:8]}…")
+
+        for order_item in await self.list_all("order-items", {"page_size": 100}):
+            if order_item.get("order_id") not in order_ids:
+                continue
+            order_item_id = order_item.get("id") or order_item.get("_id")
+            if order_item_id and await self.delete_resource("order-items", str(order_item_id)):
+                print(f"  deleted order item {str(order_item_id)[:8]}…")
 
         for payment_row in await self.list_all("payments"):
             payment_id = payment_row.get("id") or payment_row.get("_id")
@@ -422,6 +468,22 @@ class APISeeder:
                 if await self.delete_resource("carts", cart_id):
                     print(f"  removed cart {session_id}")
 
+        if self.seed_user_id:
+            carts = await self.list_all("carts", {"page_size": 100})
+            for cart in carts:
+                if cart.get("user_id") != self.seed_user_id:
+                    continue
+                cart_id = cart.get("id") or cart.get("_id")
+                if not cart_id:
+                    continue
+                cart_id = str(cart_id)
+                await self.client.patch(
+                    f"{BASE_URL}/carts/{cart_id}/",
+                    json={"is_ordered": True, "order_id": "seed-cleanup"},
+                )
+                if await self.delete_resource("carts", cart_id):
+                    print(f"  removed user cart {cart_id[:8]}…")
+
         await self.restore_catalog_stock()
 
     # ── Cart + order seeding ────────────────────────────────────────────────────
@@ -450,13 +512,21 @@ class APISeeder:
         return resolved
 
     async def create_cart(
-        self, session_id: str, line_items: list[dict[str, Any]]
+        self,
+        session_id: str,
+        line_items: list[dict[str, Any]],
+        *,
+        authenticated: bool = False,
     ) -> dict[str, Any]:
         payload = {
             "session_id": session_id,
             "items": self._resolve_cart_items(line_items),
         }
-        response = await self.client.post(f"{BASE_URL}/carts/", json=payload)
+        response = await self.client.post(
+            f"{BASE_URL}/carts/",
+            json=payload,
+            headers=self.auth_headers() if authenticated else None,
+        )
         if response.status_code not in (200, 201):
             raise RuntimeError(f"Cart create failed ({response.status_code}): {response.text}")
 
@@ -490,8 +560,15 @@ class APISeeder:
                 f"Cart {session_id} has no CartItem rows — check CartView after_create hook."
             )
 
+        user_ref = cart.get("user")
+        user_label = "guest"
+        if isinstance(user_ref, dict):
+            user_label = user_ref.get("email") or user_ref.get("id") or "linked user"
+        elif user_ref:
+            user_label = str(user_ref)
+
         print(
-            f"  cart {session_id}: {item_count} item(s), total ₹{cart.get('total_amount', 0):.2f}"
+            f"  cart {session_id}: {item_count} item(s), {user_label}, total ₹{cart.get('total_amount', 0):.2f}"
         )
         return cart
 
@@ -524,9 +601,9 @@ class APISeeder:
             order_id = extract_resource_id(order, "order")
         order["id"] = order_id
 
-        embedded_items = order.get("items") or []
-        if not embedded_items:
-            raise RuntimeError("Order has no embedded OrderItem snapshots.")
+        linked_items = order.get("items") or []
+        if not linked_items:
+            raise RuntimeError("Order has no linked OrderItem snapshots.")
 
         payment_ref = order.get("payment")
         if isinstance(payment_ref, dict):
@@ -535,11 +612,14 @@ class APISeeder:
             payment_doc_id = payment_ref
 
         print(
-            f"  order {str(order_id)[:8]}…: {len(embedded_items)} line(s), "
+            f"  order {str(order_id)[:8]}…: {len(linked_items)} line(s), "
             f"total ₹{order.get('total_amount', 0):.2f}, "
             f"payment_status={order.get('payment_status')}"
         )
-        for line in embedded_items:
+        for line in linked_items:
+            if not isinstance(line, dict):
+                matching = await self.list_all("order-items", {"search": str(line)})
+                line = matching[0] if matching else {"name": str(line), "quantity": 1, "price": 0}
             print(
                 f"    • {line.get('name')} × {line.get('quantity')} "
                 f"@ ₹{line.get('price')} = ₹{line.get('subtotal', 0):.2f}"
@@ -570,11 +650,11 @@ class APISeeder:
         print(f"  payment {payment_doc_id[:8]}… marked verified")
 
     async def seed_commerce_flow(self) -> None:
-        print("\n[3/5] Active cart (guest) + CartItems")
+        print("\n[3/5] Active cart (authenticated user) + CartItems")
         print("-" * 40)
-        await self.create_cart(SEED_SESSION_ACTIVE, ACTIVE_CART_ITEMS)
+        await self.create_cart(SEED_SESSION_ACTIVE, ACTIVE_CART_ITEMS, authenticated=True)
 
-        print("\n[4/5] Order from cart → OrderItems (embedded) + Payment (pending)")
+        print("\n[4/5] Order from cart → linked OrderItems + Payment (pending)")
         print("-" * 40)
         pending_cart = await self.create_cart(SEED_SESSION_ORDER_PENDING, ORDER_PENDING_CART_ITEMS)
         pending_order = await self.create_order_from_cart(
@@ -582,7 +662,7 @@ class APISeeder:
             notes="Seed order — awaiting customer UPI payment",
         )
 
-        print("\n[5/5] Order from cart → verified Payment")
+        print("\n[5/5] Order from cart → linked OrderItems + verified Payment")
         print("-" * 40)
         paid_cart = await self.create_cart(SEED_SESSION_ORDER_PAID, ORDER_PAID_CART_ITEMS)
         transaction_id = "UPI-SEED-20260519-001"
@@ -599,6 +679,7 @@ class APISeeder:
         print("\n[Summary]")
         print("-" * 40)
         print(f"  Active cart session:     {SEED_SESSION_ACTIVE}")
+        print(f"  Active cart user:        {SEED_USER['email']}")
         print(f"  Pending order session:   {SEED_SESSION_ORDER_PENDING}")
         print(f"  Paid order session:      {SEED_SESSION_ORDER_PAID}")
         print(f"  Demo customer email:     {SEED_CUSTOMER['customer_email']}")
@@ -617,6 +698,7 @@ async def main() -> None:
         sys.exit(1)
 
     try:
+        await seeder.ensure_seed_user()
         await seeder.cleanup_commerce_data()
         await seeder.seed_categories()
         await seeder.seed_products()

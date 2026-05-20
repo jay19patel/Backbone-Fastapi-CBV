@@ -63,6 +63,7 @@
 
             <!-- Upload Form -->
             <form action="/admin/import" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="_csrf_token" value="{{ request.state.admin_csrf_token }}">
                 <div class="mb-6">
                     <label class="block text-sm font-bold text-slate-600 mb-3">Upload Export JSON File</label>
                     <div id="dropZone"
