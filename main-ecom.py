@@ -32,17 +32,20 @@ settings = ProjectSettings()
 # ── Schema Imports ───────────────────────────────────────────────────────────
 from backbone.auth.pages import router as auth_pages_router
 from backbone.core.media_router import router as media_router
+from ecommerce.api.content import router as content_router
+from ecommerce.api.shop import router as shop_router
 
-# ── Blogging Imports ─────────────────────────────────────────────────────────
-from blogging.api.blog import router as blogging_blog_router
-from blogging.api.playlist import router as blogging_playlist_router
-from blogging.api.users import router as blogging_users_router
-from blogging.schemas.blog import Blog, BlogCategory, BlogLike, BlogView
-from blogging.schemas.playlist import Playlist
-from blogging.services.blog_hooks import register_blog_hooks
+# ── Router Imports ───────────────────────────────────────────────────────────
+from ecommerce.api.users import router as users_router
+from ecommerce.pages import pages_router
+from ecommerce.schemas.content import FAQ, Contact, Testimonial
+from ecommerce.schemas.shop import Cart, CartItem, Category, Order, OrderItem, Payment, Product
 
 # ── Signal Hooks ─────────────────────────────────────────────────────────────
-register_blog_hooks()
+# Import triggers hook registration via register_order_hooks() at module load.
+from ecommerce.services.order_hooks import register_order_hooks
+
+register_order_hooks()
 
 # ── Application Setup ────────────────────────────────────────────────────────
 app = FastAPI(
@@ -51,6 +54,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# HTML list pages + legacy redirects must register before admin CRUD routes
+app.include_router(pages_router)
+
+
+@app.get("/admin/pages/products", include_in_schema=False)
+async def redirect_admin_products_page():
+    return RedirectResponse(url="/pages/products", status_code=307)
+
+
+@app.get("/admin/pages/orders", include_in_schema=False)
+async def redirect_admin_orders_page():
+    return RedirectResponse(url="/pages/orders", status_code=307)
+
 
 @app.get("/about-backbone", include_in_schema=False)
 async def redirect_about_backbone_page():
@@ -58,11 +74,16 @@ async def redirect_about_backbone_page():
 
 
 models_to_register = [
-    BlogCategory,
-    Blog,
-    BlogLike,
-    BlogView,
-    Playlist,
+    Category,
+    Product,
+    Order,
+    OrderItem,
+    Cart,
+    CartItem,
+    Payment,
+    FAQ,
+    Testimonial,
+    Contact,
 ]
 
 # ── Framework Bootstrap ───────────────────────────────────────────────────────
@@ -76,10 +97,10 @@ BackboneConfig(
 app.include_router(auth_pages_router, prefix="/pages")
 
 # ── API Routers ───────────────────────────────────────────────────────────────
+app.include_router(users_router, prefix="/api")
+app.include_router(shop_router, prefix="/api")
 app.include_router(media_router, prefix="/api")
-app.include_router(blogging_blog_router, prefix="/api")
-app.include_router(blogging_playlist_router, prefix="/api")
-app.include_router(blogging_users_router, prefix="/api")
+app.include_router(content_router, prefix="/api")
 
 
 # ── System Endpoints ──────────────────────────────────────────────────────────

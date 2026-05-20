@@ -5,7 +5,7 @@ ecommerce.pages.pages
 All HTML pages in one place.
 
 Add a view class below, then add one entry to ``PAGE_ROUTES`` — the router mounts automatically.
-Same pattern as ``backbone/auth/pages.py``.
+Same pattern as ``backbone/auth/pages.py`` (user guide + auth pages).
 """
 
 from __future__ import annotations
@@ -16,31 +16,12 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from backbone.core.config import BackboneConfig
 from backbone.core.permissions import AllowAny
 from backbone.generic.views import GenericTemplateView
 from ecommerce.schemas.content import Contact
 from ecommerce.schemas.shop import Order, Product
 
 # ── Views ─────────────────────────────────────────────────────────────────────
-
-
-class UserGuideView(GenericTemplateView):
-    template_name = "pages/user_guide.html"
-    page_name = "User Guide"
-    page_description = "Backbone FastAPI developer guide and framework reference."
-    admin_category = "Documentation"
-    permission_classes = [AllowAny]
-
-    async def get_context_data(
-        self, request: Request, user: Any = None, **kwargs: Any
-    ) -> dict[str, Any]:
-        settings = BackboneConfig.get_instance().config
-        base_url = str(request.base_url).rstrip("/")
-        return {
-            "site_name": getattr(settings, "SITE_NAME", "Backbone"),
-            "api_base_url": f"{base_url}/api",
-        }
 
 
 class ContactListView(GenericTemplateView):
@@ -158,7 +139,6 @@ class OrderListView(GenericTemplateView):
 
 # Do not use /admin/.../... — admin CRUD uses /admin/{model}/{pk} and will steal the URL.
 PAGE_ROUTES: list[dict[str, Any]] = [
-    {"path": "/pages/user-guide", "view": UserGuideView, "tags": ["Pages"]},
     {"path": "/contacts", "view": ContactListView, "tags": ["Pages"]},
     {"path": "/pages/products", "view": ProductListView, "tags": ["Pages"]},
     {"path": "/pages/orders", "view": OrderListView, "tags": ["Pages"]},

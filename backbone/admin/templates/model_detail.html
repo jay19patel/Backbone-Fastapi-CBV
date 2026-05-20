@@ -99,7 +99,16 @@
                 {% set is_multi = 'list' in f_type.lower() %}
 
                 <div id="link-field-{{ name }}" class="space-y-3">
-                    {# Path A: Single Link Restoration #}
+                    {# ── Single-link: primary hidden inputs (disabled when no value present) ── #}
+                    {% if not is_multi %}
+                    <input type="hidden" name="{{ name }}"
+                           value="{{ value.id if value and value.id else '' }}"
+                           id="existing-id-{{ name }}"
+                           {% if not value or not value.id %}disabled{% endif %}>
+                    <input type="hidden" name="_clear_{{ name }}" value="0" id="clear-signal-{{ name }}">
+                    {% endif %}
+
+                    {# Path A: Single Link Display (shown when value exists) #}
                     {% if not is_multi %}
                     <div id="single-display-{{ name }}" class="relative group inline-block w-full" {% if not value or not value.id %}style="display: none;"{% endif %}>
                         {% if value and value.id %}
@@ -112,6 +121,11 @@
                                     <i class="fas fa-external-link-alt text-slate-400"></i>
                                 </div>
                             </a>
+                            {% if value.status == 'pending' %}
+                            <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold">
+                                <i class="fas fa-spinner fa-spin"></i> Processing upload…
+                            </div>
+                            {% endif %}
                             {% else %}
                             <a href="/admin/{{ link_model }}/{{ value.id }}"
                                 class="block p-4 bg-indigo-50/30 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition-colors">
@@ -125,13 +139,11 @@
                                 </div>
                             </a>
                             {% endif %}
-                            <button type="button" onclick="document.getElementById('single-display-{{ name }}').style.display='none'; document.getElementById('search-container-{{ name }}').style.display='block'; document.getElementById('search-input-{{ name }}').disabled=false; document.getElementById('search-input-{{ name }}').value='';"
+                            <button type="button" onclick="removeLinkField('{{ name }}')"
                                     class="absolute -top-2 -right-2 bg-slate-100 text-slate-400 rounded-full w-6 h-6 flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all z-10 cursor-pointer"
                                     title="Remove relation">
                                 <i class="fas fa-times text-xs"></i>
                             </button>
-                            <!-- Hidden input to submit the existing ID -->
-                            <input type="hidden" name="{{ name }}" value="{{ value.id }}" id="search-input-{{ name }}">
                         {% endif %}
                     </div>
                     {% endif %}
@@ -166,9 +178,10 @@
                                 <i class="fas fa-times-circle text-lg"></i>
                             </button>
 
-                            {# Single select fallback input if nothing selected yet #}
-                            {% if not is_multi and (not value or not value.id) %}
-                            <input type="hidden" name="{{ name }}" id="search-input-{{ name }}">
+                            {# Single select hidden — used by initSearchableSelect on new selection; starts disabled when value exists #}
+                            {% if not is_multi %}
+                            <input type="hidden" name="{{ name }}" id="search-input-{{ name }}"
+                                   {% if value and value.id %}disabled{% endif %}>
                             {% endif %}
 
                             <div class="search-results-dropdown">
@@ -191,7 +204,8 @@
                     {% if link_model == 'Attachment' and (not field.json_schema_extra or field.json_schema_extra.get('upload') != False) %}
                     <div class="mt-3 flex items-center space-x-4">
                         <div class="relative flex-1">
-                            <input type="file" name="{{ name }}" id="file-{{ name }}" class="hidden" onchange="document.getElementById('file-name-{{ name }}').textContent = this.files[0].name; document.getElementById('search-container-{{ name }}').style.display='none';">
+                            <input type="file" name="{{ name }}" id="file-{{ name }}" class="hidden"
+                                   onchange="onLinkFileSelect('{{ name }}', this)">
                             <label for="file-{{ name }}" class="flex items-center justify-center px-4 py-3 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl cursor-pointer hover:bg-indigo-100 transition-all font-semibold text-sm">
                                 <i class="fas fa-upload mr-2"></i> Upload New Image
                             </label>
@@ -216,7 +230,7 @@
                     <span class="text-xs text-slate-400 font-mono">({{ value }} bytes)</span>
                 </div>
                 {% else %}
-                <input type="text" name="{{ name }}" value="{{ value }}"
+                <input type="text" name="{{ name }}" value="{{ '' if value is none else value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% endif %}
                 {% endif %}

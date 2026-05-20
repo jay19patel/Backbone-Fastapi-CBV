@@ -30,6 +30,7 @@ dependencies = [
     "reportlab>=4.2.2",
     "tavily-python>=0.7.23",
     "uvicorn>=0.40.0",
+    "bcrypt>=5.0.0",
 ]
 
 [dependency-groups]

@@ -355,15 +355,19 @@
 
             if (clearBtn && !isMulti) {
                 const hidden = container.querySelector('input[type="hidden"]');
-                if (hidden.value || input.value) clearBtn.style.display = 'block';
+                if (hidden && (hidden.value || input.value)) clearBtn.style.display = 'block';
                 clearBtn.onclick = (e) => {
                     e.stopPropagation();
-                    hidden.value = '';
-                    hidden.disabled = false;
+                    if (hidden) { hidden.value = ''; hidden.disabled = false; }
                     input.value = '';
                     input.focus();
                     clearBtn.style.display = 'none';
                     dropdown.style.display = 'none';
+                    // ? DISABLE EXISTING-ID AND SIGNAL EXPLICIT CLEAR
+                    const existingId = document.getElementById('existing-id-' + fieldName);
+                    if (existingId) { existingId.disabled = true; existingId.value = ''; }
+                    const clearSignal = document.getElementById('clear-signal-' + fieldName);
+                    if (clearSignal) clearSignal.value = '1';
                 };
             }
 
@@ -406,8 +410,13 @@
                     searchTerm = '';
                 } else {
                     const hidden = container.querySelector('input[type="hidden"]');
-                    hidden.value = id;
-                    hidden.disabled = false;
+                    if (hidden) { hidden.value = id; hidden.disabled = false; }
+                    // ? DISABLE EXISTING-ID SO IT DOESN'T CONFLICT WITH NEW SELECTION
+                    const existingId = document.getElementById('existing-id-' + fieldName);
+                    if (existingId) existingId.disabled = true;
+                    // ? CANCEL ANY PENDING CLEAR SIGNAL
+                    const clearSignal = document.getElementById('clear-signal-' + fieldName);
+                    if (clearSignal) clearSignal.value = '0';
                     input.value = label;
                     if (clearBtn) clearBtn.style.display = 'block';
                 }
@@ -474,6 +483,62 @@
             });
         };
 
+        // ── Link Field Helpers ─────────────────────────────────────────────
+        window.removeLinkField = function (fieldName) {
+            // ? DISABLE EXISTING-ID — IT MUST NOT SUBMIT STALE VALUE
+            var existingId = document.getElementById('existing-id-' + fieldName);
+            if (existingId) existingId.disabled = true;
+            // ? ENABLE SEARCH-INPUT SO initSearchableSelect CAN WRITE INTO IT
+            var searchInput = document.getElementById('search-input-' + fieldName);
+            if (searchInput) { searchInput.disabled = false; searchInput.value = ''; }
+            // ? RAISE CLEAR SIGNAL — FORM HANDLER WILL SET FIELD TO NULL
+            var clearSignal = document.getElementById('clear-signal-' + fieldName);
+            if (clearSignal) clearSignal.value = '1';
+            // ? TOGGLE VISIBILITY
+            var singleDisplay = document.getElementById('single-display-' + fieldName);
+            if (singleDisplay) singleDisplay.style.display = 'none';
+            var searchContainer = document.getElementById('search-container-' + fieldName);
+            if (searchContainer) searchContainer.style.display = 'block';
+        };
+
+        window.onLinkFileSelect = function (fieldName, fileInput) {
+            if (!fileInput.files || !fileInput.files[0]) return;
+            var nameDisplay = document.getElementById('file-name-' + fieldName);
+            if (nameDisplay) nameDisplay.textContent = fileInput.files[0].name;
+            // ? DISABLE BOTH ID INPUTS — FILE TAKES FULL PRIORITY
+            var existingId = document.getElementById('existing-id-' + fieldName);
+            if (existingId) existingId.disabled = true;
+            var searchInput = document.getElementById('search-input-' + fieldName);
+            if (searchInput) searchInput.disabled = true;
+            // ? HIDE DISPLAY AND SEARCH SECTIONS
+            var singleDisplay = document.getElementById('single-display-' + fieldName);
+            if (singleDisplay) singleDisplay.style.display = 'none';
+            var searchContainer = document.getElementById('search-container-' + fieldName);
+            if (searchContainer) searchContainer.style.display = 'none';
+            // ? FILE UPLOAD REPLACES VALUE — NO CLEAR SIGNAL NEEDED
+            var clearSignal = document.getElementById('clear-signal-' + fieldName);
+            if (clearSignal) clearSignal.value = '0';
+        };
+
+        // ── Admin Toast Notification ───────────────────────────────────────
+        window.showAdminToast = function (message, type) {
+            var toast = document.getElementById('admin-toast');
+            var msg = document.getElementById('admin-toast-msg');
+            var icon = document.getElementById('admin-toast-icon');
+            if (!toast) return;
+            msg.textContent = message;
+            if (type === 'success') {
+                toast.className = 'fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-4 bg-emerald-600 text-white rounded-2xl shadow-2xl font-semibold text-sm max-w-sm';
+                icon.className = 'fas fa-check-circle text-emerald-200 text-lg flex-shrink-0';
+            } else {
+                toast.className = 'fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-4 bg-red-600 text-white rounded-2xl shadow-2xl font-semibold text-sm max-w-sm';
+                icon.className = 'fas fa-exclamation-circle text-red-200 text-lg flex-shrink-0';
+            }
+            toast.style.display = 'flex';
+            clearTimeout(window._adminToastTimer);
+            window._adminToastTimer = setTimeout(function () { toast.style.display = 'none'; }, 4000);
+        };
+
         // ── Sidebar search ─────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {
             const searchInput = document.getElementById('sidebarSearch');
@@ -519,8 +584,35 @@
             sections.forEach(section => {
                 section.open = false;
             });
+
+            // ? READ ADMIN SUCCESS / ERROR COOKIES AND SHOW TOAST
+            function readCookie(name) {
+                var m = document.cookie.match('(?:^|;)\\s*' + name + '=([^;]*)');
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+            var successMsg = readCookie('admin_success');
+            var errorMsg = readCookie('admin_error');
+            if (successMsg) {
+                showAdminToast(successMsg, 'success');
+                document.cookie = 'admin_success=; max-age=0; path=/';
+            }
+            if (errorMsg) {
+                showAdminToast(errorMsg, 'error');
+                document.cookie = 'admin_error=; max-age=0; path=/';
+            }
         });
     </script>
+
+    <!-- Admin Toast -->
+    <div id="admin-toast" style="display:none;"
+        class="fixed bottom-6 right-6 z-[200] flex items-center gap-3 px-5 py-4 bg-emerald-600 text-white rounded-2xl shadow-2xl font-semibold text-sm max-w-sm">
+        <i id="admin-toast-icon" class="fas fa-check-circle text-emerald-200 text-lg flex-shrink-0"></i>
+        <span id="admin-toast-msg" class="flex-1"></span>
+        <button onclick="document.getElementById('admin-toast').style.display='none'"
+            class="ml-1 opacity-60 hover:opacity-100 flex-shrink-0">
+            <i class="fas fa-times text-sm"></i>
+        </button>
+    </div>
 </body>
 
 </html>

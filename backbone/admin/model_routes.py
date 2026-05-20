@@ -525,17 +525,20 @@ async def model_update_handle(
         import traceback
 
         traceback.print_exc()
-        # Try to provide a cleaner error message for Pydantic/Beanie validation errors
         error_msg = str(e)
         if "validation" in error_msg.lower():
             if hasattr(e, "errors"):
-                # Pydantic 2 specific error formatting
                 try:
                     formatted_errs = [f"{err['loc'][-1]}: {err['msg']}" for err in e.errors()]
                     error_msg = "; ".join(formatted_errs)
-                except:
+                except Exception:
                     pass
-        raise HTTPException(status_code=400, detail=f"Update validation failed: {error_msg}")
+        # ? REDIRECT BACK WITH ERROR COOKIE INSTEAD OF GENERIC 400 PAGE
+        err_response = RedirectResponse(
+            url=f"/admin/{model_name}/{pk}", status_code=status.HTTP_303_SEE_OTHER
+        )
+        err_response.set_cookie("admin_error", error_msg[:250], max_age=10, path="/")
+        return err_response
 
 
 @router.post("/{model_name}/{pk}/delete")
@@ -600,26 +603,22 @@ async def admin_api_search(
 
     query = build_admin_search_query(query, q or "", "all", get_admin_search_fields(config, model))
 
-    items = await model.find(query).skip(skip).limit(limit).to_list()
-    total = await model.find(query).count()
+    # ? USE RAW PYMONGO SO VALIDATION ERRORS ON CORRUPTED DOCUMENTS NEVER BREAK THE DROPDOWN
+    collection = model.get_pymongo_collection()
+    raw_docs = await collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+    total = await collection.count_documents(query)
 
+    display_fields = ["name", "title", "full_name", "username", "email", "filename", "question"]
     results = []
-    for it in items:
-        label = str(it.id)
-        for display_field in [
-            "name",
-            "title",
-            "full_name",
-            "username",
-            "email",
-            "filename",
-            "question",
-        ]:
-            val = getattr(it, display_field, None)
-            if val:
-                label = f"{val} ({it.id})"
+    for doc in raw_docs:
+        doc_id = str(doc.get("_id", ""))
+        label = doc_id
+        for field_key in display_fields:
+            field_val = doc.get(field_key)
+            if field_val and isinstance(field_val, str):
+                label = f"{field_val} ({doc_id})"
                 break
-        results.append({"id": str(it.id), "text": label})
+        results.append({"id": doc_id, "text": label})
 
     return {
         "results": results,

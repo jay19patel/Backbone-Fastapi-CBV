@@ -2,9 +2,28 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from ..core.config import BackboneConfig
 from ..core.permissions import AllowAny
-from ..generic.views import GenericFormView
+from ..generic.views import GenericFormView, GenericTemplateView
 from .service import AuthService
+
+
+class UserGuideView(GenericTemplateView):
+    template_name = "pages/user_guide.html"
+    page_name = "User Guide"
+    page_description = "Backbone FastAPI developer guide and framework reference."
+    admin_category = "Documentation"
+    permission_classes = [AllowAny]
+
+    async def get_context_data(
+        self, request: Request, user: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        settings = BackboneConfig.get_instance().config
+        base_url = str(request.base_url).rstrip("/")
+        return {
+            "site_name": getattr(settings, "SITE_NAME", "Backbone"),
+            "api_base_url": f"{base_url}/api",
+        }
 
 
 class PasswordResetRequestPage(GenericFormView):
@@ -154,6 +173,14 @@ class VerifyEmailStatusPage(GenericFormView):
 
 
 router = APIRouter()
+router.include_router(
+    UserGuideView.as_router(
+        "/user-guide",
+        tags=["Pages"],
+        name="user_guide_page",
+        admin_path="/pages/user-guide",
+    )
+)
 router.include_router(
     PasswordResetRequestPage.as_router(
         "/reset-password",

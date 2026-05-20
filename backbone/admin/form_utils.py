@@ -191,6 +191,11 @@ async def build_model_payload(
         if key in INTERNAL_FIELDS:
             continue
 
+        # ? EXPLICIT CLEAR SIGNAL — SENT BY THE REMOVE BUTTON ON LINK/ATTACHMENT FIELDS
+        if skip_missing and str(form_data.get(f"_clear_{key}", "")) == "1":
+            data[key] = None
+            continue
+
         is_list = "list" in str(field.annotation).lower()
         is_link = key in populate_fields_config
 
@@ -225,6 +230,9 @@ async def build_model_payload(
                 val = parsed
         else:
             val = raw
+            # ? JINJA RENDERS PYTHON None AS THE LITERAL STRING "None" IN TEXT INPUTS — CONVERT BACK
+            if isinstance(val, str) and val == "None":
+                val = None
             if not val and field.annotation is not bool:
                 if skip_missing and is_link:
                     continue
@@ -254,7 +262,8 @@ async def build_model_payload(
             if isinstance(val, str) and not val.startswith("$argon2"):
                 val = PasswordManager.hash_password(val)
 
-        file_candidates = form_data.getlist(key) if is_list else [form_data.get(key)]
+        # ? ALWAYS USE GETLIST — FINDS UPLOADFILE EVEN FOR SINGLE FIELDS (BOTH HIDDEN ID + FILE SUBMIT TOGETHER)
+        file_candidates = form_data.getlist(key)
         uploads = await process_upload_files(
             files=file_candidates,
             model=model,
@@ -281,8 +290,7 @@ async def build_model_payload(
                 val = to_dbref(val)
 
         val = sanitize_value_before_save(val, is_list=is_list)
-        if val is None and is_image_field(field):
-            continue
+        # ? is_image_field skip removed — explicit clear is handled via _clear_ signal above
         if val is None and skip_missing:
             continue
 
