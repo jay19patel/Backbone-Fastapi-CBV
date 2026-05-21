@@ -72,21 +72,30 @@
 
         <div class="grid grid-cols-1 gap-y-6">
             {% for name, field in model_fields.items() %}
-            {% if name not in ['hashed_password', 'password'] and name not in internal_fields %}
+            {# ? ALLOW hashed_password THROUGH — RENDERED AS PASSWORD INPUT BELOW #}
+            {% if name != 'password' and name not in internal_fields %}
             <div class="border-b border-slate-50 pb-6 last:border-0 last:pb-0">
-                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{{ name|nice_title
-                    }}</label>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">
+                    {% if name == 'hashed_password' %}Password{% else %}{{ name|nice_title }}{% endif %}
+                </label>
 
                 {% set value = item[name] %}
+                {% set f_type = field.annotation | string %}
+                {% set link_model = field_links.get(name) %}
+                {% set widget_info = field_widgets.get(name, {}) if field_widgets else {} %}
+                {% set widget_type = widget_info.get('widget', 'text') %}
 
                 {% if name in internal_fields %}
                 <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-slate-500 font-mono text-sm">
                     {{ value }}
                 </div>
-                {% else %}
-                {% set f_type = field.annotation | string %}
-                {% set link_model = field_links.get(name) %}
-                {% if 'bool' in f_type %}
+                {% elif name == 'hashed_password' %}
+                {# ? PASSWORD FIELD — LEAVE BLANK TO PRESERVE CURRENT PASSWORD #}
+                <input type="password" name="{{ name }}"
+                    placeholder="Leave blank to keep the current password"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
+                <p class="text-xs text-amber-600 mt-1"><i class="fas fa-lock mr-1"></i>Current password is stored as a secure hash. Enter a new value only to change it.</p>
+                {% elif 'bool' in f_type %}
                 <select name="{{ name }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                     <option value="true" {% if value %}selected{% endif %}>True</option>
@@ -216,10 +225,40 @@
                 </div>
 
                 <script>document.addEventListener('DOMContentLoaded', () => { window.initSearchableSelect('search-container-{{ name }}', '{{ link_model }}', '{{ name }}', {{ 'true' if is_multi else 'false' }}); });</script>
+                {% elif 'datetime' in f_type %}
+                {# ? DATETIME FIELDS GET A NATIVE DATE-TIME PICKER; EXISTING VALUE IS PRE-FILLED #}
+                <input type="datetime-local" name="{{ name }}"
+                    value="{{ value | datetime_local if value else '' }}"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
                 {% elif value is mapping or (value is iterable and value is not string) or 'list' in f_type.lower() or
                 'dict' in f_type.lower() %}
                 <textarea name="{{ name }}" rows="4"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-mono text-sm">{{ value | tojson(indent=2) if value is defined and value is not none else '' }}</textarea>
+                {% elif widget_type == 'image' %}
+                {# ? IMAGE/THUMBNAIL FIELD — FALLBACK WHEN NOT DETECTED AS A LINK; SHOWS CURRENT IMAGE + FILE UPLOAD #}
+                {% if value and value is string and (value.startswith('http') or value.startswith('/')) %}
+                <div class="mb-3">
+                    <img src="{{ value }}" alt="Current image"
+                        class="w-32 h-32 object-cover rounded-xl border border-slate-200 shadow-sm bg-slate-50">
+                </div>
+                {% endif %}
+                {# ? HIDDEN INPUT PRESERVES CURRENT VALUE WHEN NO NEW FILE IS CHOSEN #}
+                <input type="hidden" name="{{ name }}" value="{{ '' if value is none else value }}">
+                <div class="flex items-center space-x-4">
+                    <div class="relative flex-1">
+                        <input type="file" name="{{ name }}" id="img-file-{{ name }}" class="hidden" accept="image/*"
+                               onchange="document.getElementById('img-name-{{ name }}').textContent = this.files[0] ? this.files[0].name : 'No file chosen'">
+                        <label for="img-file-{{ name }}"
+                            class="flex items-center justify-center px-4 py-3 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl cursor-pointer hover:bg-indigo-100 transition-all font-semibold text-sm">
+                            <i class="fas fa-upload mr-2"></i> Upload New Image
+                        </label>
+                    </div>
+                    <span id="img-name-{{ name }}" class="text-xs text-slate-500 truncate max-w-[200px]">No file chosen</span>
+                </div>
+                {% elif widget_type == 'textarea' %}
+                {# ? NULLABLE STR FIELDS (bio, description, etc.) GET A MULTI-LINE TEXTAREA #}
+                <textarea name="{{ name }}" rows="4"
+                    class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">{{ '' if value is none else value }}</textarea>
                 {% else %}
                 {% if name == 'size' and value %}
                 <div class="flex items-center gap-3">
@@ -232,7 +271,6 @@
                 {% else %}
                 <input type="text" name="{{ name }}" value="{{ '' if value is none else value }}"
                     class="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all">
-                {% endif %}
                 {% endif %}
                 {% endif %}
 

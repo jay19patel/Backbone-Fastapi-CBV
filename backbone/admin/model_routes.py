@@ -389,6 +389,8 @@ async def model_detail(
             "field_links": field_links,
             "link_options": link_options,
             "internal_fields": INTERNAL_FIELDS,
+            # ? WIDGET METADATA SO THE DETAIL TEMPLATE CAN USE CONSISTENT WIDGET TYPES
+            "field_widgets": build_field_widgets(model, field_links),
         },
     )
 
@@ -498,8 +500,6 @@ async def model_update_handle(
             continue
         if field.annotation is bool and key not in form_data:
             update_data[key] = False
-        if model_name == "User" and key == "hashed_password" and not update_data.get(key):
-            update_data.pop(key, None)
 
     try:
         if hasattr(item, "updated_at"):

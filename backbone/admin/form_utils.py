@@ -64,31 +64,72 @@ def is_image_field(field: Any) -> bool:
     )
 
 
+def is_attachment_choice_field(field: Any, collection: str | None = None) -> bool:
+    """Fields like Thumbnail are stored as Attachment documents or URL strings."""
+    annotation = str(getattr(field, "annotation", ""))
+    return (collection == "attachments" or "Attachment" in annotation) and "str" in annotation
+
+
+def _get_field_default(field: Any) -> Any:
+    """Return the field's default value, or None if no default is defined."""
+    try:
+        from pydantic_core import PydanticUndefined
+
+        val = field.default
+        return None if val is PydanticUndefined else val
+    except Exception:
+        return None
+
+
+def _is_nullable_str(annotation: str) -> bool:
+    """Return True for str | None fields that should render as textareas."""
+    ann = annotation.lower()
+    return (
+        "none" in ann
+        and "str" in ann
+        and "link" not in annotation  # exclude Thumbnail / Attachment
+        and "dict" not in ann
+        and "list" not in ann
+    )
+
+
 def build_field_widgets(
     model: type[Document], field_links: dict[str, str]
 ) -> dict[str, dict[str, Any]]:
     widgets: dict[str, dict[str, Any]] = {}
     for name, field in get_model_fields(model).items():
-        if name in INTERNAL_FIELDS or name in ("hashed_password", "password"):
+        # ? SKIP TRULY INTERNAL FIELDS AND RAW PLAIN PASSWORD FIELD
+        if name in INTERNAL_FIELDS or name == "password":
             continue
 
         annotation = str(field.annotation)
         widget = "text"
-        if field.annotation is bool or annotation.endswith("bool"):
+
+        if name == "hashed_password":
+            # ? RENDER AS MASKED PASSWORD INPUT IN ADMIN FORMS
+            widget = "password"
+        elif field.annotation is bool or "bool" in annotation:
             widget = "bool"
-        elif field.annotation in (int, float) or "int" in annotation or "float" in annotation:
-            widget = "number"
-        elif is_image_field(field):
-            widget = "image"
+        elif "datetime" in annotation:
+            # ? DATETIME FIELDS GET A NATIVE DATE-TIME PICKER
+            widget = "datetime"
         elif name in field_links:
             widget = "link"
-        elif "list" in annotation.lower() or "List" in annotation:
+        elif is_image_field(field):
+            widget = "image"
+        elif "list" in annotation.lower():
             widget = "list"
+        elif field.annotation in (int, float) or "int" in annotation or "float" in annotation:
+            widget = "number"
+        elif _is_nullable_str(annotation):
+            # ? NULLABLE STR FIELDS (e.g. bio, description) GET A TEXTAREA
+            widget = "textarea"
 
         widgets[name] = {
             "widget": widget,
             "required": field.is_required(),
             "description": field.description or f"Enter {name.replace('_', ' ')}",
+            "default": _get_field_default(field),
         }
     return widgets
 
@@ -137,6 +178,26 @@ def sanitize_value_before_save(value: Any, *, is_list: bool) -> Any:
     return value
 
 
+def _pick_scalar_form_value(values: list[Any]) -> Any:
+    """
+    Choose the real scalar value for a single admin field.
+
+    Attachment link widgets submit both a hidden selected-id input and a file
+    input with the same field name. When no file is selected, Starlette may
+    return the empty UploadFile as the scalar value, hiding the selected id.
+    """
+    if not values:
+        return None
+
+    for value in values:
+        if isinstance(value, UploadFile) or is_empty_upload(value):
+            continue
+        if value not in (None, ""):
+            return value
+
+    return values[0]
+
+
 async def process_upload_files(
     *,
     files: list[Any],
@@ -174,6 +235,32 @@ async def process_upload_files(
     return uploaded
 
 
+async def resolve_attachment_choice(value: Any) -> Any:
+    """Resolve an admin-selected attachment id into an Attachment document."""
+    if not value:
+        return value
+
+    if isinstance(value, list):
+        resolved = []
+        for item in value:
+            resolved_item = await resolve_attachment_choice(item)
+            if resolved_item:
+                resolved.append(resolved_item)
+        return resolved
+
+    if isinstance(value, Attachment):
+        return value
+
+    if hasattr(value, "id"):
+        return value
+
+    if isinstance(value, str) and ObjectId.is_valid(value):
+        attachment = await Attachment.get(ObjectId(value))
+        return attachment or value
+
+    return value
+
+
 async def build_model_payload(
     *,
     form_data: Any,
@@ -208,7 +295,8 @@ async def build_model_payload(
                 data[key] = []
             continue
 
-        raw = form_data.getlist(key) if is_list else form_data.get(key)
+        field_values = form_data.getlist(key)
+        raw = field_values if is_list else _pick_scalar_form_value(field_values)
 
         if is_list:
             if not raw or (len(raw) == 1 and not raw[0]):
@@ -256,7 +344,13 @@ async def build_model_payload(
             except (TypeError, ValueError):
                 pass
 
-        if model_name == "User" and key == "hashed_password" and val:
+        if key == "hashed_password":
+            # ? HASH THE PASSWORD IF PROVIDED; SKIP ENTIRELY WHEN BLANK TO PRESERVE EXISTING HASH
+            if not val:
+                # For update (skip_missing=True) this preserves the current password.
+                # For create (skip_missing=False) Pydantic will raise "field required",
+                # which surfaces in the form error list.
+                continue
             from ..common.utils import PasswordManager
 
             if isinstance(val, str) and not val.startswith("$argon2"):
@@ -276,18 +370,21 @@ async def build_model_payload(
 
         if is_link and val:
             collection = populate_fields_config[key].get("collection")
-
-            def to_dbref(value: Any) -> Any:
-                if isinstance(value, str | ObjectId) and ObjectId.is_valid(str(value)):
-                    return DBRef(collection=collection, id=ObjectId(str(value)))
-                if hasattr(value, "id"):
-                    return DBRef(collection=collection, id=ObjectId(str(value.id)))
-                return value
-
-            if isinstance(val, list):
-                val = [to_dbref(item) for item in val]
+            if is_attachment_choice_field(field, collection):
+                val = await resolve_attachment_choice(val)
             else:
-                val = to_dbref(val)
+
+                def to_dbref(value: Any) -> Any:
+                    if isinstance(value, str | ObjectId) and ObjectId.is_valid(str(value)):
+                        return DBRef(collection=collection, id=ObjectId(str(value)))
+                    if hasattr(value, "id"):
+                        return DBRef(collection=collection, id=ObjectId(str(value.id)))
+                    return value
+
+                if isinstance(val, list):
+                    val = [to_dbref(item) for item in val]
+                else:
+                    val = to_dbref(val)
 
         val = sanitize_value_before_save(val, is_list=is_list)
         # ? is_image_field skip removed — explicit clear is handled via _clear_ signal above

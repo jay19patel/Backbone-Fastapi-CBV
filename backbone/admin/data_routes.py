@@ -93,7 +93,6 @@ async def import_page(request: Request, user: User | None = Depends(get_admin_us
 async def import_data(
     request: Request,
     user: User | None = Depends(get_admin_user),
-    file: bytes = None,
 ):
     """
     Import JSON exported by /admin/export.

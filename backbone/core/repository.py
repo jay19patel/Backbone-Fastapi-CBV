@@ -179,6 +179,7 @@ class BeanieRepository[T: BaseModel]:
     @staticmethod
     def _extract_link_info(annotation: Any) -> tuple[type[Document] | None, bool]:
         """Extract (target_model, is_list) from a Link[] annotation."""
+        import types as _builtin_types
         from typing import Annotated, Union, get_args, get_origin
 
         from beanie import Link
@@ -191,16 +192,22 @@ class BeanieRepository[T: BaseModel]:
         target_model = None
         is_list = False
 
+        # ? DETECT UNION: handle both typing.Union AND Python 3.10+ types.UnionType (str | X | None syntax)
+        _new_union_type = getattr(_builtin_types, "UnionType", None)
+        is_union = origin is Union or (
+            _new_union_type is not None and isinstance(annotation, _new_union_type)
+        )
+
         if origin is Link:
             target_model = get_args(annotation)[0]
         elif origin in (list, list):
             args = get_args(annotation)
             if args:
                 inner_annotation = args[0]
-                # Recursively extract from list item (could be Link or Annotated[Link])
+                # ? RECURSIVELY EXTRACT FROM LIST ITEM (COULD BE Link OR Annotated[Link])
                 target_model, _ = BeanieRepository._extract_link_info(inner_annotation)
                 is_list = True
-        elif origin is Union:
+        elif is_union:
             for arg in get_args(annotation):
                 if arg is type(None):
                     continue
